@@ -9,6 +9,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
         <Grid x:Name="AppTitleBar" Height="36" Background="Transparent">
@@ -16,7 +17,10 @@
                        VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold" Opacity="0.85" />
         </Grid>
 
-    <NavigationView x:Name="Nav" Grid.Row="1"
+        <InfoBar x:Name="AppInfoBar" Grid.Row="1" Margin="8,0,8,4"
+                 IsOpen="False" IsClosable="True" Severity="Error" />
+
+    <NavigationView x:Name="Nav" Grid.Row="2"
                     PaneDisplayMode="Left"
                     IsBackButtonVisible="Collapsed"
                     IsSettingsVisible="False"
@@ -61,6 +65,41 @@
                 </Border>
             </DataTemplate>
 
+            <DataTemplate x:Key="MessageBodyTemplate">
+                <StackPanel Spacing="6" MaxWidth="560">
+                    <TextBlock Text="{Binding DisplayContent}" TextWrapping="Wrap"
+                               FontSize="14" IsTextSelectionEnabled="True"
+                               Visibility="{Binding ShowContent, Converter={StaticResource BoolToVis}}" />
+                    <TextBlock Text="（已撤回）" FontSize="13" Opacity="0.55"
+                               Visibility="{Binding Message.IsRecalled, Converter={StaticResource BoolToVis}}"
+                               FontStyle="Italic" />
+                    <ItemsControl ItemsSource="{Binding Images}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Image Source="{Binding ResolvedPath}" MaxHeight="220" Stretch="Uniform"
+                                       Tapped="OnImageAttachmentTapped" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <ItemsControl ItemsSource="{Binding OpenableAttachments}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Content="{Binding ActionText}" Click="OnAttachmentOpenClick"
+                                        HorizontalAlignment="Left" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <ItemsControl ItemsSource="{Binding MissingAttachments}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11" Foreground="OrangeRed"
+                                           Text="{Binding MissingText}" TextWrapping="Wrap" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </DataTemplate>
+
             <DataTemplate x:Key="IncomingTemplate">
                 <Grid Margin="8,3" ColumnSpacing="8" MaxWidth="760">
                     <StackPanel Spacing="2" HorizontalAlignment="Left">
@@ -71,19 +110,8 @@
                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="4,12,12,12" Padding="10,7"
                                 HorizontalAlignment="Left">
-                            <StackPanel Spacing="6" MaxWidth="560">
-                                <TextBlock Text="{Binding Message.Content}" TextWrapping="Wrap"
-                                           FontSize="14" IsTextSelectionEnabled="True"
-                                           Visibility="{Binding Message.IsRecalled, Converter={StaticResource InverseBool}}" />
-                                <TextBlock Text="（已撤回）" FontSize="13" Opacity="0.55"
-                                           Visibility="{Binding Message.IsRecalled, Converter={StaticResource BoolToVis}}" FontStyle="Italic" />
-                                <Image Source="{Binding ImagePath}" MaxHeight="220" Stretch="Uniform"
-                                       Tapped="OnImageTapped" Tag="{Binding}"
-                                       Visibility="{Binding ImagePath, Converter={StaticResource NullToCollapsed}}" />
-                                <TextBlock FontSize="11" Foreground="OrangeRed"
-                                           Text="{Binding MissingMediaText}"
-                                           Visibility="{Binding HasMissingMedia, Converter={StaticResource BoolToVis}}" />
-                            </StackPanel>
+                            <ContentControl Content="{Binding}"
+                                            ContentTemplate="{StaticResource MessageBodyTemplate}" />
                         </Border>
                         <TextBlock Text="{Binding TimeText}" FontSize="10" Opacity="0.4" />
                     </StackPanel>
@@ -95,16 +123,8 @@
                     <StackPanel Spacing="2" HorizontalAlignment="Right">
                         <Border Background="{ThemeResource SystemAccentColorLight2}"
                                 CornerRadius="12,4,12,12" Padding="10,7" HorizontalAlignment="Right">
-                            <StackPanel Spacing="6" MaxWidth="560">
-                                <TextBlock Text="{Binding Message.Content}" TextWrapping="Wrap"
-                                           FontSize="14" IsTextSelectionEnabled="True"
-                                           Visibility="{Binding Message.IsRecalled, Converter={StaticResource InverseBool}}" />
-                                <TextBlock Text="（已撤回）" FontSize="13" Opacity="0.55"
-                                           Visibility="{Binding Message.IsRecalled, Converter={StaticResource BoolToVis}}" FontStyle="Italic" />
-                                <Image Source="{Binding ImagePath}" MaxHeight="220" Stretch="Uniform"
-                                       Tapped="OnImageTapped" Tag="{Binding}"
-                                       Visibility="{Binding ImagePath, Converter={StaticResource NullToCollapsed}}" />
-                            </StackPanel>
+                            <ContentControl Content="{Binding}"
+                                            ContentTemplate="{StaticResource MessageBodyTemplate}" />
                         </Border>
                         <TextBlock Text="{Binding TimeText}" FontSize="10" Opacity="0.4"
                                    HorizontalAlignment="Right" />
@@ -112,10 +132,23 @@
                 </Grid>
             </DataTemplate>
 
+            <DataTemplate x:Key="SystemTemplate">
+                <StackPanel Margin="24,6" Spacing="2" HorizontalAlignment="Center">
+                    <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                            CornerRadius="10" Padding="10,6">
+                        <ContentControl Content="{Binding}"
+                                        ContentTemplate="{StaticResource MessageBodyTemplate}" />
+                    </Border>
+                    <TextBlock Text="{Binding TimeText}" FontSize="10" Opacity="0.4"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+            </DataTemplate>
+
             <local:TimelineTemplateSelector x:Key="TimelineSelector"
                                             Separator="{StaticResource SeparatorTemplate}"
                                             Incoming="{StaticResource IncomingTemplate}"
-                                            Outgoing="{StaticResource OutgoingTemplate}" />
+                                            Outgoing="{StaticResource OutgoingTemplate}"
+                                            System="{StaticResource SystemTemplate}" />
         </NavigationView.Resources>
 
         <NavigationView.MenuItems>
@@ -177,14 +210,22 @@
                 <Grid Grid.Column="2" RowSpacing="6" Padding="8,10,10,8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <TextBlock x:Name="TimelineTitle" Grid.Row="0" FontSize="17" FontWeight="SemiBold"
                                Margin="4,0,0,4" TextTrimming="CharacterEllipsis" />
-                    <ListView x:Name="MessageListControl" Grid.Row="1"
+                    <ProgressBar x:Name="LoadMoreBar" Grid.Row="1" IsIndeterminate="True"
+                                 Height="4" Visibility="Collapsed" Margin="0,0,0,4" />
+                    <ListView x:Name="MessageListControl" Grid.Row="2"
                               ItemTemplateSelector="{StaticResource TimelineSelector}"
                               SelectionMode="None">
+                        <ListView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <ItemsStackPanel VerticalAlignment="Bottom"
+                                                 ItemsUpdatingScrollMode="KeepItemsInView" />
+                            </ItemsPanelTemplate>
+                        </ListView.ItemsPanel>
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem">
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -193,8 +234,6 @@
                             </Style>
                         </ListView.ItemContainerStyle>
                     </ListView>
-                    <ProgressBar x:Name="LoadMoreBar" Grid.Row="2" IsIndeterminate="True"
-                                 Height="4" Visibility="Collapsed" Margin="0,4,0,0" />
                 </Grid>
             </Grid>
 

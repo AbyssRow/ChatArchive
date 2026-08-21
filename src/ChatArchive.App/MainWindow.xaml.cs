@@ -6,7 +6,9 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.System;
 
 namespace ChatArchive.App;
 
@@ -19,6 +21,7 @@ public sealed partial class MainWindow : Window
     private readonly ImportViewModel _import;
     private CancellationTokenSource? _queryDebounce;
     private ScrollViewer? _messageScroll;
+    private bool _messagePagingReady;
     private bool _statsLoaded;
 
     public MainWindow()
@@ -47,7 +50,11 @@ public sealed partial class MainWindow : Window
             _stats = new StatsViewModel(services.Stats, dispatcher);
             _import = new ImportViewModel(services.Database, dispatcher);
 
-            _conversations.ConversationActivated += conversation => _timeline.Load(conversation);
+            _conversations.ConversationActivated += conversation =>
+            {
+                _messagePagingReady = false;
+                _timeline.Load(conversation);
+            };
             _timeline.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName == nameof(TimelineViewModel.IsLoading))
@@ -58,10 +65,18 @@ public sealed partial class MainWindow : Window
                 {
                     TimelineTitle.Text = _timeline.Title;
                 }
+                else if (e.PropertyName == nameof(TimelineViewModel.ErrorMessage)
+                         && _timeline.ErrorMessage.Length > 0)
+                {
+                    ShowError(_timeline.ErrorMessage);
+                }
             };
+            _timeline.InitialPageLoaded += PositionTimelineAtBottom;
+            _timeline.FocusMessageLoaded += FocusTimelineMessage;
             _search.ResultActivated += hit => DispatcherQueue.TryEnqueue(() =>
             {
                 SelectNavItem("conversations");
+                _messagePagingReady = false;
                 _timeline.JumpToMessage(hit.MessageId);
             });
             _search.PropertyChanged += (_, e) =>
@@ -300,12 +315,49 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var distanceFromBottom = _messageScroll.ExtentHeight
-            - _messageScroll.VerticalOffset - _messageScroll.ViewportHeight;
-        if (distanceFromBottom < 80 && _timeline.HasMore && !_timeline.IsLoading)
+        if (_messagePagingReady
+            && _messageScroll.VerticalOffset < 80
+            && _timeline.HasMore
+            && !_timeline.IsLoading)
         {
             _timeline.LoadMoreCommand.Execute(null);
         }
+    }
+
+    private void PositionTimelineAtBottom()
+    {
+        _messagePagingReady = false;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            MessageListControl.UpdateLayout();
+            if (_timeline.Entries.LastOrDefault() is { } last)
+            {
+                MessageListControl.ScrollIntoView(last);
+            }
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _messageScroll?.ChangeView(null, _messageScroll.ScrollableHeight, null, true);
+                _messagePagingReady = true;
+            });
+        });
+    }
+
+    private void FocusTimelineMessage(long messageId)
+    {
+        _messagePagingReady = false;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var entry = _timeline.Entries
+                .OfType<MessageEntry>()
+                .FirstOrDefault(item => item.Message.Id == messageId);
+            if (entry is not null)
+            {
+                MessageListControl.ScrollIntoView(entry);
+            }
+
+            _messagePagingReady = true;
+        });
     }
 
     private async void OnSenderTapped(object sender, TappedRoutedEventArgs e)
@@ -316,11 +368,34 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void OnImageTapped(object sender, TappedRoutedEventArgs e)
+    private async void OnImageAttachmentTapped(object sender, TappedRoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: MessageEntry entry } && entry.ImagePath is not null)
+        if (sender is FrameworkElement { DataContext: AttachmentEntry entry }
+            && entry.ResolvedPath is not null)
         {
-            await ShowImagePreview(entry.ImagePath, entry.Message.Attachments.FirstOrDefault()?.Filename ?? "图片");
+            await ShowImagePreview(entry.ResolvedPath, entry.Filename ?? "图片");
+        }
+    }
+
+    private async void OnAttachmentOpenClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: AttachmentEntry entry }
+            || entry.ResolvedPath is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(entry.ResolvedPath);
+            if (!await Launcher.LaunchFileAsync(file))
+            {
+                ShowError("系统没有可打开此附件的应用");
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"打开附件失败：{ex.Message}");
         }
     }
 
@@ -394,6 +469,7 @@ public sealed partial class MainWindow : Window
             var info = AppServices.Instance.Conversations.GetConversation(id)?.Conversation;
             if (info is not null)
             {
+                _messagePagingReady = false;
                 _timeline.Load(info);
             }
         });
@@ -506,6 +582,12 @@ public sealed partial class MainWindow : Window
         }
 
         return null;
+    }
+
+    private void ShowError(string message)
+    {
+        AppInfoBar.Message = message;
+        AppInfoBar.IsOpen = true;
     }
 
     private static void WriteCrashLog(string where, Exception ex)
