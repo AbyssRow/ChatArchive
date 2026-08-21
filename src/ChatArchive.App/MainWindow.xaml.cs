@@ -21,35 +21,51 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
-        InitializeComponent();
-
-        var services = AppServices.Instance;
-        var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
-        _conversations = new ConversationListViewModel(services.Conversations, dispatcher);
-        _timeline = new TimelineViewModel(services.Conversations, services.MediaLocator, dispatcher);
-        _search = new SearchViewModel(services.Search, dispatcher);
-        _stats = new StatsViewModel(services.Stats);
-        _import = new ImportViewModel(services.Database, dispatcher);
-
-        _conversations.ConversationActivated += conversation => _timeline.Load(conversation);
-        _timeline.PropertyChanged += (_, e) =>
+        try
         {
-            if (e.PropertyName == nameof(TimelineViewModel.IsLoading))
-            {
-                LoadMoreBar.Visibility = _timeline.IsLoading ? Visibility.Visible : Visibility.Collapsed;
-            }
-            else if (e.PropertyName == nameof(TimelineViewModel.Title))
-            {
-                TimelineTitle.Text = _timeline.Title;
-            }
-        };
-        _timeline.Entries.CollectionChanged += (_, _) => TryScrollToBottomIfNearEnd();
+            InitializeComponent();
 
-        ConversationListControl.ItemsSource = _conversations.Conversations;
-        MessageListControl.ItemsSource = _timeline.Entries;
+            var services = AppServices.Instance;
+            var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+            _conversations = new ConversationListViewModel(services.Conversations, dispatcher);
+            _timeline = new TimelineViewModel(services.Conversations, services.MediaLocator, dispatcher);
+            _search = new SearchViewModel(services.Search, dispatcher);
+            _stats = new StatsViewModel(services.Stats);
+            _import = new ImportViewModel(services.Database, dispatcher);
 
-        _conversations.Reload();
-        HookMessageScroll();
+            _conversations.ConversationActivated += conversation => _timeline.Load(conversation);
+            _timeline.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(TimelineViewModel.IsLoading))
+                {
+                    LoadMoreBar.Visibility = _timeline.IsLoading ? Visibility.Visible : Visibility.Collapsed;
+                }
+                else if (e.PropertyName == nameof(TimelineViewModel.Title))
+                {
+                    TimelineTitle.Text = _timeline.Title;
+                }
+            };
+
+            ConversationListControl.ItemsSource = _conversations.Conversations;
+            MessageListControl.ItemsSource = _timeline.Entries;
+
+            _conversations.Reload();
+            HookMessageScroll();
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                File.AppendAllText(
+                    Path.Combine(AppContext.BaseDirectory, "crash.log"),
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] MainWindow ctor: {ex}\n\n");
+            }
+            catch
+            {
+            }
+
+            throw;
+        }
     }
 
     private void Nav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)

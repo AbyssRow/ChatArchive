@@ -102,8 +102,16 @@
         </NavigationView.Resources>
 
         <NavigationView.MenuItems>
-            <NavigationViewItem Content="会话" Tag="conversations" Icon="Chat" IsSelected="True" />
-            <NavigationViewItem Content="搜索" Tag="search" Icon="Find" />
+            <NavigationViewItem Content="会话" Tag="conversations" IsSelected="True">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE8BD;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem Content="搜索" Tag="search">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE721;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
             <NavigationViewItem Content="统计" Tag="stats">
                 <NavigationViewItem.Icon>
                     <FontIcon Glyph="&#xE9D2;" />
