@@ -31,11 +31,16 @@ public sealed class MessageEntry : TimelineEntry
             .LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
         IsIncoming = message.Direction == "incoming";
         IsOutgoing = message.Direction == "outgoing";
-        ImagePath = message.Attachments
-            .Where(a => a.Kind is "image" or "sticker" or "emoji" && a.IsAvailable)
-            .Select(a => locator.Resolve(a.MediaSha256, a.ManagedPath, a.SourcePath))
-            .FirstOrDefault(p => p is not null);
-        MissingMediaCount = message.Attachments.Count(a => !a.IsAvailable);
+
+        // 以“现在能否实际定位到文件”为准，而不是库里迁移前的 is_available 标记。
+        var resolved = message.Attachments
+            .Select(a => (Attachment: a, Path: locator.Resolve(a.MediaSha256, a.ManagedPath, a.SourcePath)))
+            .ToList();
+        ImagePath = resolved
+            .Where(r => r.Path is not null && r.Attachment.Kind is "image" or "sticker" or "emoji")
+            .Select(r => r.Path)
+            .FirstOrDefault();
+        MissingMediaCount = resolved.Count(r => r.Path is null);
     }
 
     public MessageItem Message { get; }

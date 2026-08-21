@@ -12,7 +12,7 @@ public partial class SearchViewModel : ObservableObject
     private readonly SearchRepository _repository;
     private readonly DispatcherQueue _dispatcher;
 
-    public ObservableCollection<SearchHit> Results { get; } = new();
+    public ObservableCollection<SearchHitProxy> Results { get; } = new();
 
     [ObservableProperty]
     public partial string Query { get; set; } = string.Empty;
@@ -101,7 +101,7 @@ public partial class SearchViewModel : ObservableObject
             {
                 foreach (var hit in page.Items)
                 {
-                    Results.Add(hit);
+                    Results.Add(new SearchHitProxy(hit));
                 }
 
                 ModeLabel = page.Mode switch
@@ -122,3 +122,4 @@ public partial class SearchViewModel : ObservableObject
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 }
+

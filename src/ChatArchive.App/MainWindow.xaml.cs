@@ -27,12 +27,24 @@ public sealed partial class MainWindow : Window
         {
             InitializeComponent();
 
+            // 标题栏与窗口背景：内容延伸进标题栏，Mica 材质与 Fluent 主题融合。
+            ExtendsContentIntoTitleBar = true;
+            SetTitleBar(AppTitleBar);
+            try
+            {
+                SystemBackdrop = new MicaBackdrop();
+            }
+            catch (Exception)
+            {
+                // 不支持 Mica 的系统回退默认背景。
+            }
+
             var services = AppServices.Instance;
             var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
             _conversations = new ConversationListViewModel(services.Conversations, dispatcher);
             _timeline = new TimelineViewModel(services.Conversations, services.MediaLocator, dispatcher);
             _search = new SearchViewModel(services.Search, dispatcher);
-            _stats = new StatsViewModel(services.Stats);
+            _stats = new StatsViewModel(services.Stats, dispatcher);
             _import = new ImportViewModel(services.Database, dispatcher);
 
             _conversations.ConversationActivated += conversation => _timeline.Load(conversation);
@@ -81,6 +93,12 @@ public sealed partial class MainWindow : Window
             ConversationListControl.ItemsSource = _conversations.Conversations;
             MessageListControl.ItemsSource = _timeline.Entries;
             SearchResultsList.ItemsSource = _search.Results;
+
+            // 侧栏收起时隐藏导入按钮，展开时恢复。
+            ImportButton.Visibility = Nav.IsPaneOpen ? Visibility.Visible : Visibility.Collapsed;
+            Nav.PaneOpened += (_, _) => ImportButton.Visibility = Visibility.Visible;
+            Nav.PaneClosing += (_, args) =>
+                ImportButton.Visibility = args.Cancel ? Visibility.Visible : Visibility.Collapsed;
 
             _conversations.Reload();
             HookMessageScroll();

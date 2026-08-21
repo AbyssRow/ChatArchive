@@ -6,7 +6,17 @@
     xmlns:local="using:ChatArchive.App.Views"
     xmlns:vm="using:ChatArchive.App.ViewModels"
     Title="聊天档案">
-    <NavigationView x:Name="Nav"
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid x:Name="AppTitleBar" Height="36" Background="Transparent">
+            <TextBlock Text="聊天档案" Margin="16,0,0,0"
+                       VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold" Opacity="0.85" />
+        </Grid>
+
+    <NavigationView x:Name="Nav" Grid.Row="1"
                     PaneDisplayMode="Left"
                     IsBackButtonVisible="Collapsed"
                     IsSettingsVisible="False"
@@ -126,7 +136,7 @@
             </NavigationViewItem>
         </NavigationView.MenuItems>
         <NavigationView.PaneFooter>
-            <Button Content="导入聊天记录" Margin="12,8"
+            <Button x:Name="ImportButton" Content="导入聊天记录" Margin="12,8"
                     HorizontalAlignment="Stretch" Click="OnImportClick" />
         </NavigationView.PaneFooter>
 
@@ -269,4 +279,8 @@
             </ScrollViewer>
         </Grid>
     </NavigationView>
+    </Grid>
 </Window>
+
+
+
