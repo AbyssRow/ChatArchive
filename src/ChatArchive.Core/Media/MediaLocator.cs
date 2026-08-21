@@ -16,19 +16,32 @@ public sealed class MediaLocator
     {
         if (!string.IsNullOrEmpty(sha256))
         {
+            var prefixDir = Path.Combine(_mediaDir, sha256[..2]);
             var suffix = Path.GetExtension(managedPath ?? string.Empty);
-            var candidates = new List<string>(2);
             if (suffix.Length > 0 && suffix.Length <= 12 && IsPlainExtension(suffix))
             {
-                candidates.Add(Path.Combine(_mediaDir, sha256[..2], sha256 + suffix));
+                var exact = Path.Combine(prefixDir, sha256 + suffix);
+                if (File.Exists(exact))
+                {
+                    return exact;
+                }
             }
 
-            candidates.Add(Path.Combine(_mediaDir, sha256[..2], sha256));
-            foreach (var candidate in candidates)
+            var bare = Path.Combine(prefixDir, sha256);
+            if (File.Exists(bare))
             {
-                if (File.Exists(candidate))
+                return bare;
+            }
+
+            if (Directory.Exists(prefixDir))
+            {
+                var match = Directory
+                    .EnumerateFiles(prefixDir, sha256 + ".*")
+                    .OrderBy(f => f.Length)
+                    .FirstOrDefault();
+                if (match is not null)
                 {
-                    return candidate;
+                    return match;
                 }
             }
         }
