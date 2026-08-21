@@ -231,6 +231,11 @@ public sealed partial class MainWindow : Window
 
     private void Filter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_conversations is null)
+        {
+            return;
+        }
+
         if (FilterCombo.SelectedItem is ComboBoxItem item && item.Tag is string tags)
         {
             var parts = tags.Split('|');
@@ -242,6 +247,11 @@ public sealed partial class MainWindow : Window
 
     private void ConversationList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_conversations is null)
+        {
+            return;
+        }
+
         if (ConversationListControl.SelectedItem is ConversationInfo conversation)
         {
             _conversations.SelectedConversation = conversation;
@@ -424,10 +434,12 @@ public sealed partial class MainWindow : Window
 
     private void SearchFilter_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (_search.HasSearched)
+        if (_search is null || !_search.HasSearched)
         {
-            RunSearch();
+            return;
         }
+
+        RunSearch();
     }
 
     private void OnSearchLoadMoreClick(object sender, RoutedEventArgs e)
