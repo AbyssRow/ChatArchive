@@ -19,6 +19,7 @@ public sealed partial class MainWindow : Window
     private readonly SearchViewModel _search;
     private readonly StatsViewModel _stats;
     private readonly ImportViewModel _import;
+    private readonly TimelineInitialPositionState _initialTimelinePosition = new();
     private CancellationTokenSource? _queryDebounce;
     private ScrollViewer? _messageScroll;
     private bool _messagePagingReady;
@@ -351,6 +352,8 @@ public sealed partial class MainWindow : Window
                     _messageScroll.ViewChanged += MessageScroll_ViewChanged;
                 }
             }
+
+            TryPositionTimelineAtBottom();
         };
     }
 
@@ -372,14 +375,24 @@ public sealed partial class MainWindow : Window
 
     private void PositionTimelineAtBottom()
     {
+        _initialTimelinePosition.RequestBottom();
         _messagePagingReady = false;
+        TryPositionTimelineAtBottom();
+    }
+
+    private void TryPositionTimelineAtBottom()
+    {
+        var last = _timeline.Entries.LastOrDefault();
+        if (!_initialTimelinePosition.TryTakeBottomRequest(
+                canPosition: _messageScroll is not null && last is not null))
+        {
+            return;
+        }
+
         DispatcherQueue.TryEnqueue(() =>
         {
             MessageListControl.UpdateLayout();
-            if (_timeline.Entries.LastOrDefault() is { } last)
-            {
-                MessageListControl.ScrollIntoView(last);
-            }
+            MessageListControl.ScrollIntoView(last);
 
             DispatcherQueue.TryEnqueue(() =>
             {

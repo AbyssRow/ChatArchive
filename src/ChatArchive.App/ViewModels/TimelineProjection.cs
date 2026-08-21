@@ -50,8 +50,10 @@ public static class TimelineProjection
 
     private static readonly string[] TechnicalPrefixes =
     {
-        "[图片]", "[文件]", "[视频]", "[语音]", "[表情包]", "[动画表情]",
-        "[image]", "[file]", "[video]", "[audio]", "[voice]", "[emoji]",
+        "[图片]", "[图片:", "[文件]", "[文件:", "[视频]", "[视频:",
+        "[语音]", "[语音:", "[表情包]", "[表情包:", "[动画表情]", "[动画表情:",
+        "[image]", "[image:", "[file]", "[file:", "[video]", "[video:",
+        "[audio]", "[audio:", "[voice]", "[voice:", "[emoji]", "[emoji:",
     };
 
     public static MessageProjection ProjectMessage(MessageItem message, MediaLocator locator)
@@ -70,7 +72,8 @@ public static class TimelineProjection
                 true));
         }
 
-        var displayContent = IsTechnicalContent(message.Content, message.Attachments)
+        var displayContent = IsMediaMessage(message)
+                             && IsTechnicalContent(message.Content, message.Attachments)
             ? string.Empty
             : message.Content;
         return new MessageProjection(displayContent, attachments);
@@ -84,6 +87,11 @@ public static class TimelineProjection
         DateOnly? previousDate = null;
         foreach (var message in messages)
         {
+            if (IsTimelineNoise(message))
+            {
+                continue;
+            }
+
             var local = DateTimeOffset
                 .FromUnixTimeMilliseconds(message.TimestampMs)
                 .LocalDateTime;
@@ -100,6 +108,12 @@ public static class TimelineProjection
         }
 
         return entries;
+    }
+
+    private static bool IsTimelineNoise(MessageItem message)
+    {
+        return message.IsSystem
+            && string.Equals(message.Content.Trim(), "群聊更新", StringComparison.Ordinal);
     }
 
     public static void PrependOlder(

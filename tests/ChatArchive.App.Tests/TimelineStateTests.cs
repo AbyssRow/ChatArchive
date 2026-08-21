@@ -39,6 +39,18 @@ public sealed class TimelineStateTests
         Assert.True(state.IsCurrent(request));
     }
 
+    [Fact]
+    public void Initial_bottom_request_waits_until_the_list_can_be_positioned()
+    {
+        var state = new TimelineInitialPositionState();
+
+        state.RequestBottom();
+
+        Assert.False(state.TryTakeBottomRequest(canPosition: false));
+        Assert.True(state.TryTakeBottomRequest(canPosition: true));
+        Assert.False(state.TryTakeBottomRequest(canPosition: true));
+    }
+
     private static MessageItem Message(long id, long timestampMs)
     {
         return new MessageItem(

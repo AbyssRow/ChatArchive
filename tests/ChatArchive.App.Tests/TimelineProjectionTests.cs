@@ -40,6 +40,35 @@ public sealed class TimelineProjectionTests : IDisposable
     }
 
     [Fact]
+    public void Available_attachment_hides_colon_style_image_placeholder()
+    {
+        var file = Path.Combine(_directory, "6045FA2ADFAD1215757915BF886BC674.jpg");
+        File.WriteAllText(file, "image");
+        var attachment = Attachment(
+            kind: "image",
+            filename: Path.GetFileName(file),
+            sourcePath: file);
+
+        var result = TimelineProjection.ProjectMessage(
+            Message("text", "[图片:6045FA2ADFAD1215757915BF886BC674.jpg]", attachment),
+            new MediaLocator(_directory));
+
+        Assert.Equal(string.Empty, result.DisplayContent);
+        Assert.False(Assert.Single(result.Attachments).IsMissing);
+    }
+
+    [Fact]
+    public void Colon_style_text_without_media_context_remains_visible()
+    {
+        var result = TimelineProjection.ProjectMessage(
+            Message("text", "[图片:这只是普通文字]"),
+            new MediaLocator(_directory));
+
+        Assert.Equal("[图片:这只是普通文字]", result.DisplayContent);
+        Assert.Empty(result.Attachments);
+    }
+
+    [Fact]
     public void Missing_and_implicit_media_are_reported()
     {
         var locator = new MediaLocator(_directory);
@@ -116,6 +145,25 @@ public sealed class TimelineProjectionTests : IDisposable
             new MediaLocator(_directory))[1]);
 
         Assert.Equal("09:08:07", entry.TimeText);
+    }
+
+    [Fact]
+    public void Exact_system_group_update_is_omitted_from_timeline()
+    {
+        var messages = new[]
+        {
+            Message(1, LocalTimestamp(2026, 8, 20, 9), "之前"),
+            new MessageItem(
+                2, 1, null, "系统", "system", "system", null,
+                "群聊更新", false, true, LocalTimestamp(2026, 8, 20, 10),
+                Array.Empty<AttachmentInfo>()),
+            Message(3, LocalTimestamp(2026, 8, 20, 11), "之后"),
+        };
+
+        var entries = TimelineProjection.BuildEntries(messages, new MediaLocator(_directory));
+
+        Assert.Equal(new long[] { 1, 3 }, entries.OfType<MessageEntry>().Select(entry => entry.Message.Id));
+        Assert.Single(entries.OfType<DateSeparatorEntry>());
     }
 
     private static MessageItem Message(string type, string content, params AttachmentInfo[] attachments)
