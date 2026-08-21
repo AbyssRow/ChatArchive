@@ -146,7 +146,8 @@ public partial class TimelineViewModel : ObservableObject
                 IsLoading = false;
                 if (!task.IsCompletedSuccessfully)
                 {
-                    ErrorMessage = "定位消息失败";
+                    var message = task.Exception?.GetBaseException().Message ?? "未知错误";
+                    ErrorMessage = $"定位消息失败：{message}";
                     return;
                 }
 

@@ -73,6 +73,7 @@ public partial class SearchViewModel : ObservableObject
 
     public void LoadOptions()
     {
+        ErrorMessage = string.Empty;
         Task.Run(() => (
             Conversations: _conversations.ListConversations(limit: 1000),
             Filters: _repository.GetFilterOptions())).ContinueWith(task =>
@@ -81,7 +82,8 @@ public partial class SearchViewModel : ObservableObject
             {
                 if (!task.IsCompletedSuccessfully)
                 {
-                    ErrorMessage = "加载搜索筛选项失败";
+                    var message = task.Exception?.GetBaseException().Message ?? "未知错误";
+                    ErrorMessage = $"加载搜索筛选项失败：{message}";
                     return;
                 }
 

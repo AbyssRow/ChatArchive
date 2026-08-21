@@ -111,7 +111,11 @@ public sealed partial class MainWindow : Window
                     ShowError(_search.ErrorMessage);
                 }
             };
-            _import.ImportFinished += () => _conversations.Reload();
+            _import.ImportFinished += () =>
+            {
+                _conversations.Reload();
+                _search.LoadOptions();
+            };
             _import.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName == nameof(ImportViewModel.IsRunning))
