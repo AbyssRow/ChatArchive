@@ -1,0 +1,65 @@
+using ChatArchive.Core.Media;
+using Xunit;
+
+namespace ChatArchive.Core.Tests;
+
+public class MediaLocatorTests : IDisposable
+{
+    private readonly string _dir;
+
+    public MediaLocatorTests()
+    {
+        _dir = Path.Combine(Path.GetTempPath(), $"chatarchive-media-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_dir);
+    }
+
+    [Fact]
+    public void Resolves_by_sha256_layout_first()
+    {
+        var sha = new string('a', 64);
+        var sub = Path.Combine(_dir, sha[..2]);
+        Directory.CreateDirectory(sub);
+        var managed = Path.Combine(sub, sha + ".jpg");
+        File.WriteAllText(managed, "x");
+
+        var locator = new MediaLocator(_dir);
+        Assert.Equal(managed, locator.Resolve(sha));
+        Assert.Equal(
+            managed,
+            locator.Resolve(sha, managedPath: @"E:\backup\old\other.jpg"));
+    }
+
+    [Fact]
+    public void Falls_back_to_managed_then_source()
+    {
+        var locator = new MediaLocator(_dir);
+        var sourceFile = Path.Combine(_dir, "src.bin");
+        File.WriteAllText(sourceFile, "x");
+
+        Assert.Null(locator.Resolve(new string('b', 64)));
+        Assert.Null(locator.Resolve(null));
+
+        var managedFile = Path.Combine(_dir, "managed.png");
+        File.WriteAllText(managedFile, "x");
+        Assert.Equal(managedFile, locator.Resolve("missing", managedFile, sourceFile));
+        Assert.Equal(sourceFile, locator.Resolve("missing", null, sourceFile));
+    }
+
+    [Fact]
+    public void Weird_suffix_skips_derivation()
+    {
+        var sha = new string('c', 64);
+        Assert.Null(new MediaLocator(_dir).Resolve(sha, managedPath: @"E:\x\y.we!rd"));
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_dir, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+}
