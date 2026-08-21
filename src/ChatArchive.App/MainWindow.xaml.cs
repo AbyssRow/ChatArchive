@@ -46,7 +46,7 @@ public sealed partial class MainWindow : Window
             var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
             _conversations = new ConversationListViewModel(services.Conversations, dispatcher);
             _timeline = new TimelineViewModel(services.Conversations, services.MediaLocator, dispatcher);
-            _search = new SearchViewModel(services.Search, dispatcher);
+            _search = new SearchViewModel(services.Search, services.Conversations, dispatcher);
             _stats = new StatsViewModel(services.Stats, dispatcher);
             _import = new ImportViewModel(services.Database, dispatcher);
 
@@ -84,16 +84,23 @@ public sealed partial class MainWindow : Window
                 if (e.PropertyName == nameof(SearchViewModel.IsLoading))
                 {
                     SearchProgress.Visibility = _search.IsLoading ? Visibility.Visible : Visibility.Collapsed;
+                    if (!_search.IsLoading && _search.HasSearched)
+                    {
+                        UpdateSearchSummary();
+                    }
                 }
-                else if (e.PropertyName == nameof(SearchViewModel.HasSearched))
+                else if (e.PropertyName is nameof(SearchViewModel.HasSearched)
+                         or nameof(SearchViewModel.HasMore))
                 {
-                    SearchLoadMore.Visibility =
-                        _search.HasSearched && !string.IsNullOrEmpty(_search.ModeLabel)
-                            ? Visibility.Visible
-                            : Visibility.Collapsed;
-                    SearchModeLabel.Text = _search.Results.Count > 0
-                        ? $"共 {_search.Results.Count:N0} 条（{_search.ModeLabel}）"
-                        : _search.ModeLabel;
+                    SearchLoadMore.Visibility = _search.HasMore
+                        ? Visibility.Visible
+                        : Visibility.Collapsed;
+                    UpdateSearchSummary();
+                }
+                else if (e.PropertyName == nameof(SearchViewModel.ErrorMessage)
+                         && _search.ErrorMessage.Length > 0)
+                {
+                    ShowError(_search.ErrorMessage);
                 }
             };
             _import.ImportFinished += () => _conversations.Reload();
@@ -108,6 +115,9 @@ public sealed partial class MainWindow : Window
             ConversationListControl.ItemsSource = _conversations.Conversations;
             MessageListControl.ItemsSource = _timeline.Entries;
             SearchResultsList.ItemsSource = _search.Results;
+            SearchConversationCombo.ItemsSource = _search.ConversationOptions;
+            SearchMessageTypeCombo.ItemsSource = _search.MessageTypeOptions;
+            _search.LoadOptions();
 
             // 侧栏收起时隐藏导入按钮，展开时恢复。
             ImportButton.Visibility = Nav.IsPaneOpen ? Visibility.Visible : Visibility.Collapsed;
@@ -536,6 +546,19 @@ public sealed partial class MainWindow : Window
         RunSearch();
     }
 
+    private void SearchFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        SearchFilter_Changed(sender, e);
+    }
+
+    private void SearchDate_Changed(CalendarDatePicker sender, CalendarDatePickerDateChangedEventArgs args)
+    {
+        if (_search is not null && _search.HasSearched)
+        {
+            RunSearch();
+        }
+    }
+
     private void OnSearchLoadMoreClick(object sender, RoutedEventArgs e)
     {
         _search.LoadMoreCommand.Execute(null);
@@ -555,7 +578,18 @@ public sealed partial class MainWindow : Window
         _search.PlatformFilter = ComboTag(SearchPlatformCombo);
         _search.KindFilter = ComboTag(SearchKindCombo);
         _search.SenderFilter = SearchSenderBox.Text;
+        _search.ConversationFilter = SearchConversationCombo.SelectedValue as long?;
+        _search.MessageTypeFilter = SearchMessageTypeCombo.SelectedValue as string;
+        _search.DateFrom = SearchDateFromPicker.Date;
+        _search.DateTo = SearchDateToPicker.Date;
         _search.ExecuteCommand.Execute(null);
+    }
+
+    private void UpdateSearchSummary()
+    {
+        SearchModeLabel.Text = _search.Results.Count > 0
+            ? $"已加载 {_search.Results.Count:N0} 条（{_search.ModeLabel}）"
+            : _search.ModeLabel;
     }
 
     private static string ComboTag(ComboBox combo)

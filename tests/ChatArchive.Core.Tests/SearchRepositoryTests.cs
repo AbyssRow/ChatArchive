@@ -14,17 +14,18 @@ public class SearchRepositoryTests : IDisposable
         _repository = new SearchRepository(_archive.Db);
     }
 
-    private void Seed()
+    private (long Qq, long Group) Seed()
     {
         var qq = TestArchive.AddConversation(_archive.Open(), "qq1", "老张");
         var group = TestArchive.AddConversation(_archive.Open(), "wx1", "工作群", kind: "group", platform: "wechat");
 
         _archive.AddMessage(qq, null, 1_700_000_000_000, "今天天气不错");
         _archive.AddMessage(qq, null, 1_700_000_100_000, "明天可能下雨", direction: "outgoing");
-        _archive.AddMessage(group, null, 1_700_000_200_000, "天气预报说明天下雨", platform: "wechat");
+        _archive.AddMessage(group, null, 1_700_000_200_000, "天气预报说明天下雨", messageType: "image", platform: "wechat");
         _archive.AddMessage(group, null, 1_700_000_300_000, "好的收到", platform: "wechat");
         _archive.RefreshCounts(_archive.Open(), qq);
         _archive.RefreshCounts(_archive.Open(), group);
+        return (qq, group);
     }
 
     [Fact]
@@ -60,6 +61,28 @@ public class SearchRepositoryTests : IDisposable
 
         var bySender = _repository.Search("下雨", new SearchFilter(Sender: "Alice"));
         Assert.Equal(2, bySender.Items.Count);
+    }
+
+    [Fact]
+    public void Conversation_message_type_and_date_filters_combine()
+    {
+        var (_, group) = Seed();
+        const long timestamp = 1_700_000_200_000;
+
+        var page = _repository.Search("下雨", new SearchFilter(
+            ConversationId: group,
+            MessageType: "image",
+            DateFromMs: timestamp,
+            DateToExclusiveMs: timestamp + 1));
+
+        var hit = Assert.Single(page.Items);
+        Assert.Equal(group, hit.ConversationId);
+        Assert.Equal("image", hit.MessageType);
+        Assert.Equal(timestamp, hit.TimestampMs);
+
+        Assert.Empty(_repository.Search("下雨", new SearchFilter(
+            ConversationId: group,
+            DateToExclusiveMs: timestamp)).Items);
     }
 
     [Fact]

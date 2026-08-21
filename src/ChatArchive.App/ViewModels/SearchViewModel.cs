@@ -10,9 +10,13 @@ namespace ChatArchive.App.ViewModels;
 public partial class SearchViewModel : ObservableObject
 {
     private readonly SearchRepository _repository;
+    private readonly ConversationRepository _conversations;
     private readonly DispatcherQueue _dispatcher;
+    private readonly SearchRequestState _requestState = new();
 
     public ObservableCollection<SearchHitProxy> Results { get; } = new();
+    public ObservableCollection<SearchConversationOption> ConversationOptions { get; } = new();
+    public ObservableCollection<SearchMessageTypeOption> MessageTypeOptions { get; } = new();
 
     [ObservableProperty]
     public partial string Query { get; set; } = string.Empty;
@@ -35,26 +39,105 @@ public partial class SearchViewModel : ObservableObject
     [ObservableProperty]
     public partial string? SenderFilter { get; set; }
 
-    private string? _cursor;
+    [ObservableProperty]
+    public partial long? ConversationFilter { get; set; }
+
+    [ObservableProperty]
+    public partial string? MessageTypeFilter { get; set; }
+
+    [ObservableProperty]
+    public partial DateTimeOffset? DateFrom { get; set; }
+
+    [ObservableProperty]
+    public partial DateTimeOffset? DateTo { get; set; }
+
+    [ObservableProperty]
+    public partial bool HasMore { get; set; }
+
+    [ObservableProperty]
+    public partial string ErrorMessage { get; set; } = string.Empty;
 
     public event Action<SearchHit>? ResultActivated;
 
-    public SearchViewModel(SearchRepository repository, DispatcherQueue dispatcher)
+    public SearchViewModel(
+        SearchRepository repository,
+        ConversationRepository conversations,
+        DispatcherQueue dispatcher)
     {
         _repository = repository;
+        _conversations = conversations;
         _dispatcher = dispatcher;
+        ConversationOptions.Add(new SearchConversationOption(null, "全部会话"));
+        MessageTypeOptions.Add(new SearchMessageTypeOption(null, "全部消息类型"));
+    }
+
+    public void LoadOptions()
+    {
+        Task.Run(() => (
+            Conversations: _conversations.ListConversations(limit: 1000),
+            Filters: _repository.GetFilterOptions())).ContinueWith(task =>
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (!task.IsCompletedSuccessfully)
+                {
+                    ErrorMessage = "加载搜索筛选项失败";
+                    return;
+                }
+
+                ConversationOptions.Clear();
+                ConversationOptions.Add(new SearchConversationOption(null, "全部会话"));
+                foreach (var conversation in task.Result.Conversations)
+                {
+                    var platform = conversation.Platform == "wechat" ? "微信" : "QQ";
+                    ConversationOptions.Add(new SearchConversationOption(
+                        conversation.Id,
+                        $"{platform} · {conversation.Title}"));
+                }
+
+                MessageTypeOptions.Clear();
+                MessageTypeOptions.Add(new SearchMessageTypeOption(null, "全部消息类型"));
+                foreach (var option in task.Result.Filters.MessageTypes)
+                {
+                    MessageTypeOptions.Add(new SearchMessageTypeOption(
+                        option.Value,
+                        MessageTypeLabel(option.Value, option.Amount)));
+                }
+            });
+        });
     }
 
     [RelayCommand]
     private void Execute()
     {
-        _cursor = null;
+        if (string.IsNullOrWhiteSpace(Query))
+        {
+            return;
+        }
+
         Results.Clear();
-        RunPage(reset: true);
+        HasMore = false;
+        ErrorMessage = string.Empty;
+        var filter = SearchFilterBuilder.Build(
+            PlatformFilter,
+            KindFilter,
+            ConversationFilter,
+            SenderFilter,
+            MessageTypeFilter,
+            DateFrom,
+            DateTo);
+        var request = _requestState.Start(Query.Trim(), filter);
+        RunPage(request);
     }
 
     [RelayCommand]
-    private void LoadMore() => RunPage(reset: false);
+    private void LoadMore()
+    {
+        if (!IsLoading && _requestState.Continue() is { } request)
+        {
+            RunPage(request);
+        }
+    }
 
     public void NotifyResultActivated(SearchHit hit) => ResultActivated?.Invoke(hit);
 
@@ -65,40 +148,43 @@ public partial class SearchViewModel : ObservableObject
             HasSearched = false;
             Results.Clear();
             ModeLabel = string.Empty;
-            _cursor = null;
+            HasMore = false;
+            ErrorMessage = string.Empty;
+            _requestState.Clear();
         }
     }
 
-    private void RunPage(bool reset)
+    private void RunPage(SearchRequest request)
     {
-        if (string.IsNullOrWhiteSpace(Query))
-        {
-            return;
-        }
-
         IsLoading = true;
-        var queryText = Query.Trim();
-        var filter = new SearchFilter(
-            Platform: EmptyToNull(PlatformFilter),
-            Kind: EmptyToNull(KindFilter),
-            Sender: EmptyToNull(SenderFilter));
-        var cursor = reset ? null : _cursor;
 
         Task.Run(() =>
         {
             SearchHitPage page;
             try
             {
-                page = _repository.Search(queryText, filter, cursor, 60);
+                page = _repository.Search(request.Query, request.Filter, request.Cursor, 60);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                _dispatcher.TryEnqueue(() => IsLoading = false);
+                _dispatcher.TryEnqueue(() =>
+                {
+                    if (_requestState.IsCurrent(request))
+                    {
+                        ErrorMessage = $"搜索失败：{ex.Message}";
+                        IsLoading = false;
+                    }
+                });
                 return;
             }
 
             _dispatcher.TryEnqueue(() =>
             {
+                if (!_requestState.ApplyPage(request, page.NextCursor))
+                {
+                    return;
+                }
+
                 foreach (var hit in page.Items)
                 {
                     Results.Add(new SearchHitProxy(hit));
@@ -111,15 +197,31 @@ public partial class SearchViewModel : ObservableObject
                     _ => string.Empty,
                 };
                 HasSearched = true;
-                _cursor = page.NextCursor;
+                HasMore = _requestState.HasMore;
                 IsLoading = false;
             });
         });
     }
 
-    private static string? EmptyToNull(string? value)
+    private static string MessageTypeLabel(string value, long amount)
     {
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        var label = value switch
+        {
+            "text" => "文本",
+            "image" => "图片",
+            "file" => "文件",
+            "video" => "视频",
+            "audio" or "voice" => "语音",
+            "emoji" or "sticker" => "表情",
+            "reply" => "引用",
+            "system" => "系统消息",
+            _ => value,
+        };
+        return $"{label}（{amount:N0}）";
     }
 }
+
+public sealed record SearchConversationOption(long? Id, string Label);
+
+public sealed record SearchMessageTypeOption(string? Value, string Label);
 
