@@ -14,7 +14,23 @@
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <AppxPackage>false</AppxPackage>
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
   </PropertyGroup>
+
+  <!--
+    WindowsAppSDK 自包含部署默认拷贝全部语言的 .mui 资源；
+    用官方预留的排除清单只保留 zh-CN（在复制清单生成前剔除）。
+    注意：必须用与 WindowsAppSdkComponentPackages 完全相同的路径前缀
+    （含字面量 buildTransitive\.. 段），Remove 按字符串原样匹配。
+  -->
+  <Target Name="KeepOnlyZhCnWinAppSdkResources"
+          BeforeTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents">
+    <ItemGroup>
+      <_ChatArchiveMuiAll Include="%(WindowsAppSdkComponentPackages.Identity)runtimes-framework\win-x64\native\**\*.mui" />
+      <_ChatArchiveMuiZh Include="%(WindowsAppSdkComponentPackages.Identity)runtimes-framework\win-x64\native\zh-CN\**\*.mui" />
+      <MicrosoftWindowsAppSDKFilesExcluded Include="@(_ChatArchiveMuiAll)" Exclude="@(_ChatArchiveMuiZh)" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
@@ -24,5 +40,4 @@
   <ItemGroup>
     <ProjectReference Include="..\ChatArchive.Core\ChatArchive.Core.csproj" />
   </ItemGroup>
-
 </Project>

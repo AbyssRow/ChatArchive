@@ -50,6 +50,7 @@ public sealed class MessageEntry : TimelineEntry
     public string? ImagePath { get; }
     public int MissingMediaCount { get; }
     public string MissingMediaText => $"缺失媒体 ×{MissingMediaCount}";
+    public bool HasMissingMedia => MissingMediaCount > 0;
     public bool HasAttachments => Message.Attachments.Count > 0;
 }
 
