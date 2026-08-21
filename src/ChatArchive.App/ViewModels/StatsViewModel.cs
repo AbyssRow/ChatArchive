@@ -12,6 +12,9 @@ public partial class StatsViewModel : ObservableObject
     [ObservableProperty]
     public partial string SummaryLines { get; set; } = "加载中…";
 
+    [ObservableProperty]
+    public partial string ErrorMessage { get; set; } = string.Empty;
+
     public StatsViewModel(StatsRepository repository, DispatcherQueue dispatcher)
     {
         _repository = repository;
@@ -20,6 +23,7 @@ public partial class StatsViewModel : ObservableObject
 
     public void Load()
     {
+        ErrorMessage = string.Empty;
         Task.Run(() => _repository.GetStats()).ContinueWith(t =>
         {
             if (t.IsCompletedSuccessfully)
@@ -32,6 +36,11 @@ public partial class StatsViewModel : ObservableObject
                     $"附件 {Format(s.AttachmentCount)}，可用 {Format(s.AvailableAttachments)}，缺失 {Format(s.MissingAttachments)}\n" +
                     $"媒体文件 {Format(s.MediaFileCount)}，共 {FormatBytes(s.MediaTotalBytes)}";
                 _dispatcher.TryEnqueue(() => SummaryLines = text);
+            }
+            else
+            {
+                var message = t.Exception?.GetBaseException().Message ?? "未知错误";
+                _dispatcher.TryEnqueue(() => ErrorMessage = $"加载统计失败：{message}");
             }
         });
     }

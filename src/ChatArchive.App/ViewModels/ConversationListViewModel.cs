@@ -10,6 +10,7 @@ public partial class ConversationListViewModel : ObservableObject
 {
     private readonly ChatArchive.Core.Repositories.ConversationRepository _repository;
     private readonly DispatcherQueue _dispatcher;
+    private readonly LatestRequestGate _requestGate = new();
 
     public ObservableCollection<ConversationInfo> Conversations { get; } = new();
 
@@ -28,6 +29,9 @@ public partial class ConversationListViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsLoading { get; set; }
 
+    [ObservableProperty]
+    public partial string ErrorMessage { get; set; } = string.Empty;
+
     public event Action<ConversationInfo>? ConversationActivated;
 
     public ConversationListViewModel(
@@ -40,18 +44,32 @@ public partial class ConversationListViewModel : ObservableObject
 
     public void Reload()
     {
+        var request = _requestGate.Next();
         var platform = PlatformFilter;
         var kind = KindFilter;
         var query = Query;
-        Task.Run(() =>
+        IsLoading = true;
+        ErrorMessage = string.Empty;
+        Task.Run(() => _repository.ListConversations(
+            Normalize(platform), Normalize(kind),
+            string.IsNullOrWhiteSpace(query) ? null : query.Trim())).ContinueWith(task =>
         {
-            var items = _repository.ListConversations(
-                Normalize(platform), Normalize(kind),
-                string.IsNullOrWhiteSpace(query) ? null : query.Trim());
             _dispatcher.TryEnqueue(() =>
             {
+                if (!_requestGate.IsCurrent(request))
+                {
+                    return;
+                }
+
+                IsLoading = false;
+                if (!task.IsCompletedSuccessfully)
+                {
+                    ErrorMessage = $"加载会话失败：{task.Exception?.GetBaseException().Message}";
+                    return;
+                }
+
                 Conversations.Clear();
-                foreach (var item in items)
+                foreach (var item in task.Result)
                 {
                     Conversations.Add(item);
                 }

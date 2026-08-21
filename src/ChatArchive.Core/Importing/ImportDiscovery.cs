@@ -29,11 +29,14 @@ public static class ImportDiscovery
             }
             else if (Directory.Exists(root))
             {
-                foreach (var file in Directory.EnumerateFiles(root, "*.json", new EnumerationOptions
-                         {
-                             RecurseSubdirectories = true,
-                             IgnoreInaccessible = true,
-                         }))
+                foreach (var file in Directory.EnumerateFiles(
+                             root,
+                             "*.json",
+                             new EnumerationOptions
+                             {
+                                 RecurseSubdirectories = true,
+                                 IgnoreInaccessible = true,
+                             }))
                 {
                     Consider(file);
                 }

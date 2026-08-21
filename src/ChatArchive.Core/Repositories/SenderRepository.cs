@@ -57,8 +57,10 @@ public sealed class SenderRepository
             profileDisplayName,
             isSelf,
             aliases,
-            conversations.Select(c => c with { NameInConversation =
-                    nameInConversation.TryGetValue(c.ConversationId, out var n) ? n : currentName })
+            conversations.Select(c => c with
+            {
+                NameInConversation = nameInConversation.TryGetValue(c.ConversationId, out var n) ? n : currentName,
+            })
                 .ToList());
     }
 

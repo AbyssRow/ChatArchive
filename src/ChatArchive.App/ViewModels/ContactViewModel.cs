@@ -31,9 +31,9 @@ public partial class ContactViewModel : ObservableObject
         _repository = repository;
     }
 
-    public bool Load(long senderId)
+    public async Task<bool> LoadAsync(long senderId)
     {
-        var profile = Task.Run(() => _repository.GetSender(senderId)).GetAwaiter().GetResult();
+        var profile = await Task.Run(() => _repository.GetSender(senderId));
         if (profile is null)
         {
             return false;
@@ -42,8 +42,7 @@ public partial class ContactViewModel : ObservableObject
         DisplayName = profile.CurrentName;
         IdentityLine = (profile.Platform == "qq"
             ? $"QQ {profile.NativeId}"
-            : $"微信 {profile.NativeId}")
-            + (string.IsNullOrEmpty(profile.NativeId) ? string.Empty : string.Empty);
+            : $"微信 {profile.NativeId}");
         Aliases.Clear();
         foreach (var alias in profile.Aliases)
         {
