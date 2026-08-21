@@ -19,7 +19,7 @@ internal static class SenderDisplayName
         }
 
         var candidates = new Dictionary<long, List<Candidate>>();
-        var placeholders = string.Join(",", senderIds.Select(_ => "?"));
+        var placeholders = string.Join(",", senderIds.Select((_, i) => $"@p{i}"));
         using (var command = connection.CreateCommand())
         {
             command.CommandText = $$"""
