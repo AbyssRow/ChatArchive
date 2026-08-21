@@ -3,13 +3,184 @@
     x:Class="ChatArchive.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:ChatArchive.App.Views"
     Title="聊天档案">
-    <NavigationView x:Name="Nav" IsBackButtonVisible="Collapsed" PaneDisplayMode="Left">
+    <NavigationView x:Name="Nav"
+                    PaneDisplayMode="Left"
+                    IsBackButtonVisible="Collapsed"
+                    IsSettingsVisible="False"
+                    OpenPaneLength="300"
+                    SelectionChanged="Nav_SelectionChanged">
+        <NavigationView.Resources>
+            <local:MsToDateTimeConverter x:Key="MsToDateTime" Format="yyyy-MM-dd HH:mm" />
+            <local:PlatformLabelConverter x:Key="PlatformLabel" />
+            <local:KindGlyphConverter x:Key="KindGlyph" />
+            <local:InverseBoolConverter x:Key="InverseBool" />
+            <local:BoolToVisibilityConverter x:Key="BoolToVis" />
+
+            <DataTemplate x:Key="ConversationTemplate">
+                <Grid Padding="12,8" ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Grid.Column="0" FontSize="18"
+                              Glyph="{Binding Kind, Converter={StaticResource KindGlyph}}" />
+                    <StackPanel Grid.Column="1" Spacing="2">
+                        <TextBlock Text="{Binding Title}" FontSize="14" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding LastMessagePreview}" FontSize="11" Opacity="0.6"
+                                   MaxLines="1" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="2" HorizontalAlignment="Right">
+                        <TextBlock FontSize="11" Foreground="{ThemeResource SystemAccentColor}"
+                                   Text="{Binding Platform, Converter={StaticResource PlatformLabel}}" />
+                        <TextBlock FontSize="10" Opacity="0.5" HorizontalAlignment="Right"
+                                   Text="{Binding LastMessageAt, Converter={StaticResource MsToDateTime}}" />
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
+
+            <DataTemplate x:Key="SeparatorTemplate">
+                <Border HorizontalAlignment="Center" Padding="12,3" Margin="4,10,4,4"
+                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                        CornerRadius="10">
+                    <TextBlock Text="{Binding Label}" FontSize="11" Opacity="0.75" />
+                </Border>
+            </DataTemplate>
+
+            <DataTemplate x:Key="IncomingTemplate">
+                <Grid Margin="8,3" ColumnSpacing="8" MaxWidth="760">
+                    <StackPanel Spacing="2" HorizontalAlignment="Left">
+                        <TextBlock Text="{Binding Message.SenderName}" FontSize="11" Opacity="0.55"
+                                   Visibility="{Binding IsIncoming, Converter={StaticResource BoolToVis}}" />
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="4,12,12,12" Padding="10,7"
+                                HorizontalAlignment="Left">
+                            <StackPanel Spacing="6" MaxWidth="560">
+                                <TextBlock Text="{Binding Message.Content}" TextWrapping="Wrap"
+                                           FontSize="14" IsTextSelectionEnabled="True"
+                                           Visibility="{Binding Message.IsRecalled, Converter={StaticResource InverseBool}}" />
+                                <TextBlock Text="（已撤回）" FontSize="13" Opacity="0.55"
+                                           Visibility="{Binding Message.IsRecalled, Converter={StaticResource BoolToVis}}" FontStyle="Italic" />
+                                <Image Source="{Binding ImagePath}" MaxHeight="220" Stretch="Uniform" />
+                                <TextBlock FontSize="11" Foreground="OrangeRed"
+                                           Text="{Binding MissingMediaText}"
+                                           Visibility="{Binding HasMissingMedia, Converter={StaticResource BoolToVis}}" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="{Binding TimeText}" FontSize="10" Opacity="0.4" />
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
+
+            <DataTemplate x:Key="OutgoingTemplate">
+                <Grid Margin="8,3" MaxWidth="760">
+                    <StackPanel Spacing="2" HorizontalAlignment="Right">
+                        <Border Background="{ThemeResource SystemAccentColorLight2}"
+                                CornerRadius="12,4,12,12" Padding="10,7" HorizontalAlignment="Right">
+                            <StackPanel Spacing="6" MaxWidth="560">
+                                <TextBlock Text="{Binding Message.Content}" TextWrapping="Wrap"
+                                           FontSize="14" IsTextSelectionEnabled="True"
+                                           Visibility="{Binding Message.IsRecalled, Converter={StaticResource InverseBool}}" />
+                                <TextBlock Text="（已撤回）" FontSize="13" Opacity="0.55"
+                                           Visibility="{Binding Message.IsRecalled, Converter={StaticResource BoolToVis}}" FontStyle="Italic" />
+                                <Image Source="{Binding ImagePath}" MaxHeight="220" Stretch="Uniform" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="{Binding TimeText}" FontSize="10" Opacity="0.4"
+                                   HorizontalAlignment="Right" />
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
+
+            <local:TimelineTemplateSelector x:Key="TimelineSelector"
+                                            Separator="{StaticResource SeparatorTemplate}"
+                                            Incoming="{StaticResource IncomingTemplate}"
+                                            Outgoing="{StaticResource OutgoingTemplate}" />
+        </NavigationView.Resources>
+
         <NavigationView.MenuItems>
-            <NavigationViewItem Content="会话" Tag="conversations" Icon="Chat" />
+            <NavigationViewItem Content="会话" Tag="conversations" Icon="Chat" IsSelected="True" />
             <NavigationViewItem Content="搜索" Tag="search" Icon="Find" />
-            <NavigationViewItem Content="统计" Tag="stats" Icon="Calculator" />
+            <NavigationViewItem Content="统计" Tag="stats">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE9D2;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
         </NavigationView.MenuItems>
-        <Frame x:Name="ContentFrame" />
+        <NavigationView.PaneFooter>
+            <Button Content="导入聊天记录" Margin="12,8"
+                    HorizontalAlignment="Stretch" Click="OnImportClick" />
+        </NavigationView.PaneFooter>
+
+        <Grid>
+            <!-- 会话面板 -->
+            <Grid x:Name="TimelinePane">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="320" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Grid Grid.Column="0" RowSpacing="8" Padding="10,10,6,6">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBox x:Name="ConversationQueryBox" Grid.Row="0" PlaceholderText="查找会话标题…"
+                             TextChanged="ConversationQuery_TextChanged" />
+                    <ComboBox x:Name="FilterCombo" Grid.Row="1" SelectedIndex="0" HorizontalAlignment="Stretch"
+                              SelectionChanged="Filter_SelectionChanged">
+                        <ComboBoxItem Content="全部" Tag="" />
+                        <ComboBoxItem Content="QQ 私聊" Tag="qq|private" />
+                        <ComboBoxItem Content="QQ 群聊" Tag="qq|group" />
+                        <ComboBoxItem Content="微信私聊" Tag="wechat|private" />
+                        <ComboBoxItem Content="微信群聊" Tag="wechat|group" />
+                    </ComboBox>
+                    <ListView x:Name="ConversationListControl" Grid.Row="2"
+                              ItemTemplate="{StaticResource ConversationTemplate}"
+                              SelectionMode="Single"
+                              SelectionChanged="ConversationList_SelectionChanged" />
+                </Grid>
+
+                <Border Grid.Column="1" Width="1"
+                        Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                <Grid Grid.Column="2" RowSpacing="6" Padding="8,10,10,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock x:Name="TimelineTitle" Grid.Row="0" FontSize="17" FontWeight="SemiBold"
+                               Margin="4,0,0,4" TextTrimming="CharacterEllipsis" />
+                    <ListView x:Name="MessageListControl" Grid.Row="1"
+                              ItemTemplateSelector="{StaticResource TimelineSelector}"
+                              SelectionMode="None">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="MinHeight" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                    </ListView>
+                    <ProgressBar x:Name="LoadMoreBar" Grid.Row="2" IsIndeterminate="True"
+                                 Height="4" Visibility="Collapsed" Margin="0,4,0,0" />
+                </Grid>
+            </Grid>
+
+            <!-- 搜索面板（Task 12 实现） -->
+            <TextBlock x:Name="SearchPlaceholder" Margin="24" Opacity="0.6"
+                       Text="搜索（下一阶段）" Visibility="Collapsed" />
+
+            <!-- 统计面板（Task 14 实现） -->
+            <ScrollViewer x:Name="StatsPane" Padding="28" Visibility="Collapsed">
+                <TextBlock x:Name="StatsText" FontSize="15" LineHeight="30" IsTextSelectionEnabled="True" />
+            </ScrollViewer>
+        </Grid>
     </NavigationView>
 </Window>
