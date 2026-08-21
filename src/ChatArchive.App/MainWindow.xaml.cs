@@ -3,8 +3,10 @@ using ChatArchive.App.ViewModels;
 using ChatArchive.Core.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.Storage.Pickers;
 
 namespace ChatArchive.App;
 
@@ -16,8 +18,8 @@ public sealed partial class MainWindow : Window
     private readonly StatsViewModel _stats;
     private readonly ImportViewModel _import;
     private CancellationTokenSource? _queryDebounce;
-    private bool _loadingMessages;
     private ScrollViewer? _messageScroll;
+    private bool _statsLoaded;
 
     public MainWindow()
     {
@@ -45,25 +47,47 @@ public sealed partial class MainWindow : Window
                     TimelineTitle.Text = _timeline.Title;
                 }
             };
+            _search.ResultActivated += hit => DispatcherQueue.TryEnqueue(() =>
+            {
+                SelectNavItem("conversations");
+                _timeline.JumpToMessage(hit.MessageId);
+            });
+            _search.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(SearchViewModel.IsLoading))
+                {
+                    SearchProgress.Visibility = _search.IsLoading ? Visibility.Visible : Visibility.Collapsed;
+                }
+                else if (e.PropertyName == nameof(SearchViewModel.HasSearched))
+                {
+                    SearchLoadMore.Visibility =
+                        _search.HasSearched && !string.IsNullOrEmpty(_search.ModeLabel)
+                            ? Visibility.Visible
+                            : Visibility.Collapsed;
+                    SearchModeLabel.Text = _search.Results.Count > 0
+                        ? $"共 {_search.Results.Count:N0} 条（{_search.ModeLabel}）"
+                        : _search.ModeLabel;
+                }
+            };
+            _import.ImportFinished += () => _conversations.Reload();
+            _import.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(ImportViewModel.IsRunning))
+                {
+                    SearchLoadMore.IsEnabled = !_import.IsRunning;
+                }
+            };
 
             ConversationListControl.ItemsSource = _conversations.Conversations;
             MessageListControl.ItemsSource = _timeline.Entries;
+            SearchResultsList.ItemsSource = _search.Results;
 
             _conversations.Reload();
             HookMessageScroll();
         }
         catch (Exception ex)
         {
-            try
-            {
-                File.AppendAllText(
-                    Path.Combine(AppContext.BaseDirectory, "crash.log"),
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] MainWindow ctor: {ex}\n\n");
-            }
-            catch
-            {
-            }
-
+            WriteCrashLog("MainWindow ctor", ex);
             throw;
         }
     }
@@ -77,11 +101,11 @@ public sealed partial class MainWindow : Window
 
         var tag = item.Tag as string ?? "conversations";
         TimelinePane.Visibility = tag == "conversations" ? Visibility.Visible : Visibility.Collapsed;
-        SearchPlaceholder.Visibility = tag == "search" ? Visibility.Visible : Visibility.Collapsed;
+        SearchPane.Visibility = tag == "search" ? Visibility.Visible : Visibility.Collapsed;
         StatsPane.Visibility = tag == "stats" ? Visibility.Visible : Visibility.Collapsed;
-        if (tag == "stats")
+        if (tag == "stats" && !_statsLoaded)
         {
-            StatsText.Text = _stats.SummaryLines == "加载中…" ? "加载中…" : _stats.SummaryLines;
+            _statsLoaded = true;
             _stats.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName == nameof(StatsViewModel.SummaryLines))
@@ -90,25 +114,102 @@ public sealed partial class MainWindow : Window
                 }
             };
             _stats.Load();
+            StatsText.Text = _stats.SummaryLines;
+        }
+
+        if (tag == "search")
+        {
+            SearchBox.Focus(FocusState.Programmatic);
         }
     }
 
-    private void OnImportClick(object sender, RoutedEventArgs e)
+    private void SelectNavItem(string tag)
     {
+        foreach (var menuItem in Nav.MenuItems.OfType<NavigationViewItem>())
+        {
+            if ((menuItem.Tag as string) == tag)
+            {
+                Nav.SelectedItem = menuItem;
+                return;
+            }
+        }
+    }
+
+    // ---------- 导入 ----------
+
+    private async void OnImportClick(object sender, RoutedEventArgs e)
+    {
+        var pathsPanel = new StackPanel { Spacing = 10 };
+        var list = new ListView { MaxHeight = 160, SelectionMode = ListViewSelectionMode.None };
+        list.ItemsSource = _import.Paths;
+        var progress = new ProgressBar { IsIndeterminate = true, Visibility = Visibility.Collapsed };
+        var status = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.85 };
+
+        void RefreshButtons()
+        {
+            status.Text = _import.StatusText;
+            progress.IsIndeterminate = _import.IsRunning;
+            progress.Visibility = _import.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        var addFolder = new Button { Content = "添加文件夹…" };
+        addFolder.Click += async (_, _) =>
+        {
+            var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder };
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is not null)
+            {
+                _import.AddPath(folder.Path);
+            }
+        };
+        var clear = new Button { Content = "清空列表" };
+        clear.Click += (_, _) => _import.ClearPathsCommand.Execute(null);
+        var start = new Button { Content = "开始导入", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+        start.Click += (_, _) =>
+        {
+            _import.StartCommand.Execute(null);
+            RefreshButtons();
+        };
+
+        pathsPanel.Children.Add(new TextBlock
+        {
+            Text = "选择包含 QQ Chat Exporter / WeFlow 导出 JSON 的文件夹；\n多次导出日期可重叠，应用会按内容自动去重。",
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.75,
+            FontSize = 12,
+        });
+        pathsPanel.Children.Add(list);
+        var buttonsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        buttonsRow.Children.Add(addFolder);
+        buttonsRow.Children.Add(clear);
+        buttonsRow.Children.Add(start);
+        pathsPanel.Children.Add(buttonsRow);
+        pathsPanel.Children.Add(progress);
+        pathsPanel.Children.Add(status);
+
+        _import.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ImportViewModel.StatusText) or nameof(ImportViewModel.IsRunning))
+            {
+                DispatcherQueue.TryEnqueue(RefreshButtons);
+            }
+        };
+        _import.Paths.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(() => { });
+
         var dialog = new ContentDialog
         {
             XamlRoot = Content.XamlRoot,
             Title = "导入聊天记录",
             PrimaryButtonText = "关闭",
             DefaultButton = ContentDialogButton.Primary,
-            Content = new TextBlock
-            {
-                Text = "导入功能将在下一阶段接入。\n\n届时在此选择包含 QQ / 微信导出 JSON 的文件夹，应用会递归发现并按内容去重导入。",
-                TextWrapping = TextWrapping.Wrap,
-            },
+            Content = pathsPanel,
         };
-        _ = dialog.ShowAsync();
+        await dialog.ShowAsync();
+        _conversations.Reload();
     }
+
+    // ---------- 会话侧栏 ----------
 
     private void ConversationQuery_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -130,7 +231,7 @@ public sealed partial class MainWindow : Window
 
     private void Filter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (FilterCombo.SelectedItem is ComboBoxItem item && item.Tag is string tags && TimelinePane is not null)
+        if (FilterCombo.SelectedItem is ComboBoxItem item && item.Tag is string tags)
         {
             var parts = tags.Split('|');
             _conversations.PlatformFilter = parts[0];
@@ -141,18 +242,13 @@ public sealed partial class MainWindow : Window
 
     private void ConversationList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingMessages)
-        {
-            return;
-        }
-
         if (ConversationListControl.SelectedItem is ConversationInfo conversation)
         {
-            _loadingMessages = true;
             _conversations.SelectedConversation = conversation;
-            _loadingMessages = false;
         }
     }
+
+    // ---------- 时间线 ----------
 
     private void HookMessageScroll()
     {
@@ -184,10 +280,184 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void TryScrollToBottomIfNearEnd()
+    private async void OnSenderTapped(object sender, TappedRoutedEventArgs e)
     {
-        // 初次加载时把视图停在顶部（最新消息在顶部），无需滚动处理。
+        if (sender is FrameworkElement { DataContext: MessageEntry entry } && entry.Message.SenderId is long senderId)
+        {
+            await ShowSenderProfile(senderId);
+        }
     }
+
+    private async void OnImageTapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: MessageEntry entry } && entry.ImagePath is not null)
+        {
+            await ShowImagePreview(entry.ImagePath, entry.Message.Attachments.FirstOrDefault()?.Filename ?? "图片");
+        }
+    }
+
+    private async System.Threading.Tasks.Task ShowSenderProfile(long senderId)
+    {
+        var contact = new ContactViewModel(AppServices.Instance.Senders);
+        if (!contact.Load(senderId))
+        {
+            return;
+        }
+
+        var panel = new StackPanel { Spacing = 12, MinWidth = 420 };
+        panel.Children.Add(new TextBlock { Text = contact.IdentityLine, FontSize = 13, Opacity = 0.8 });
+
+        panel.Children.Add(new TextBlock { Text = "名称记录", FontSize = 12, Opacity = 0.6 });
+        var aliasList = new ListView { MaxHeight = 140, SelectionMode = ListViewSelectionMode.None };
+        aliasList.Items.Add(contact.IdentityLine.Length == 0 ? "-" : contact.DisplayName);
+        foreach (var alias in contact.Aliases.Take(30))
+        {
+            var seen = alias.LastSeenAt is long ts
+                ? DateTimeOffset.FromUnixTimeMilliseconds(ts).LocalDateTime.ToString("yyyy-MM-dd")
+                : string.Empty;
+            aliasList.Items.Add(new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock { Text = alias.Alias, FontSize = 13 },
+                    new TextBlock { Text = seen, FontSize = 11, Opacity = 0.5 },
+                },
+            });
+        }
+
+        panel.Children.Add(aliasList);
+        panel.Children.Add(new TextBlock { Text = "出现过的会话（点击跳转）", FontSize = 12, Opacity = 0.6 });
+        var conversationList = new ListView { MaxHeight = 200, IsItemClickEnabled = true, SelectionMode = ListViewSelectionMode.None };
+        foreach (var conversation in contact.Conversations)
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock { Text = conversation.Title, FontSize = 13 },
+                    new TextBlock { Text = $"{conversation.MessageCount:N0} 条", FontSize = 11, Opacity = 0.5 },
+                },
+            };
+            var wrap = new ListViewItem { Content = row };
+            var targetId = conversation.ConversationId;
+            wrap.DoubleTapped += (_, _) =>
+            {
+                contact.ActivateConversation(targetId);
+            };
+            conversationList.Items.Add(wrap);
+        }
+
+        panel.Children.Add(conversationList);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = contact.DisplayName,
+            CloseButtonText = "关闭",
+            Content = panel,
+        };
+        contact.ConversationActivated += id => DispatcherQueue.TryEnqueue(() =>
+        {
+            dialog.Hide();
+            SelectNavItem("conversations");
+            var info = AppServices.Instance.Conversations.GetConversation(id)?.Conversation;
+            if (info is not null)
+            {
+                _timeline.Load(info);
+            }
+        });
+        await dialog.ShowAsync();
+    }
+
+    private async System.Threading.Tasks.Task ShowImagePreview(string imagePath, string filename)
+    {
+        var image = new Image
+        {
+            Source = new BitmapImage(new Uri(imagePath)),
+            MaxHeight = 620,
+            MaxWidth = 900,
+            Stretch = Stretch.Uniform,
+        };
+        var saveButton = new Button { Content = "另存为…" };
+
+        var panel = new StackPanel { Spacing = 10 };
+        panel.Children.Add(image);
+        panel.Children.Add(saveButton);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = filename,
+            CloseButtonText = "关闭",
+            Content = panel,
+        };
+
+        saveButton.Click += async (_, _) =>
+        {
+            var picker = new FileSavePicker { SuggestedFileName = filename };
+            picker.FileTypeChoices.Add("图片", new List<string> { Path.GetExtension(imagePath).TrimStart('.') is { Length: > 0 } ext ? ext : "png" });
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+            var file = await picker.PickSaveFileAsync();
+            if (file is not null)
+            {
+                File.Copy(imagePath, file.Path, overwrite: true);
+            }
+        };
+
+        await dialog.ShowAsync();
+    }
+
+    // ---------- 搜索 ----------
+
+    private void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Enter)
+        {
+            RunSearch();
+        }
+    }
+
+    private void OnSearchClick(object sender, RoutedEventArgs e) => RunSearch();
+
+    private void SearchFilter_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_search.HasSearched)
+        {
+            RunSearch();
+        }
+    }
+
+    private void OnSearchLoadMoreClick(object sender, RoutedEventArgs e)
+    {
+        _search.LoadMoreCommand.Execute(null);
+    }
+
+    private void SearchResult_Click(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is SearchHitProxy proxy)
+        {
+            _search.NotifyResultActivated(proxy.Hit);
+        }
+    }
+
+    private void RunSearch()
+    {
+        _search.Query = SearchBox.Text;
+        _search.PlatformFilter = ComboTag(SearchPlatformCombo);
+        _search.KindFilter = ComboTag(SearchKindCombo);
+        _search.SenderFilter = SearchSenderBox.Text;
+        _search.ExecuteCommand.Execute(null);
+    }
+
+    private static string ComboTag(ComboBox combo)
+    {
+        return (combo.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
+    }
+
+    // ---------- 工具 ----------
 
     private static ScrollViewer? FindScrollViewer(DependencyObject root)
     {
@@ -207,4 +477,19 @@ public sealed partial class MainWindow : Window
 
         return null;
     }
+
+    private static void WriteCrashLog(string where, Exception ex)
+    {
+        try
+        {
+            File.AppendAllText(
+                Path.Combine(AppContext.BaseDirectory, "crash.log"),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {where}: {ex}\n\n");
+        }
+        catch
+        {
+        }
+    }
 }
+
+
