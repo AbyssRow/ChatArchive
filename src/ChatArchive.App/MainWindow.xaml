@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="ChatArchive.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="聊天档案">
+    <NavigationView x:Name="Nav" IsBackButtonVisible="Collapsed" PaneDisplayMode="Left">
+        <NavigationView.MenuItems>
+            <NavigationViewItem Content="会话" Tag="conversations" Icon="Chat" />
+            <NavigationViewItem Content="搜索" Tag="search" Icon="Find" />
+            <NavigationViewItem Content="统计" Tag="stats" Icon="Calculator" />
+        </NavigationView.MenuItems>
+        <Frame x:Name="ContentFrame" />
+    </NavigationView>
+</Window>
