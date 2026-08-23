@@ -1,0 +1,134 @@
+# ChatArchive 导入可靠性修复设计
+
+日期：2026-08-23  
+状态：已获用户口头批准，待文档复核
+
+## 目标
+
+在不修改 SQLite `schema_version=1`、不拆分现有微信数据、也不触碰真实
+`E:\ChatArchive` 档案的前提下，修复本轮审查确认的导入隔离、媒体真实性、
+缺失媒体统计、QQ 号展示、大 JSON 内存占用和聊天样本误提交风险。
+
+## 已确认约束
+
+- 软件只保存用户本人的一个微信账号，继续使用 `wechat-default`；不新增账号体系。
+- 现有数据库结构和唯一索引保持不变，不执行 schema 迁移。
+- `input\` 仅作为本地人工验证数据，绝不纳入 Git。
+- 自动测试只使用合成 fixture 和临时数据库；真实聊天正文不进入测试、日志或提交。
+- 单个导出文件失败不得阻止同批次中的其他文件继续导入。
+
+## 方案选择
+
+采用“保持公开仓储与 schema 兼容、替换导入内部读取方式”的方案：
+
+1. 新增基于 `FileStream` 和 `Utf8JsonReader` 的分块 JSON 读取器，只在内存中保留
+   会话元数据或当前一条消息。
+2. 格式发现只做轻量标记检查；完整结构验证统一放进单文件错误边界。
+3. QQ 第一遍读取 `chatInfo`，第二遍枚举 `messages`。WeFlow 第一遍读取 `session`
+   并统计发出消息的 `senderUsername`，第二遍逐条枚举消息。
+4. 现有解析规则、载荷哈希和去重语义保持不变；改变的只有输入供给方式与取消粒度。
+
+没有选择以下替代方案：
+
+- 仅把 `File.ReadAllText` 换成 `JsonDocument.Parse(Stream)`：改动小，但仍会把整个文档
+  留在内存中，不能真正解决大型导出问题。
+- 引入新 schema 或账号表：能支持多微信账号，但不符合当前单账号用途，并会增加迁移风险。
+
+## 分块 JSON 读取
+
+新增内部组件 `ChunkedJsonReader`，职责限定为读取根对象中的指定对象属性和数组元素：
+
+- `ReadObjectProperty(path, propertyName, cancellationToken)` 返回目标对象的独立
+  `JsonObject`；找不到或类型错误时抛出 `ImportFormatException`。
+- `EnumerateArray(path, propertyName, cancellationToken)` 逐个返回独立 `JsonObject`，
+  不让返回值引用可复用缓冲区。
+- 读取器支持跨缓冲区的字符串、转义字符、UTF-8 多字节字符和嵌套对象/数组。
+- 每次补充缓冲区以及每条数组元素之前检查取消令牌。
+- 根属性顺序不作假设；元数据可以出现在 `messages` 之前或之后。
+
+`ExportFile` 不再持有整个 `JsonDocument`，而是持有会话信息以及接受
+`CancellationToken` 的消息枚举工厂。原有解析器中“单条 `JsonElement` 转
+`ParsedMessage`”的规则继续复用。
+
+## 单文件错误隔离
+
+`ImportService.ImportFile` 的错误边界覆盖以下完整流程：
+
+- 文件哈希与元数据读取；
+- `import_files` 行创建或重用；
+- 格式打开、会话解析和消息枚举；
+- 数据库事务、附件复制与提交。
+
+若失败：
+
+- 已创建 `import_files` 行时，将其标为 `failed` 并保存错误摘要；
+- 回滚该文件的消息事务并清零该文件计数；
+- 返回 `FileImportResult(Status="failed")`，由批次继续处理后续文件；
+- 只有无法创建/更新运行记录等数据库级故障才允许终止整个批次。
+
+取消不是普通失败：取消令牌向上抛出 `OperationCanceledException`，运行记录标记为
+`interrupted`，不继续导入后续文件。
+
+## 媒体真实性与恢复
+
+完成态文件是否可跳过，除解析器版本和数据库 `is_available` 外，还检查：
+
+- 该文件观察到的媒体消息是否没有任何附件行；
+- 每条标记可用的附件能否通过 SHA-256 内容寻址路径、`managed_path` 或
+  `source_path` 实际解析到文件。
+
+任一条件不满足就重跑该文件。附件 upsert 时以真实文件存在性为准：
+
+- 原始源文件存在时重新哈希并在需要时补拷贝托管媒体；
+- 源文件不存在但旧托管文件仍可解析时保留可用状态；
+- 两者都不存在时把附件更新为 `is_available=0`，保留已有 SHA/路径线索供以后恢复。
+
+媒体缓存限定在一次 `Run` 内，每次新运行前清空，避免托管文件在两次运行之间被删除后
+仍命中陈旧缓存。
+
+## 无路径媒体与统计一致性
+
+当消息没有解析出的附件，但 `message_type` 或 `media_type` 表明它是图片、文件、视频、
+音频、语音、表情或贴纸时，导入器生成 ordinal 0 的逻辑缺失附件：
+
+- `kind` 使用规范化媒体类型；
+- `source_path`、`media_object_id` 为空；
+- `is_available=0`。
+
+这样导入摘要、统计页和时间线都基于同一条附件记录。再次导入时若同一 ordinal 获得真实
+路径，现有 upsert 会把它升级为可用附件。当前 `input\WX` 中无路径的动画表情属于这一规则。
+
+## QQ 号展示
+
+`SenderProfile` 新增可空的 `QQNumber` 字段。`SenderRepository` 将现有
+`FindQqNumber` 结果写入模型；联系人窗口对 QQ 优先显示 `QQNumber`，取不到时回退
+`NativeId`。微信展示保持不变。
+
+## 隐私保护
+
+仓库根 `.gitignore` 增加 `/input/`。不移动、不删除用户放入的样本文件，也不把文件名、
+联系人或正文写入测试输出。
+
+## 测试策略
+
+遵循测试驱动开发，为每项行为先建立失败测试：
+
+- 一个通过格式嗅探但 JSON 损坏的 QQ 文件与一个有效文件同批导入：前者为 `failed`，
+  后者仍完成，且不存在残留 `importing` 行。
+- 分块读取器用极小缓冲区读取跨块 Unicode、转义字符串、嵌套消息及元数据后置文档；
+  枚举过程中取消会抛出 `OperationCanceledException`。
+- 已导入媒体的托管文件被删除后，重导不会跳过，并从仍存在的源文件恢复。
+- 托管文件和源文件都不存在时，重导把附件标为缺失。
+- 无路径动画表情生成缺失附件，导入计数与 `StatsRepository` 结果一致。
+- QQ payload 中的 UIN 最终出现在 `SenderProfile.QQNumber` 和联系人身份文本中。
+- 既有解析、去重、分页、搜索和 UI 状态测试继续全部通过。
+
+最终验证运行 Release 全量测试、依赖漏洞检查、`git diff --check`，并确认
+`git status` 不再把 `input\` 列为未跟踪内容。
+
+## 非目标
+
+- 不支持多个微信账号或账号切换。
+- 不修改消息哈希、版本链和唯一索引规则。
+- 不改变真实聊天正文或主动清理现有媒体对象。
+- 不把媒体远程 URL 下载到本地。
