@@ -56,7 +56,7 @@ public class ParserTests : IDisposable
 
     private const string QqFixture = """
         {
-          "QQChatExporter": {"version": 4},
+          "metadata": {"name": "QQChatExporter", "version": "0.1.0"},
           "chatInfo": {"selfUin": "10001", "selfUid": "uSELF", "peerUid": "uPEER", "peerUin": "12345", "name": "老张", "type": "private"},
           "messages": [
             {
@@ -234,36 +234,50 @@ public class ParserTests : IDisposable
     }
 
     [Theory]
-    [InlineData("{\"version\":5}")]
-    [InlineData("{\"version\":\"5\"}")]
-    [InlineData("{}")]
-    public void Qq_rejects_unverified_export_versions(string metadata)
+    [InlineData("0.1.1")]
+    [InlineData("")]
+    public void Qq_rejects_unverified_export_versions(string version)
     {
+        var metadata = version.Length == 0
+            ? "{\"name\":\"QQChatExporter\"}"
+            : $$"""{"name":"QQChatExporter","version":"{{version}}"}""";
         var path = Path.Combine(_dir, "qq-version.json");
         File.WriteAllText(path, $$"""
-            {"QQChatExporter":{{metadata}},
+            {"metadata":{{metadata}},
              "chatInfo":{"selfUin":"1","peerUid":"p","name":"n"},
              "messages":[]}
             """);
 
         var error = Assert.Throws<ImportFormatException>(() => new QqExportFormat().Open(path));
-        Assert.Contains("支持版本 4", error.Message);
+        Assert.Contains("支持版本 0.1.0", error.Message);
     }
 
-    [Theory]
-    [InlineData("4")]
-    [InlineData("\"4\"")]
-    public void Qq_accepts_numeric_or_string_supported_version(string versionJson)
+    [Fact]
+    public void Qq_accepts_real_export_metadata_version()
     {
         var path = Path.Combine(_dir, "qq-supported-version.json");
-        File.WriteAllText(path, $$"""
-            {"QQChatExporter":{"version":{{versionJson}}},
+        File.WriteAllText(path, """
+            {"metadata":{"name":"QQChatExporter","version":"0.1.0"},
              "chatInfo":{"selfUin":"1","peerUid":"p","name":"n"},
              "messages":[]}
             """);
 
         using var exportFile = new QqExportFormat().Open(path);
         Assert.Equal("p", exportFile.Conversation.NativeId);
+    }
+
+    [Fact]
+    public void Qq_rejects_wrong_exporter_metadata_name()
+    {
+        var path = Path.Combine(_dir, "qq-wrong-exporter.json");
+        File.WriteAllText(path, """
+            {"metadata":{"name":"OtherExporter","version":"0.1.0"},
+             "chatInfo":{"selfUin":"1","peerUid":"p","name":"n"},
+             "messages":[]}
+            """);
+
+        var error = Assert.Throws<ImportFormatException>(() => new QqExportFormat().Open(path));
+        Assert.Contains("QQChatExporter", error.Message);
     }
 
     [Theory]

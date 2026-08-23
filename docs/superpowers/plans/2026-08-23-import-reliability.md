@@ -14,7 +14,7 @@
 
 - Keep SQLite `schema_version=1`; no DDL or data migration.
 - Keep WeFlow `account_id="wechat-default"`; this application stores one user's archive.
-- Allow only QQ exporter version `4` and WeFlow exporter version `1.0.3`.
+- Allow only QQ exporter `metadata.name="QQChatExporter"` at version `0.1.0` and WeFlow exporter version `1.0.3`.
 - Never open `E:\ChatArchive\chat_archive.db` from tests or diagnostics.
 - Never commit files under repository-root `input\`.
 - Preserve existing message payload hashes, semantic hashes, revision behavior, and repository public paging signatures.
@@ -130,7 +130,7 @@ git commit -m "feat(import): stream nested JSON values"
 - Changes: `IChatExportFormat.Open(string filePath, CancellationToken cancellationToken = default)`
 - Changes: `ExportFile.EnumerateMessages(CancellationToken cancellationToken = default)`
 - `ExportFile` owns only `ParsedConversation` plus `Func<CancellationToken, IEnumerable<ParsedMessage>>`; `Dispose()` remains a compatibility no-op.
-- QQ accepts `QQChatExporter.version` equal to numeric/string `4`.
+- QQ accepts `metadata.name="QQChatExporter"` and `metadata.version="0.1.0"`.
 - WeFlow accepts `weflow.version` equal to string `1.0.3`.
 
 - [ ] **Step 1: Update fixtures and write failing version tests**
@@ -145,17 +145,19 @@ Add tests:
 
 ```csharp
 [Theory]
-[InlineData("5")]
-[InlineData("missing")]
+[InlineData("0.1.1")]
+[InlineData("")]
 public void Qq_rejects_unverified_export_versions(string version)
 {
-    var metadata = version == "missing" ? "{}" : $$"""{"version":{{version}}}""";
+    var metadata = version.Length == 0
+        ? "{\"name\":\"QQChatExporter\"}"
+        : $$"""{"name":"QQChatExporter","version":"{{version}}"}""";
     var path = WriteJson("qq-version.json", $$"""
-        {"QQChatExporter":{{metadata}},"chatInfo":{"selfUin":"1","peerUid":"p","name":"n"},"messages":[]}
+        {"metadata":{{metadata}},"chatInfo":{"selfUin":"1","peerUid":"p","name":"n"},"messages":[]}
         """);
 
     var error = Assert.Throws<ImportFormatException>(() => new QqExportFormat().Open(path));
-    Assert.Contains("支持版本 4", error.Message);
+    Assert.Contains("支持版本 0.1.0", error.Message);
 }
 
 [Theory]
@@ -173,7 +175,7 @@ public void Weflow_rejects_unverified_export_versions(string version)
 }
 ```
 
-Also add positive tests for QQ numeric `4`, QQ string `"4"`, and WeFlow `1.0.3`.
+Also add positive tests for the real QQ metadata shape at `0.1.0`, rejection of a wrong exporter name, and WeFlow `1.0.3`.
 
 - [ ] **Step 2: Run parser tests and verify RED**
 
@@ -223,7 +225,7 @@ if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
 }
 ```
 
-Use an equivalent check for QQ version `4`. WeFlow `Open` scans messages once for self-sender inference; its returned factory reopens and streams the messages on enumeration. Change WeFlow `Matches` to lightweight extension/head markers so discovery never builds a complete `JsonDocument`; full validation belongs to `Open`.
+Use an equivalent check for QQ `metadata.name` and version `0.1.0`. WeFlow `Open` scans messages once for self-sender inference; its returned factory reopens and streams the messages on enumeration. Change WeFlow `Matches` to lightweight extension/head markers so discovery never builds a complete `JsonDocument`; full validation belongs to `Open`.
 
 - [ ] **Step 5: Verify parser compatibility and commit**
 
@@ -265,7 +267,7 @@ Because version validation precedes file-row creation, the broken file must not 
 
 - [ ] **Step 2: Write a failing unsupported-version no-write test**
 
-Import a QQ file whose metadata version is `5`, then assert `FilesFailed == 1` and counts in `conversations`, `messages`, and `import_files` remain zero. Add a valid file to the same directory and assert it still imports.
+Import a QQ file whose metadata version is `0.1.1`, then assert `FilesFailed == 1` and counts in `conversations`, `messages`, and `import_files` remain zero. Add a valid file to the same directory and assert it still imports.
 
 - [ ] **Step 3: Run focused tests and verify RED**
 

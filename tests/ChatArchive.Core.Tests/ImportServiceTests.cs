@@ -21,7 +21,7 @@ public class ImportServiceTests : IDisposable
     {
         const string singleMessage = """
             {
-              "QQChatExporter": {"version": 4},
+              "metadata": {"name": "QQChatExporter", "version": "0.1.0"},
               "chatInfo": {"selfUin": "10001", "peerUid": "uPEER", "name": "老张", "type": "private"},
               "messages": [
                 {"id": "m1", "timestamp": 1700000000000, "type": "text",
@@ -131,7 +131,7 @@ public class ImportServiceTests : IDisposable
     {
         var json = """
             {
-              "QQChatExporter": {"version": 4},
+              "metadata": {"name": "QQChatExporter", "version": "0.1.0"},
               "chatInfo": {"selfUin": "10001", "peerUid": "uEMPTY", "name": "空会话", "type": "private"},
               "messages": []
             }
@@ -169,7 +169,7 @@ public class ImportServiceTests : IDisposable
         var root = ExportRoot();
         File.WriteAllText(
             Path.Combine(root, "a-broken.json"),
-            """{"QQChatExporter":{"version":4},"chatInfo":""");
+            """{"metadata":{"name":"QQChatExporter","version":"0.1.0"},"chatInfo":""");
         File.WriteAllText(Path.Combine(root, "b-good.json"), Fixtures.QqExport);
         var service = new ImportService(_archive.Db, _mediaDir);
 
@@ -190,7 +190,7 @@ public class ImportServiceTests : IDisposable
         var root = ExportRoot();
         File.WriteAllText(
             Path.Combine(root, "a-unsupported.json"),
-            Fixtures.QqExport.Replace("\"version\": 4", "\"version\": 5"));
+            Fixtures.QqExport.Replace("\"version\": \"0.1.0\"", "\"version\": \"0.1.1\""));
         File.WriteAllText(Path.Combine(root, "b-good.json"), Fixtures.QqExport);
         var service = new ImportService(_archive.Db, _mediaDir);
 

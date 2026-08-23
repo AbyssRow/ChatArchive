@@ -5,7 +5,7 @@ internal static class Fixtures
 {
     public const string QqExport = """
         {
-          "QQChatExporter": {"version": 4},
+          "metadata": {"name": "QQChatExporter", "version": "0.1.0"},
           "chatInfo": {"selfUin": "10001", "selfUid": "uSELF", "peerUid": "uPEER", "peerUin": "12345", "name": "老张", "type": "private"},
           "messages": [
             {

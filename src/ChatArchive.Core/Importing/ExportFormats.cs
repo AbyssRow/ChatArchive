@@ -5,7 +5,8 @@ namespace ChatArchive.Core.Importing;
 /// <summary>QQ Chat Exporter 格式适配器。</summary>
 public sealed class QqExportFormat : IChatExportFormat
 {
-    private const string SupportedVersion = "4";
+    private const string ExporterName = "QQChatExporter";
+    private const string SupportedVersion = "0.1.0";
 
     public string Platform => "qq";
 
@@ -25,8 +26,16 @@ public sealed class QqExportFormat : IChatExportFormat
     {
         var metadata = ChunkedJsonReader.ReadObjectProperty(
             filePath,
-            "QQChatExporter",
+            "metadata",
             cancellationToken);
+        var exporterName = ImportText.Clean(metadata["name"]);
+        if (!string.Equals(exporterName, ExporterName, StringComparison.Ordinal))
+        {
+            throw new ImportFormatException(
+                filePath,
+                $"QQ 导出器标识无效：应为 {ExporterName}，实际为 {Display(exporterName)}");
+        }
+
         var version = ImportText.Clean(metadata["version"]);
         if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
         {
