@@ -1,4 +1,5 @@
 using ChatArchive.Core.Importing;
+using System.Text.Json.Nodes;
 using Xunit;
 
 namespace ChatArchive.Core.Tests;
@@ -161,6 +162,66 @@ public class ImportServiceTests : IDisposable
         Assert.Equal(2L, Scalar(connection, "SELECT COUNT(DISTINCT alias) FROM sender_aliases WHERE alias IN ('张三','老张')"));
     }
 
+    [Fact]
+    public void Malformed_file_does_not_abort_other_files_or_leave_importing_row()
+    {
+        var root = ExportRoot();
+        File.WriteAllText(
+            Path.Combine(root, "a-broken.json"),
+            """{"QQChatExporter":{"version":4},"chatInfo":""");
+        File.WriteAllText(Path.Combine(root, "b-good.json"), Fixtures.QqExport);
+        var service = new ImportService(_archive.Db, _mediaDir);
+
+        var result = service.Run(new[] { root });
+
+        Assert.Equal(2, result.FilesFound);
+        Assert.Equal(1, result.FilesImported);
+        Assert.Equal(1, result.FilesFailed);
+        using var connection = _archive.Open();
+        Assert.Equal(2L, Scalar(connection, "SELECT COUNT(*) FROM messages"));
+        Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM import_files WHERE status='importing'"));
+        Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM import_files"));
+    }
+
+    [Fact]
+    public void Unsupported_export_version_writes_nothing_and_does_not_abort_valid_file()
+    {
+        var root = ExportRoot();
+        File.WriteAllText(
+            Path.Combine(root, "a-unsupported.json"),
+            Fixtures.QqExport.Replace("\"version\": 4", "\"version\": 5"));
+        File.WriteAllText(Path.Combine(root, "b-good.json"), Fixtures.QqExport);
+        var service = new ImportService(_archive.Db, _mediaDir);
+
+        var result = service.Run(new[] { root });
+
+        Assert.Equal(2, result.FilesFound);
+        Assert.Equal(1, result.FilesImported);
+        Assert.Equal(1, result.FilesFailed);
+        using var connection = _archive.Open();
+        Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM conversations"));
+        Assert.Equal(2L, Scalar(connection, "SELECT COUNT(*) FROM messages"));
+        Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM import_files"));
+    }
+
+    [Fact]
+    public void Cancellation_rolls_back_file_transaction_and_marks_rows_interrupted()
+    {
+        var root = ExportRoot();
+        File.WriteAllText(Path.Combine(root, "cancel.json"), "{}");
+        using var cancellation = new CancellationTokenSource();
+        var format = new CancellingExportFormat(cancellation);
+        var service = new ImportService(_archive.Db, _mediaDir, formats: new[] { format });
+
+        Assert.Throws<OperationCanceledException>(
+            () => service.Run(new[] { root }, cancellationToken: cancellation.Token));
+
+        using var connection = _archive.Open();
+        Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM messages"));
+        Assert.Equal("interrupted", Text(connection, "SELECT status FROM import_files LIMIT 1"));
+        Assert.Equal("interrupted", Text(connection, "SELECT status FROM import_runs LIMIT 1"));
+    }
+
     private string? _exportRootField;
 
     /// <summary>导出文件目录：与数据目录分开（服务会按前缀排除整个数据目录）。</summary>
@@ -198,6 +259,61 @@ public class ImportServiceTests : IDisposable
         using var cmd = c.CreateCommand();
         cmd.CommandText = sql;
         return (string?)cmd.ExecuteScalar() ?? string.Empty;
+    }
+
+    private sealed class CancellingExportFormat(CancellationTokenSource cancellation) : IChatExportFormat
+    {
+        public string Platform => "qq";
+
+        public bool Matches(string filePath) =>
+            string.Equals(Path.GetFileName(filePath), "cancel.json", StringComparison.Ordinal);
+
+        public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var conversation = new ParsedConversation(
+                Platform,
+                "test-account",
+                "test-conversation",
+                "private",
+                "测试会话");
+            return new ExportFile(conversation, Enumerate);
+        }
+
+        private IEnumerable<ParsedMessage> Enumerate(CancellationToken cancellationToken)
+        {
+            yield return Message("first", 1);
+            cancellation.Cancel();
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return Message("second", 2);
+        }
+
+        private static ParsedMessage Message(string id, long timestamp)
+        {
+            var raw = new JsonObject { ["id"] = id };
+            return new ParsedMessage(
+                NativeId: id,
+                LocalId: null,
+                TimestampMs: timestamp,
+                Sequence: null,
+                SenderNativeId: "sender",
+                SenderName: "发送者",
+                SenderAliases: new[] { "发送者" },
+                Direction: "incoming",
+                MessageType: "text",
+                MediaType: null,
+                Content: id,
+                SearchText: id,
+                IsRecalled: false,
+                IsSystem: false,
+                ReplyToNativeId: null,
+                PayloadHash: $"payload-{id}",
+                SemanticHash: $"semantic-{id}",
+                SourceLocator: $"message:{id}",
+                RawPayload: raw,
+                Attachments: Array.Empty<ParsedAttachment>(),
+                CompatiblePayloadHashes: Array.Empty<string>());
+        }
     }
 
     public void Dispose() => _archive.Dispose();

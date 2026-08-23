@@ -8,11 +8,11 @@ namespace ChatArchive.Core.Importing;
 
 /// <summary>
 /// 导入服务：文件发现、事务、三层去重（文件哈希/原生ID/载荷哈希）、
-/// 版本保留与媒体复制。规则从旧版 service.py 移植，解析器版本 4。
+/// 版本保留与媒体复制。规则从旧版 service.py 移植，解析器版本 5。
 /// </summary>
 public sealed class ImportService
 {
-    public const int ParserVersion = 4;
+    public const int ParserVersion = 5;
 
     private readonly ArchiveDatabase _db;
     private readonly string _mediaDir;
@@ -47,7 +47,10 @@ public sealed class ImportService
         CancellationToken cancellationToken = default)
     {
         var dataDir = Path.GetDirectoryName(_db.DatabasePath)!;
-        using var processLock = AcquireCrossProcessLock(Path.Combine(dataDir, ".import.lock"));
+        using var processLock = AcquireCrossProcessLock(
+            Path.Combine(dataDir, ".import.lock"),
+            cancellationToken);
+        _mediaCache.Clear();
         RecoverStaleRuns();
 
         var files = ImportDiscovery.Discover(roots, _formats, new[] { dataDir, AppContext.BaseDirectory });
@@ -61,7 +64,11 @@ public sealed class ImportService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var discovered = files[index];
-                var result = ImportFile(discovered.FilePath, discovered.Platform, runId);
+                var result = ImportFile(
+                    discovered.FilePath,
+                    discovered.Platform,
+                    runId,
+                    cancellationToken);
                 fileResults.Add(result);
                 totals.Add(result);
                 progress?.Report(new ImportProgress(
@@ -93,12 +100,15 @@ public sealed class ImportService
         }
     }
 
-    private static FileStream AcquireCrossProcessLock(string lockPath)
+    private static FileStream AcquireCrossProcessLock(
+        string lockPath,
+        CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
         var deadline = DateTime.UtcNow.AddSeconds(120);
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             FileStream? stream = null;
             try
             {
@@ -161,106 +171,174 @@ public sealed class ImportService
         command.ExecuteNonQuery();
     }
 
-    internal FileImportResult ImportFile(string filePath, string platform, long runId)
+    internal FileImportResult ImportFile(
+        string filePath,
+        string platform,
+        long runId,
+        CancellationToken cancellationToken = default)
     {
         var counters = new Counters();
-        var digest = FileHashing.Sha256File(filePath);
-        var fileInfo = new FileInfo(filePath);
-        long importFileId;
-
-        using (var connection = _db.OpenConnection())
-        {
-            using var dupCommand = connection.CreateCommand();
-            dupCommand.CommandText = """
-                SELECT f.id,
-                       EXISTS(SELECT 1 FROM message_observations mo
-                              JOIN attachments a ON a.message_id = mo.message_id
-                              WHERE mo.import_file_id = f.id AND a.is_available = 0) AS has_missing_media
-                FROM import_files f
-                WHERE f.sha256 = @sha AND f.status = 'completed'
-                """;
-            dupCommand.Parameters.AddWithValue("@sha", digest);
-            using var reader = dupCommand.ExecuteReader();
-            if (reader.Read())
-            {
-                var fileId = reader.GetInt64(0);
-                var hasMissingMedia = reader.GetInt64(1) != 0;
-                var previous = ReadFileStats(connection, fileId);
-                var needsReimport =
-                    previous.ParserVersion < ParserVersion
-                    || previous.MissingMedia > 0
-                    || hasMissingMedia;
-                if (!needsReimport)
-                {
-                    return MakeResult(filePath, platform, "skipped", counters, null);
-                }
-
-                TouchImportFileRow(connection, fileId, runId, platform, filePath, fileInfo);
-                importFileId = fileId;
-            }
-            else
-            {
-                using var insert = connection.CreateCommand();
-                insert.CommandText = """
-                    INSERT INTO import_files(import_run_id, platform, source_path, sha256, file_size, modified_at_ns, status)
-                    VALUES (@run, @platform, @path, @sha, @size, @mtime, 'importing');
-                    SELECT last_insert_rowid();
-                    """;
-                insert.Parameters.AddWithValue("@run", runId);
-                insert.Parameters.AddWithValue("@platform", platform);
-                insert.Parameters.AddWithValue("@path", filePath);
-                insert.Parameters.AddWithValue("@sha", digest);
-                insert.Parameters.AddWithValue("@size", fileInfo.Length);
-                insert.Parameters.AddWithValue("@mtime", fileInfo.LastWriteTimeUtc.Ticks);
-                importFileId = (long)insert.ExecuteScalar()!;
-            }
-        }
-
-        var format = _formats.First(f => f.Platform == platform);
-        using var exportFile = format.Open(filePath);
-        using var transactionConnection = _db.OpenConnection();
-        using var transaction = transactionConnection.BeginTransaction();
+        long? importFileId = null;
         try
         {
-            long? conversationId = null;
-            foreach (var message in exportFile.EnumerateMessages())
+            cancellationToken.ThrowIfCancellationRequested();
+            var digest = FileHashing.Sha256File(filePath);
+            cancellationToken.ThrowIfCancellationRequested();
+            var fileInfo = new FileInfo(filePath);
+            long? completedFileId = null;
+
+            using (var connection = _db.OpenConnection())
             {
-                conversationId ??= UpsertConversation(transactionConnection, exportFile.Conversation);
-                counters.MessagesSeen++;
-                var (messageId, state) = UpsertMessage(transactionConnection, conversationId.Value, exportFile.Conversation, message);
-                if (state == "duplicate")
+                using var dupCommand = connection.CreateCommand();
+                dupCommand.CommandText = """
+                    SELECT f.id,
+                           EXISTS(SELECT 1 FROM message_observations mo
+                                  JOIN attachments a ON a.message_id = mo.message_id
+                                  WHERE mo.import_file_id = f.id AND a.is_available = 0) AS has_missing_media
+                    FROM import_files f
+                    WHERE f.sha256 = @sha AND f.status = 'completed'
+                    """;
+                dupCommand.Parameters.AddWithValue("@sha", digest);
+                using var reader = dupCommand.ExecuteReader();
+                if (reader.Read())
                 {
-                    counters.Duplicates++;
+                    completedFileId = reader.GetInt64(0);
+                    var hasMissingMedia = reader.GetInt64(1) != 0;
+                    reader.Close();
+                    var previous = ReadFileStats(connection, completedFileId.Value);
+                    var needsReimport =
+                        previous.ParserVersion < ParserVersion
+                        || previous.MissingMedia > 0
+                        || hasMissingMedia;
+                    if (!needsReimport)
+                    {
+                        return MakeResult(filePath, platform, "skipped", counters, null);
+                    }
+                }
+            }
+
+            var format = _formats.First(f => f.Platform == platform);
+            using var exportFile = format.Open(filePath, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            using (var connection = _db.OpenConnection())
+            {
+                if (completedFileId.HasValue)
+                {
+                    TouchImportFileRow(
+                        connection,
+                        completedFileId.Value,
+                        runId,
+                        platform,
+                        filePath,
+                        fileInfo);
+                    importFileId = completedFileId.Value;
                 }
                 else
                 {
-                    counters.Added++;
-                    if (state == "revision")
-                    {
-                        counters.Revised++;
-                    }
-                    else if (state == "variant")
-                    {
-                        counters.Variants++;
-                    }
+                    using var insert = connection.CreateCommand();
+                    insert.CommandText = """
+                        INSERT INTO import_files(import_run_id, platform, source_path, sha256, file_size, modified_at_ns, status)
+                        VALUES (@run, @platform, @path, @sha, @size, @mtime, 'importing');
+                        SELECT last_insert_rowid();
+                        """;
+                    insert.Parameters.AddWithValue("@run", runId);
+                    insert.Parameters.AddWithValue("@platform", platform);
+                    insert.Parameters.AddWithValue("@path", filePath);
+                    insert.Parameters.AddWithValue("@sha", digest);
+                    insert.Parameters.AddWithValue("@size", fileInfo.Length);
+                    insert.Parameters.AddWithValue("@mtime", fileInfo.LastWriteTimeUtc.Ticks);
+                    importFileId = (long)insert.ExecuteScalar()!;
                 }
-
-                RecordObservation(transactionConnection, messageId, importFileId, message.SourceLocator, message.PayloadHash);
-                var (attachmentCount, missing) = UpsertAttachments(transactionConnection, messageId, message.Attachments);
-                counters.Attachments += attachmentCount;
-                counters.MissingMedia += missing;
             }
 
-            MarkImportFile(transactionConnection, importFileId, "completed", counters, error: null);
-            transaction.Commit();
+            using var transactionConnection = _db.OpenConnection();
+            using var transaction = transactionConnection.BeginTransaction();
+            try
+            {
+                long? conversationId = null;
+                foreach (var message in exportFile.EnumerateMessages(cancellationToken))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    conversationId ??= UpsertConversation(transactionConnection, exportFile.Conversation);
+                    counters.MessagesSeen++;
+                    var (messageId, state) = UpsertMessage(
+                        transactionConnection,
+                        conversationId.Value,
+                        exportFile.Conversation,
+                        message);
+                    if (state == "duplicate")
+                    {
+                        counters.Duplicates++;
+                    }
+                    else
+                    {
+                        counters.Added++;
+                        if (state == "revision")
+                        {
+                            counters.Revised++;
+                        }
+                        else if (state == "variant")
+                        {
+                            counters.Variants++;
+                        }
+                    }
+
+                    RecordObservation(
+                        transactionConnection,
+                        messageId,
+                        importFileId.Value,
+                        message.SourceLocator,
+                        message.PayloadHash);
+                    var (attachmentCount, missing) = UpsertAttachments(
+                        transactionConnection,
+                        messageId,
+                        message.Attachments);
+                    counters.Attachments += attachmentCount;
+                    counters.MissingMedia += missing;
+                }
+
+                MarkImportFile(
+                    transactionConnection,
+                    importFileId.Value,
+                    "completed",
+                    counters,
+                    error: null);
+                transaction.Commit();
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
+
             return MakeResult(filePath, platform, "completed", counters, null);
+        }
+        catch (OperationCanceledException)
+        {
+            counters.Reset();
+            if (importFileId.HasValue)
+            {
+                using var interruptedConnection = _db.OpenConnection();
+                MarkImportFile(
+                    interruptedConnection,
+                    importFileId.Value,
+                    "interrupted",
+                    counters,
+                    "导入被用户中止");
+            }
+
+            throw;
         }
         catch (Exception ex)
         {
-            transaction.Rollback();
             counters.Reset();
-            using var failureConnection = _db.OpenConnection();
-            MarkImportFile(failureConnection, importFileId, "failed", counters, ex.Message);
+            if (importFileId.HasValue)
+            {
+                using var failureConnection = _db.OpenConnection();
+                MarkImportFile(failureConnection, importFileId.Value, "failed", counters, ex.Message);
+            }
+
             return MakeResult(filePath, platform, "failed", counters, ex.Message);
         }
     }
