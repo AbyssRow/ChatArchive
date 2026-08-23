@@ -1,4 +1,5 @@
 using ChatArchive.Core.Importing;
+using ChatArchive.Core.Repositories;
 using System.Text.Json.Nodes;
 using Xunit;
 
@@ -314,6 +315,97 @@ public class ImportServiceTests : IDisposable
                 Attachments: Array.Empty<ParsedAttachment>(),
                 CompatiblePayloadHashes: Array.Empty<string>());
         }
+    }
+
+    [Fact]
+    public void Deleted_managed_media_is_recreated_from_existing_source()
+    {
+        var exportRoot = ExportRoot();
+        var sourceDirectory = Path.Combine(exportRoot, "resources", "images");
+        Directory.CreateDirectory(sourceDirectory);
+        var source = Path.Combine(sourceDirectory, "pic.jpg");
+        File.WriteAllBytes(source, new byte[] { 1, 2, 3, 4 });
+        File.WriteAllText(Path.Combine(exportRoot, "qq.json"), Fixtures.QqExport);
+        var service = new ImportService(_archive.Db, _mediaDir);
+
+        var first = service.Run(new[] { exportRoot });
+        Assert.Equal(0, first.MissingMedia);
+        string managed;
+        using (var connection = _archive.Open())
+        {
+            managed = Text(connection, "SELECT managed_path FROM media_objects LIMIT 1");
+        }
+
+        File.Delete(managed);
+        var second = service.Run(new[] { exportRoot });
+
+        Assert.Equal(1, second.FilesImported);
+        Assert.Equal(0, second.MissingMedia);
+        Assert.True(File.Exists(managed));
+    }
+
+    [Fact]
+    public void Missing_source_and_managed_media_downgrades_attachment_availability()
+    {
+        var exportRoot = ExportRoot();
+        var sourceDirectory = Path.Combine(exportRoot, "resources", "images");
+        Directory.CreateDirectory(sourceDirectory);
+        var source = Path.Combine(sourceDirectory, "pic.jpg");
+        File.WriteAllBytes(source, new byte[] { 1, 2, 3, 4 });
+        File.WriteAllText(Path.Combine(exportRoot, "qq.json"), Fixtures.QqExport);
+        var service = new ImportService(_archive.Db, _mediaDir);
+
+        service.Run(new[] { exportRoot });
+        string managed;
+        using (var connection = _archive.Open())
+        {
+            managed = Text(connection, "SELECT managed_path FROM media_objects LIMIT 1");
+        }
+
+        File.Delete(source);
+        File.Delete(managed);
+        var second = service.Run(new[] { exportRoot });
+
+        Assert.Equal(1, second.FilesImported);
+        Assert.Equal(1, second.MissingMedia);
+        using (var connection = _archive.Open())
+        {
+            Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM attachments WHERE is_available=0"));
+        }
+
+        var third = service.Run(new[] { exportRoot });
+        Assert.Equal(1, third.FilesImported);
+        Assert.Equal(1, third.MissingMedia);
+    }
+
+    [Fact]
+    public void Pathless_media_creates_missing_attachment_and_consistent_stats()
+    {
+        var export = """
+            {
+              "weflow": {"version": "1.0.3"},
+              "session": {"wxid": "wxid_peer", "type": "私聊", "remark": "联系人"},
+              "messages": [
+                {"localId": 1, "createTime": 1700000000, "isSend": false,
+                 "senderUsername": "wxid_peer", "senderDisplayName": "联系人",
+                 "type": "动画表情", "localType": 47, "content": "[动画表情]"}
+              ]
+            }
+            """;
+        var root = WriteExport("pathless-weflow.json", export);
+        var service = new ImportService(_archive.Db, _mediaDir);
+
+        var result = service.Run(new[] { root });
+
+        Assert.Equal(1, result.Attachments);
+        Assert.Equal(1, result.MissingMedia);
+        using (var connection = _archive.Open())
+        {
+            Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM attachments WHERE is_available=0"));
+        }
+
+        var stats = new StatsRepository(_archive.Db).GetStats();
+        Assert.Equal(1, stats.MissingAttachments);
     }
 
     public void Dispose() => _archive.Dispose();

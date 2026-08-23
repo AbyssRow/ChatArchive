@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using ChatArchive.Core.Data;
 using ChatArchive.Core.IO;
+using ChatArchive.Core.Media;
 using ChatArchive.Core.Models;
 using Microsoft.Data.Sqlite;
 
@@ -191,10 +192,7 @@ public sealed class ImportService
             {
                 using var dupCommand = connection.CreateCommand();
                 dupCommand.CommandText = """
-                    SELECT f.id,
-                           EXISTS(SELECT 1 FROM message_observations mo
-                                  JOIN attachments a ON a.message_id = mo.message_id
-                                  WHERE mo.import_file_id = f.id AND a.is_available = 0) AS has_missing_media
+                    SELECT f.id
                     FROM import_files f
                     WHERE f.sha256 = @sha AND f.status = 'completed'
                     """;
@@ -203,14 +201,9 @@ public sealed class ImportService
                 if (reader.Read())
                 {
                     completedFileId = reader.GetInt64(0);
-                    var hasMissingMedia = reader.GetInt64(1) != 0;
                     reader.Close();
                     var previous = ReadFileStats(connection, completedFileId.Value);
-                    var needsReimport =
-                        previous.ParserVersion < ParserVersion
-                        || previous.MissingMedia > 0
-                        || hasMissingMedia;
-                    if (!needsReimport)
+                    if (!CompletedFileNeedsReimport(connection, completedFileId.Value, previous))
                     {
                         return MakeResult(filePath, platform, "skipped", counters, null);
                     }
@@ -290,10 +283,11 @@ public sealed class ImportService
                         importFileId.Value,
                         message.SourceLocator,
                         message.PayloadHash);
+                    var attachments = AttachmentsFor(message);
                     var (attachmentCount, missing) = UpsertAttachments(
                         transactionConnection,
                         messageId,
-                        message.Attachments);
+                        attachments);
                     counters.Attachments += attachmentCount;
                     counters.MissingMedia += missing;
                 }
@@ -343,7 +337,7 @@ public sealed class ImportService
         }
     }
 
-    private static (long ParserVersion, long MissingMedia) ReadFileStats(SqliteConnection connection, long fileId)
+    private static FileStats ReadFileStats(SqliteConnection connection, long fileId)
     {
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT stats_json FROM import_files WHERE id = @id";
@@ -363,8 +357,89 @@ public sealed class ImportService
                 : 0;
         }
 
-        return (parserVersion, missingMedia);
+        return new FileStats(parserVersion, missingMedia);
     }
+
+    private bool CompletedFileNeedsReimport(
+        SqliteConnection connection,
+        long fileId,
+        FileStats stats)
+    {
+        if (stats.ParserVersion < ParserVersion || stats.MissingMedia > 0)
+        {
+            return true;
+        }
+
+        using (var missing = connection.CreateCommand())
+        {
+            missing.CommandText = """
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM message_observations obs
+                    JOIN messages m ON m.id = obs.message_id
+                    WHERE obs.import_file_id = @file
+                      AND (
+                          EXISTS(
+                              SELECT 1 FROM attachments a
+                              WHERE a.message_id = m.id AND a.is_available = 0)
+                          OR (
+                              (LOWER(COALESCE(m.media_type, ''))
+                                   IN ('image', 'file', 'video', 'audio', 'voice', 'emoji', 'sticker')
+                               OR LOWER(COALESCE(m.message_type, ''))
+                                   IN ('image', 'file', 'video', 'audio', 'voice', 'emoji', 'sticker'))
+                              AND NOT EXISTS(
+                                  SELECT 1 FROM attachments a WHERE a.message_id = m.id)
+                          )
+                      )
+                )
+                """;
+            missing.Parameters.AddWithValue("@file", fileId);
+            if (Convert.ToInt64(missing.ExecuteScalar()) != 0)
+            {
+                return true;
+            }
+        }
+
+        var locator = new MediaLocator(_mediaDir);
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT DISTINCT mo.sha256, mo.managed_path, a.source_path
+            FROM message_observations obs
+            JOIN attachments a ON a.message_id = obs.message_id
+            LEFT JOIN media_objects mo ON mo.id = a.media_object_id
+            WHERE obs.import_file_id = @file AND a.is_available = 1
+            """;
+        command.Parameters.AddWithValue("@file", fileId);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var sha = reader.IsDBNull(0) ? null : reader.GetString(0);
+            var managedPath = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var sourcePath = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var safeSha = sha is { Length: >= 2 } ? sha : null;
+            var resolved = locator.Resolve(safeSha, managedPath, sourcePath);
+            if (resolved is null)
+            {
+                return true;
+            }
+
+            if (_copyMedia
+                && !string.IsNullOrEmpty(sourcePath)
+                && File.Exists(sourcePath)
+                && (string.IsNullOrEmpty(managedPath) || !File.Exists(managedPath))
+                && string.Equals(
+                    Path.GetFullPath(resolved),
+                    Path.GetFullPath(sourcePath),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private readonly record struct FileStats(long ParserVersion, long MissingMedia);
 
     private static void TouchImportFileRow(
         SqliteConnection connection, long fileId, long runId, string platform, string path, FileInfo info)
@@ -704,93 +779,200 @@ public sealed class ImportService
         command.ExecuteNonQuery();
     }
 
+    private static IReadOnlyList<ParsedAttachment> AttachmentsFor(ParsedMessage message)
+    {
+        if (message.Attachments.Count > 0)
+        {
+            return message.Attachments;
+        }
+
+        var kind = NormalizeMediaKind(message.MediaType) ?? NormalizeMediaKind(message.MessageType);
+        if (kind is null)
+        {
+            return message.Attachments;
+        }
+
+        return new[]
+        {
+            new ParsedAttachment(
+                Ordinal: 0,
+                Kind: kind,
+                Filename: null,
+                DeclaredPath: null,
+                SourcePath: null,
+                DeclaredSize: null,
+                MimeType: null,
+                Width: null,
+                Height: null,
+                Duration: null,
+                Metadata: new JsonObject()),
+        };
+    }
+
+    private static string? NormalizeMediaKind(string? value)
+    {
+        return ImportText.Clean(value).ToLowerInvariant() switch
+        {
+            "image" => "image",
+            "file" => "file",
+            "video" => "video",
+            "audio" or "voice" => "audio",
+            "emoji" or "sticker" => "emoji",
+            _ => null,
+        };
+    }
+
     private (int Count, int Missing) UpsertAttachments(
         SqliteConnection connection, long messageId, IReadOnlyList<ParsedAttachment> attachments)
     {
         var missing = 0;
+        var locator = new MediaLocator(_mediaDir);
         foreach (var item in attachments)
         {
-            var available = !string.IsNullOrEmpty(item.SourcePath) && File.Exists(item.SourcePath!);
-            long? existingId = null;
-            var existingAvailable = false;
+            ExistingAttachment? existing = null;
             using (var select = connection.CreateCommand())
             {
                 select.CommandText = """
-                    SELECT id, is_available FROM attachments WHERE message_id=@m AND ordinal=@o
+                    SELECT a.id, a.is_available, a.media_object_id, a.source_path,
+                           mo.sha256, mo.managed_path
+                    FROM attachments a
+                    LEFT JOIN media_objects mo ON mo.id = a.media_object_id
+                    WHERE a.message_id=@m AND a.ordinal=@o
                     """;
                 select.Parameters.AddWithValue("@m", messageId);
                 select.Parameters.AddWithValue("@o", item.Ordinal);
                 using var reader = select.ExecuteReader();
                 if (reader.Read())
                 {
-                    existingId = reader.GetInt64(0);
-                    existingAvailable = reader.GetInt64(1) != 0;
+                    existing = new ExistingAttachment(
+                        Id: reader.GetInt64(0),
+                        IsAvailable: reader.GetInt64(1) != 0,
+                        MediaObjectId: reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                        SourcePath: reader.IsDBNull(3) ? null : reader.GetString(3),
+                        Sha256: reader.IsDBNull(4) ? null : reader.GetString(4),
+                        ManagedPath: reader.IsDBNull(5) ? null : reader.GetString(5));
                 }
             }
 
-            long? mediaObjectId = null;
-            long actualSize = item.DeclaredSize ?? 0;
-            if (available && item.SourcePath is not null)
+            var sourceExists = !string.IsNullOrEmpty(item.SourcePath) && File.Exists(item.SourcePath);
+            if (sourceExists)
             {
-                var stored = StoreMedia(connection, item.SourcePath, item.MimeType);
-                mediaObjectId = stored.Id;
-                actualSize = stored.Size;
+                var stored = StoreMedia(connection, item.SourcePath!, item.MimeType);
+                WriteParsedAttachment(
+                    connection,
+                    messageId,
+                    item,
+                    existing?.Id,
+                    isAvailable: true,
+                    stored.Id,
+                    stored.Size);
+                continue;
             }
-            else if (existingId is null || !existingAvailable)
+
+            if (existing is { } previous)
             {
+                var safeSha = previous.Sha256 is { Length: >= 2 } ? previous.Sha256 : null;
+                var resolved = locator.Resolve(
+                    safeSha,
+                    previous.ManagedPath,
+                    previous.SourcePath ?? item.SourcePath);
+                if (resolved is not null)
+                {
+                    if (!previous.IsAvailable)
+                    {
+                        using var repair = connection.CreateCommand();
+                        repair.CommandText = "UPDATE attachments SET is_available=1 WHERE id=@id";
+                        repair.Parameters.AddWithValue("@id", previous.Id);
+                        repair.ExecuteNonQuery();
+                    }
+
+                    continue;
+                }
+
                 missing++;
+                using var downgrade = connection.CreateCommand();
+                downgrade.CommandText = """
+                    UPDATE attachments SET is_available=0,
+                        source_path=COALESCE(source_path, @source),
+                        declared_path=COALESCE(declared_path, @declared)
+                    WHERE id=@id
+                    """;
+                downgrade.Parameters.AddWithValue("@source", (object?)item.SourcePath ?? DBNull.Value);
+                downgrade.Parameters.AddWithValue("@declared", (object?)item.DeclaredPath ?? DBNull.Value);
+                downgrade.Parameters.AddWithValue("@id", previous.Id);
+                downgrade.ExecuteNonQuery();
+                continue;
             }
 
-            using (var write = connection.CreateCommand())
-            {
-                if (existingId.HasValue)
-                {
-                    if (available || !existingAvailable)
-                    {
-                        write.CommandText = """
-                            UPDATE attachments SET kind=@kind, filename=@filename, declared_path=@declared,
-                                source_path=@source, is_available=@available, media_object_id=@media,
-                                declared_size=@size, mime_type=@mime, width=@width, height=@height,
-                                duration=@duration, metadata_json=@metadata
-                            WHERE id=@id
-                            """;
-                        write.Parameters.AddWithValue("@id", existingId.Value);
-                    }
-                    else
-                    {
-                        continue;
-                    }
-                }
-                else
-                {
-                    write.CommandText = """
-                        INSERT INTO attachments(message_id, ordinal, kind, filename, declared_path, source_path,
-                            is_available, media_object_id, declared_size, mime_type, width, height, duration, metadata_json)
-                        VALUES (@m, @ordinal, @kind, @filename, @declared, @source,
-                            @available, @media, @size, @mime, @width, @height, @duration, @metadata)
-                        """;
-                    write.Parameters.AddWithValue("@m", messageId);
-                    write.Parameters.AddWithValue("@ordinal", item.Ordinal);
-                }
-
-                write.Parameters.AddWithValue("@kind", item.Kind);
-                write.Parameters.AddWithValue("@filename", (object?)item.Filename ?? DBNull.Value);
-                write.Parameters.AddWithValue("@declared", (object?)item.DeclaredPath ?? DBNull.Value);
-                write.Parameters.AddWithValue("@source", (object?)item.SourcePath ?? DBNull.Value);
-                write.Parameters.AddWithValue("@available", available ? 1L : 0L);
-                write.Parameters.AddWithValue("@media", mediaObjectId.HasValue ? mediaObjectId.Value : DBNull.Value);
-                write.Parameters.AddWithValue("@size", actualSize);
-                write.Parameters.AddWithValue("@mime", (object?)item.MimeType ?? DBNull.Value);
-                write.Parameters.AddWithValue("@width", item.Width.HasValue ? item.Width.Value : DBNull.Value);
-                write.Parameters.AddWithValue("@height", item.Height.HasValue ? item.Height.Value : DBNull.Value);
-                write.Parameters.AddWithValue("@duration", item.Duration.HasValue ? item.Duration.Value : DBNull.Value);
-                write.Parameters.AddWithValue("@metadata", CanonicalJson.Serialize(item.Metadata));
-                write.ExecuteNonQuery();
-            }
+            missing++;
+            WriteParsedAttachment(
+                connection,
+                messageId,
+                item,
+                existingId: null,
+                isAvailable: false,
+                mediaObjectId: null,
+                actualSize: item.DeclaredSize ?? 0);
         }
 
         return (attachments.Count, missing);
     }
+
+    private static void WriteParsedAttachment(
+        SqliteConnection connection,
+        long messageId,
+        ParsedAttachment item,
+        long? existingId,
+        bool isAvailable,
+        long? mediaObjectId,
+        long actualSize)
+    {
+        using var write = connection.CreateCommand();
+        if (existingId.HasValue)
+        {
+            write.CommandText = """
+                UPDATE attachments SET kind=@kind, filename=@filename, declared_path=@declared,
+                    source_path=@source, is_available=@available, media_object_id=@media,
+                    declared_size=@size, mime_type=@mime, width=@width, height=@height,
+                    duration=@duration, metadata_json=@metadata
+                WHERE id=@id
+                """;
+            write.Parameters.AddWithValue("@id", existingId.Value);
+        }
+        else
+        {
+            write.CommandText = """
+                INSERT INTO attachments(message_id, ordinal, kind, filename, declared_path, source_path,
+                    is_available, media_object_id, declared_size, mime_type, width, height, duration, metadata_json)
+                VALUES (@m, @ordinal, @kind, @filename, @declared, @source,
+                    @available, @media, @size, @mime, @width, @height, @duration, @metadata)
+                """;
+            write.Parameters.AddWithValue("@m", messageId);
+            write.Parameters.AddWithValue("@ordinal", item.Ordinal);
+        }
+
+        write.Parameters.AddWithValue("@kind", item.Kind);
+        write.Parameters.AddWithValue("@filename", (object?)item.Filename ?? DBNull.Value);
+        write.Parameters.AddWithValue("@declared", (object?)item.DeclaredPath ?? DBNull.Value);
+        write.Parameters.AddWithValue("@source", (object?)item.SourcePath ?? DBNull.Value);
+        write.Parameters.AddWithValue("@available", isAvailable ? 1L : 0L);
+        write.Parameters.AddWithValue("@media", mediaObjectId.HasValue ? mediaObjectId.Value : DBNull.Value);
+        write.Parameters.AddWithValue("@size", actualSize);
+        write.Parameters.AddWithValue("@mime", (object?)item.MimeType ?? DBNull.Value);
+        write.Parameters.AddWithValue("@width", item.Width.HasValue ? item.Width.Value : DBNull.Value);
+        write.Parameters.AddWithValue("@height", item.Height.HasValue ? item.Height.Value : DBNull.Value);
+        write.Parameters.AddWithValue("@duration", item.Duration.HasValue ? item.Duration.Value : DBNull.Value);
+        write.Parameters.AddWithValue("@metadata", CanonicalJson.Serialize(item.Metadata));
+        write.ExecuteNonQuery();
+    }
+
+    private readonly record struct ExistingAttachment(
+        long Id,
+        bool IsAvailable,
+        long? MediaObjectId,
+        string? SourcePath,
+        string? Sha256,
+        string? ManagedPath);
 
     private (long Id, long Size) StoreMedia(SqliteConnection connection, string sourcePath, string? mimeType)
     {
