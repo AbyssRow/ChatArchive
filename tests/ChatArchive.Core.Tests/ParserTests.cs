@@ -121,7 +121,7 @@ public class ParserTests : IDisposable
 
     private const string WeFlowFixture = """
         {
-          "weflow": true,
+          "weflow": {"version": "1.0.3"},
           "session": {"wxid": "wxid_zhang", "type": "私聊", "remark": "张三"},
           "messages": [
             {"localId": 1, "createTime": 1700000000, "isSend": true,
@@ -231,6 +231,108 @@ public class ParserTests : IDisposable
         using var exportFile = format.Open(qqPath);
         Assert.Equal("老张", exportFile.Conversation.Title);
         Assert.Single(exportFile.EnumerateMessages().Take(1));
+    }
+
+    [Theory]
+    [InlineData("{\"version\":5}")]
+    [InlineData("{\"version\":\"5\"}")]
+    [InlineData("{}")]
+    public void Qq_rejects_unverified_export_versions(string metadata)
+    {
+        var path = Path.Combine(_dir, "qq-version.json");
+        File.WriteAllText(path, $$"""
+            {"QQChatExporter":{{metadata}},
+             "chatInfo":{"selfUin":"1","peerUid":"p","name":"n"},
+             "messages":[]}
+            """);
+
+        var error = Assert.Throws<ImportFormatException>(() => new QqExportFormat().Open(path));
+        Assert.Contains("支持版本 4", error.Message);
+    }
+
+    [Theory]
+    [InlineData("4")]
+    [InlineData("\"4\"")]
+    public void Qq_accepts_numeric_or_string_supported_version(string versionJson)
+    {
+        var path = Path.Combine(_dir, "qq-supported-version.json");
+        File.WriteAllText(path, $$"""
+            {"QQChatExporter":{"version":{{versionJson}}},
+             "chatInfo":{"selfUin":"1","peerUid":"p","name":"n"},
+             "messages":[]}
+            """);
+
+        using var exportFile = new QqExportFormat().Open(path);
+        Assert.Equal("p", exportFile.Conversation.NativeId);
+    }
+
+    [Theory]
+    [InlineData("1.0.4")]
+    [InlineData("")]
+    public void Weflow_rejects_unverified_export_versions(string version)
+    {
+        var metadata = version.Length == 0 ? "{}" : $$"""{"version":"{{version}}"}""";
+        var path = Path.Combine(_dir, "wx-version.json");
+        File.WriteAllText(path, $$"""
+            {"weflow":{{metadata}},
+             "session":{"wxid":"p","type":"私聊"},
+             "messages":[]}
+            """);
+
+        var error = Assert.Throws<ImportFormatException>(() => new WeFlowExportFormat().Open(path));
+        Assert.Contains("支持版本 1.0.3", error.Message);
+    }
+
+    [Fact]
+    public void Weflow_accepts_supported_version()
+    {
+        var path = Path.Combine(_dir, "wx-supported-version.json");
+        File.WriteAllText(path, """
+            {"weflow":{"version":"1.0.3"},
+             "session":{"wxid":"p","type":"私聊"},
+             "messages":[]}
+            """);
+
+        using var exportFile = new WeFlowExportFormat().Open(path);
+        Assert.Equal("p", exportFile.Conversation.NativeId);
+    }
+
+    [Fact]
+    public void Streaming_qq_adapter_preserves_parser_hashes()
+    {
+        var path = Path.Combine(_dir, "qq-hash-compatibility.json");
+        File.WriteAllText(path, QqFixture);
+
+        using var document = ImportText.ParseDocument(path);
+        var conversation = QqParser.ReadConversation(document, path);
+        var expected = QqParser.IterateMessages(document, conversation, path)
+            .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
+            .ToList();
+        using var exportFile = new QqExportFormat().Open(path);
+        var actual = exportFile.EnumerateMessages()
+            .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
+            .ToList();
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void Streaming_weflow_adapter_preserves_parser_hashes()
+    {
+        var path = Path.Combine(_dir, "weflow-hash-compatibility.json");
+        File.WriteAllText(path, WeFlowFixture);
+
+        using var document = ImportText.ParseDocument(path);
+        var (conversation, selfSender) = WeFlowParser.ReadConversation(document, path);
+        var expected = WeFlowParser.IterateMessages(document, conversation, selfSender, path)
+            .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
+            .ToList();
+        using var exportFile = new WeFlowExportFormat().Open(path);
+        var actual = exportFile.EnumerateMessages()
+            .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
+            .ToList();
+
+        Assert.Equal(expected, actual);
     }
 
     public void Dispose()

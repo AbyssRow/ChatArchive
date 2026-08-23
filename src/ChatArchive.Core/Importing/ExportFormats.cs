@@ -1,10 +1,12 @@
-using System.Text.Json;
+using ChatArchive.Core.IO;
 
 namespace ChatArchive.Core.Importing;
 
 /// <summary>QQ Chat Exporter 格式适配器。</summary>
 public sealed class QqExportFormat : IChatExportFormat
 {
+    private const string SupportedVersion = "4";
+
     public string Platform => "qq";
 
     public bool Matches(string filePath)
@@ -19,15 +21,35 @@ public sealed class QqExportFormat : IChatExportFormat
             && head.Contains("\"chatInfo\"", StringComparison.Ordinal);
     }
 
-    public ExportFile Open(string filePath)
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var document = ImportText.ParseDocument(filePath);
-        var conversation = QqParser.ReadConversation(document, filePath);
+        var metadata = ChunkedJsonReader.ReadObjectProperty(
+            filePath,
+            "QQChatExporter",
+            cancellationToken);
+        var version = ImportText.Clean(metadata["version"]);
+        if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
+        {
+            throw new ImportFormatException(
+                filePath,
+                $"不支持的 QQ Chat Exporter 导出版本 {Display(version)}；支持版本 {SupportedVersion}，请先更新 ChatArchive");
+        }
+
+        var chat = ChunkedJsonReader.ReadObjectProperty(filePath, "chatInfo", cancellationToken);
+        var conversation = QqParser.ReadConversation(chat, filePath);
+        var selfUid = ImportText.Clean(chat["selfUid"]);
+        var selfUin = ImportText.Clean(chat["selfUin"]);
         return new ExportFile(
-            document,
             conversation,
-            hint => QqParser.IterateMessages(document, conversation, filePath));
+            token => QqParser.IterateMessages(
+                ChunkedJsonReader.EnumerateObjectArray(filePath, "messages", token),
+                conversation,
+                filePath,
+                selfUid,
+                selfUin));
     }
+
+    private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
 
     internal static string ReadHead(string path, int charCount)
     {
@@ -49,6 +71,8 @@ public sealed class QqExportFormat : IChatExportFormat
 /// <summary>WeFlow 格式适配器。</summary>
 public sealed class WeFlowExportFormat : IChatExportFormat
 {
+    private const string SupportedVersion = "1.0.3";
+
     public string Platform => "wechat";
 
     public bool Matches(string filePath)
@@ -59,37 +83,37 @@ public sealed class WeFlowExportFormat : IChatExportFormat
         }
 
         var head = QqExportFormat.ReadHead(filePath, 8192);
-        if (!head.Contains("\"weflow\"", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        try
-        {
-            using var document = ImportText.ParseDocument(filePath);
-            return HasKey(document, "session") && HasKey(document, "messages");
-        }
-        catch (ImportFormatException)
-        {
-            return false;
-        }
+        return head.Contains("\"weflow\"", StringComparison.Ordinal)
+            && head.Contains("\"session\"", StringComparison.Ordinal);
     }
 
-    public ExportFile Open(string filePath)
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var document = ImportText.ParseDocument(filePath);
-        var (conversation, selfSender) = WeFlowParser.ReadConversation(document, filePath);
-        return new ExportFile(
-            document,
+        var metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "weflow", cancellationToken);
+        var version = ImportText.Clean(metadata["version"]);
+        if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
+        {
+            throw new ImportFormatException(
+                filePath,
+                $"不支持的 WeFlow 导出版本 {Display(version)}；支持版本 {SupportedVersion}，请先更新 ChatArchive");
+        }
+
+        var session = ChunkedJsonReader.ReadObjectProperty(filePath, "session", cancellationToken);
+        var conversation = WeFlowParser.ReadConversation(session, filePath);
+        var selfSender = WeFlowParser.InferSelfSender(
+            ChunkedJsonReader.EnumerateObjectArray(filePath, "messages", cancellationToken),
             conversation,
-            hint => WeFlowParser.IterateMessages(document, conversation, hint ?? selfSender, filePath));
+            cancellationToken);
+        return new ExportFile(
+            conversation,
+            token => WeFlowParser.IterateMessages(
+                ChunkedJsonReader.EnumerateObjectArray(filePath, "messages", token),
+                conversation,
+                selfSender,
+                filePath));
     }
 
-    private static bool HasKey(JsonDocument document, string key)
-    {
-        return document.RootElement.ValueKind == JsonValueKind.Object
-            && document.RootElement.TryGetProperty(key, out _);
-    }
+    private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
 }
 
 /// <summary>注册表：新增导出格式时在此追加实例。</summary>

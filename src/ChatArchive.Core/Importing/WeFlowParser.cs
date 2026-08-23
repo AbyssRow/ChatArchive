@@ -60,7 +60,6 @@ public static class WeFlowParser
 
     public static (ParsedConversation Conversation, string? SelfSender) ReadConversation(JsonDocument document, string filePath)
     {
-        JsonObject session;
         if (document.RootElement.ValueKind != JsonValueKind.Object
             || !document.RootElement.TryGetProperty("session", out var sessionElement)
             || sessionElement.ValueKind != JsonValueKind.Object
@@ -69,7 +68,16 @@ public static class WeFlowParser
             throw new ImportFormatException(filePath, "WeFlow session 无效");
         }
 
-        session = parsedSession;
+        var conversation = ReadConversation(parsedSession, filePath);
+        var selfSender = InferSelfSender(
+            MessagesOf(document).Select(ElementToObject),
+            conversation,
+            CancellationToken.None);
+        return (conversation, selfSender);
+    }
+
+    internal static ParsedConversation ReadConversation(JsonObject session, string filePath)
+    {
         var nativeId = ImportText.Clean(Get(session, "wxid"));
         if (nativeId.Length == 0)
         {
@@ -89,17 +97,26 @@ public static class WeFlowParser
             title = TitleFromPath(filePath, nativeId);
         }
 
+        return new ParsedConversation("wechat", "wechat-default", nativeId, kind, title);
+    }
+
+    internal static string? InferSelfSender(
+        IEnumerable<JsonObject> messages,
+        ParsedConversation conversation,
+        CancellationToken cancellationToken)
+    {
         // 统计自己发送消息的 senderUsername，取出现最多的作为本账号标识。
         var counter = new List<string>();
         var counts = new Dictionary<string, long>();
-        foreach (var rawElement in MessagesOf(document))
+        foreach (var raw in messages)
         {
-            if (!AsBool(rawElement.TryGetProperty("isSend", out var isSendElement) ? JsonNode.Parse(isSendElement.GetRawText()) : null))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!AsBool(Get(raw, "isSend")))
             {
                 continue;
             }
 
-            var sender = ImportText.Clean(ElementString(rawElement, "senderUsername"));
+            var sender = ImportText.Clean(TryGetRaw(raw, "senderUsername"));
             if (sender.Length == 0)
             {
                 continue;
@@ -115,10 +132,10 @@ public static class WeFlowParser
             }
         }
 
-        if (kind == "private" && counts.Count > 1)
+        if (conversation.Kind == "private" && counts.Count > 1)
         {
-            counts.Remove(nativeId);
-            counter.RemoveAll(id => id == nativeId);
+            counts.Remove(conversation.NativeId);
+            counter.RemoveAll(id => id == conversation.NativeId);
         }
 
         string? selfSender = null;
@@ -132,7 +149,7 @@ public static class WeFlowParser
             }
         }
 
-        return (new ParsedConversation("wechat", "wechat-default", nativeId, kind, title), selfSender);
+        return selfSender;
     }
 
     public static IEnumerable<ParsedMessage> IterateMessages(
@@ -142,14 +159,27 @@ public static class WeFlowParser
         var index = 0;
         foreach (var rawElement in MessagesOf(document))
         {
-            yield return ParseMessage(rawElement, index++, conversation, selfSender, exportRoot);
+            yield return ParseMessage(ElementToObject(rawElement), index++, conversation, selfSender, exportRoot);
+        }
+    }
+
+    internal static IEnumerable<ParsedMessage> IterateMessages(
+        IEnumerable<JsonObject> messages,
+        ParsedConversation conversation,
+        string? selfSender,
+        string filePath)
+    {
+        var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
+        var index = 0;
+        foreach (var raw in messages)
+        {
+            yield return ParseMessage(raw, index++, conversation, selfSender, exportRoot);
         }
     }
 
     private static ParsedMessage ParseMessage(
-        JsonElement rawElement, int index, ParsedConversation conversation, string? selfSender, string exportRoot)
+        JsonObject raw, int index, ParsedConversation conversation, string? selfSender, string exportRoot)
     {
-        var raw = ElementToObject(rawElement);
         var rawContent = OrEmpty(ImportText.Clean(TryGetRaw(raw, "content")), "[空消息]");
         var isSend = AsBool(raw["isSend"]);
         var exportedSender = ImportText.Clean(TryGetRaw(raw, "senderUsername"));

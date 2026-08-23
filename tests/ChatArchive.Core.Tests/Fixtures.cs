@@ -29,7 +29,7 @@ internal static class Fixtures
 
     public const string WeFlowExport = """
         {
-          "weflow": true,
+          "weflow": {"version": "1.0.3"},
           "session": {"wxid": "wxid_zhang", "type": "私聊", "remark": "张三"},
           "messages": [
             {"localId": 1, "createTime": 1700000000, "isSend": true,

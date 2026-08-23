@@ -16,6 +16,11 @@ public static class QqParser
         var chat = GetTopObject(document, "chatInfo")
             ?? throw new ImportFormatException(filePath, "缺少 chatInfo");
 
+        return ReadConversation(chat, filePath);
+    }
+
+    internal static ParsedConversation ReadConversation(JsonObject chat, string filePath)
+    {
         var accountId = Pick(chat, "selfUin", "selfUid", fallback: "qq-default");
         var nativeId = Pick(chat, "peerUid", "peerUin", "name", fallback: Path.GetFileNameWithoutExtension(filePath));
         var title = Pick(chat, "name", "peerName", fallback: nativeId);
@@ -37,15 +42,36 @@ public static class QqParser
             var index = 0;
             foreach (var item in messagesElement.EnumerateArray())
             {
-                yield return ParseMessage(item, index, selfUid, selfUin, Path.GetDirectoryName(Path.GetFullPath(documentPath))!);
+                yield return ParseMessage(
+                    JsonObjectFrom(item),
+                    index,
+                    selfUid,
+                    selfUin,
+                    Path.GetDirectoryName(Path.GetFullPath(documentPath))!);
                 index++;
             }
         }
     }
 
-    private static ParsedMessage ParseMessage(JsonElement rawElement, int index, string selfUid, string selfUin, string exportRoot)
+    internal static IEnumerable<ParsedMessage> IterateMessages(
+        IEnumerable<JsonObject> messages,
+        ParsedConversation conversation,
+        string documentPath,
+        string? selfUid = null,
+        string? selfUin = null)
     {
-        var raw = JsonObjectFrom(rawElement);
+        var resolvedSelfUid = selfUid ?? conversation.AccountId;
+        var resolvedSelfUin = selfUin ?? conversation.AccountId;
+        var exportRoot = Path.GetDirectoryName(Path.GetFullPath(documentPath))!;
+        var index = 0;
+        foreach (var raw in messages)
+        {
+            yield return ParseMessage(raw, index++, resolvedSelfUid, resolvedSelfUin, exportRoot);
+        }
+    }
+
+    private static ParsedMessage ParseMessage(JsonObject raw, int index, string selfUid, string selfUin, string exportRoot)
+    {
         var sender = raw["sender"] as JsonObject;
         var senderNative = FirstNonEmpty(
             SenderField(sender, "uid"),
