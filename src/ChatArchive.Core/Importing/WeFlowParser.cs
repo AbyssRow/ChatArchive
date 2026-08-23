@@ -5,7 +5,7 @@ using System.Xml.Linq;
 
 namespace ChatArchive.Core.Importing;
 
-/// <summary>WeFlow JSON 解析器，行为对齐旧版 wechat.py（解析器版本 4）。</summary>
+/// <summary>WeFlow JSON 解析器，行为对齐旧版 wechat.py（解析器版本 5）。</summary>
 public static class WeFlowParser
 {
     private static readonly Dictionary<string, string> JsonMediaTypes = new()

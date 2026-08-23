@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 
 namespace ChatArchive.Core.Importing;
 
-/// <summary>QQ Chat Exporter JSON 解析器，行为对齐旧版 qq.py（解析器版本 4）。</summary>
+/// <summary>QQ Chat Exporter JSON 解析器，行为对齐旧版 qq.py（解析器版本 5）。</summary>
 public static class QqParser
 {
     private static readonly HashSet<string> SearchableKeys = new()
