@@ -54,6 +54,7 @@ public sealed class SenderRepository
             senderId,
             platform,
             nativeId,
+            qqNumber,
             profileDisplayName,
             isSelf,
             aliases,

@@ -10,3 +10,4 @@ artifacts/
 publish/
 TestResults/
 *.log
+/input/

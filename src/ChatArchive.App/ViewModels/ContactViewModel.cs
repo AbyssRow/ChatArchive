@@ -41,7 +41,7 @@ public partial class ContactViewModel : ObservableObject
 
         DisplayName = profile.CurrentName;
         IdentityLine = (profile.Platform == "qq"
-            ? $"QQ {profile.NativeId}"
+            ? $"QQ {profile.QQNumber ?? profile.NativeId}"
             : $"微信 {profile.NativeId}");
         Aliases.Clear();
         foreach (var alias in profile.Aliases)

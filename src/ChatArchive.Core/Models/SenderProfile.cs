@@ -4,6 +4,7 @@ public sealed record SenderProfile(
     long Id,
     string Platform,
     string NativeId,
+    string? QQNumber,
     string CurrentName,
     bool IsSelf,
     IReadOnlyList<AliasInfo> Aliases,

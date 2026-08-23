@@ -47,6 +47,7 @@ public class SenderAndStatsTests : IDisposable
 
         var profile = new SenderRepository(_archive.Db).GetSender(sender);
         Assert.NotNull(profile);
+        Assert.Equal("123456789", profile!.QQNumber);
         Assert.Null(new SenderRepository(_archive.Db).GetSender(9999));
     }
 
