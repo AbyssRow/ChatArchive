@@ -17,9 +17,18 @@ public sealed class QqExportFormat : IChatExportFormat
             return false;
         }
 
-        return ChunkedJsonReader.ContainsRootProperties(
-            filePath,
-            new[] { "metadata", "chatInfo" });
+        if (!ChunkedJsonReader.ContainsRootProperties(
+                filePath,
+                new[] { "metadata", "chatInfo" }))
+        {
+            return false;
+        }
+
+        var metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "metadata");
+        return string.Equals(
+            ImportText.Clean(metadata["name"]),
+            ExporterName,
+            StringComparison.Ordinal);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)

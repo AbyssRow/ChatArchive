@@ -285,6 +285,27 @@ public class ImportServiceTests : IDisposable
         Assert.Equal("failed", Text(connection, "SELECT status FROM import_files LIMIT 1"));
     }
 
+    [Fact]
+    public void Failed_file_removes_new_unreferenced_managed_media()
+    {
+        var root = ExportRoot();
+        var exportPath = Path.Combine(root, "failing-media.json");
+        var sourcePath = Path.Combine(root, "source-media.bin");
+        File.WriteAllText(exportPath, "{}");
+        File.WriteAllBytes(sourcePath, new byte[] { 1, 2, 3, 4 });
+        var service = new ImportService(
+            _archive.Db,
+            _mediaDir,
+            formats: new[] { new FailingAfterMediaExportFormat(exportPath, sourcePath) });
+
+        var result = service.Run(new[] { root });
+
+        Assert.Equal(1, result.FilesFailed);
+        Assert.Empty(Directory.EnumerateFiles(_mediaDir, "*", SearchOption.AllDirectories));
+        using var connection = _archive.Open();
+        Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM media_objects"));
+    }
+
     private string? _exportRootField;
 
     /// <summary>导出文件目录：与数据目录分开（服务会按前缀排除整个数据目录）。</summary>
@@ -468,6 +489,68 @@ public class ImportServiceTests : IDisposable
                 Attachments: Array.Empty<ParsedAttachment>(),
                 CompatiblePayloadHashes: Array.Empty<string>());
             File.AppendAllText(sourcePath, " ");
+        }
+    }
+
+    private sealed class FailingAfterMediaExportFormat(string exportPath, string mediaPath)
+        : IChatExportFormat
+    {
+        public string Platform => "qq";
+
+        public bool Matches(string filePath) =>
+            string.Equals(filePath, exportPath, StringComparison.OrdinalIgnoreCase);
+
+        public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+        {
+            var conversation = new ParsedConversation(
+                Platform,
+                "account",
+                "conversation",
+                "private",
+                "测试会话");
+            return new ExportFile(conversation, Enumerate);
+        }
+
+        private IEnumerable<ParsedMessage> Enumerate(CancellationToken cancellationToken)
+        {
+            yield return new ParsedMessage(
+                NativeId: "media-message",
+                LocalId: null,
+                TimestampMs: 1,
+                Sequence: null,
+                SenderNativeId: "sender",
+                SenderName: "发送者",
+                SenderAliases: new[] { "发送者" },
+                Direction: "incoming",
+                MessageType: "image",
+                MediaType: "image",
+                Content: "",
+                SearchText: "",
+                IsRecalled: false,
+                IsSystem: false,
+                ReplyToNativeId: null,
+                PayloadHash: "payload-media",
+                SemanticHash: "semantic-media",
+                SourceLocator: "message:0",
+                RawPayload: new JsonObject(),
+                Attachments: new[]
+                {
+                    new ParsedAttachment(
+                        Ordinal: 0,
+                        Kind: "image",
+                        Filename: "source-media.bin",
+                        DeclaredPath: "source-media.bin",
+                        SourcePath: mediaPath,
+                        DeclaredSize: 4,
+                        MimeType: "application/octet-stream",
+                        Width: null,
+                        Height: null,
+                        Duration: null,
+                        Metadata: new JsonObject()),
+                },
+                CompatiblePayloadHashes: Array.Empty<string>());
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new ImportFormatException(exportPath, "synthetic failure");
         }
     }
 

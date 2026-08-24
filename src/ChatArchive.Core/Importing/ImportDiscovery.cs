@@ -27,23 +27,29 @@ public static class ImportDiscovery
         foreach (var rawRoot in roots)
         {
             var root = Path.GetFullPath(rawRoot);
-            if (File.Exists(root))
+            if (IsExcluded(root))
+            {
+                continue;
+            }
+
+            FileAttributes attributes;
+            try
+            {
+                attributes = File.GetAttributes(root);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                RecordError(root, $"无法访问导入路径（{ex.Message}）");
+                continue;
+            }
+
+            if (attributes.HasFlag(FileAttributes.Directory))
+            {
+                EnumerateDirectory(root);
+            }
+            else
             {
                 Consider(root);
-            }
-            else if (Directory.Exists(root))
-            {
-                foreach (var file in Directory.EnumerateFiles(
-                             root,
-                             "*.json",
-                             new EnumerationOptions
-                             {
-                                 RecurseSubdirectories = true,
-                                 IgnoreInaccessible = true,
-                             }))
-                {
-                    Consider(file);
-                }
             }
         }
 
@@ -52,20 +58,84 @@ public static class ImportDiscovery
             .Select(item => new DiscoveredImport(item.Path, item.Platform, item.Size, item.Error))
             .ToList();
 
+        void EnumerateDirectory(string root)
+        {
+            var pending = new Stack<string>();
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            pending.Push(root);
+            while (pending.TryPop(out var directory))
+            {
+                var fullDirectory = Path.GetFullPath(directory);
+                if (!visited.Add(fullDirectory) || IsExcluded(fullDirectory))
+                {
+                    continue;
+                }
+
+                string[] files;
+                string[] directories;
+                try
+                {
+                    files = Directory.GetFiles(fullDirectory);
+                    directories = Directory.GetDirectories(fullDirectory);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    RecordError(fullDirectory, $"无法枚举导入目录（{ex.Message}）");
+                    continue;
+                }
+
+                foreach (var file in files)
+                {
+                    if (string.Equals(
+                            Path.GetExtension(file),
+                            ".json",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        Consider(file);
+                    }
+                }
+
+                foreach (var child in directories)
+                {
+                    if (!IsExcluded(child))
+                    {
+                        pending.Push(child);
+                    }
+                }
+            }
+        }
+
+        bool IsExcluded(string path)
+        {
+            var full = Path.GetFullPath(path);
+            var directoryForm = full.EndsWith(Path.DirectorySeparatorChar)
+                ? full
+                : full + Path.DirectorySeparatorChar;
+            return excluded.Any(prefix =>
+                full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                || directoryForm.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        }
+
+        void RecordError(string path, string error)
+        {
+            var full = Path.GetFullPath(path);
+            if (seen.Add(full))
+            {
+                found.Add((full, "unknown", 0, error));
+            }
+        }
+
         void Consider(string path)
         {
-            if (!seen.Add(path))
+            var full = Path.GetFullPath(path);
+            if (!seen.Add(full))
             {
                 return;
             }
 
-            var full = Path.GetFullPath(path);
-            foreach (var prefix in excluded)
+            if (IsExcluded(full))
             {
-                if (full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
+                return;
             }
 
             long size;

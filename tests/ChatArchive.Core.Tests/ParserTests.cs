@@ -260,6 +260,34 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
+    public void Discovery_reports_an_explicit_missing_root()
+    {
+        var missing = Path.Combine(_dir, "missing-root");
+
+        var found = ImportDiscovery.Discover(new[] { missing });
+
+        var candidate = Assert.Single(found);
+        Assert.Equal("unknown", candidate.Platform);
+        Assert.Contains("无法访问导入路径", candidate.Error);
+    }
+
+    [Fact]
+    public void Discovery_ignores_json_with_wrong_qq_exporter_name()
+    {
+        var root = Path.Combine(_dir, "other-exporter");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "other.json"), """
+            {"metadata":{"name":"OtherExporter","version":"0.1.0"},
+             "chatInfo":{"selfUin":"1","peerUid":"p","name":"n"},
+             "messages":[]}
+            """);
+
+        var found = ImportDiscovery.Discover(new[] { root });
+
+        Assert.Empty(found);
+    }
+
+    [Fact]
     public void ExportFile_factory_routes_by_format()
     {
         var formats = ExportFormats.Default;

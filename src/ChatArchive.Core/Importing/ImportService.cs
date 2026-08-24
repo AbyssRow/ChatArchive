@@ -186,6 +186,7 @@ public sealed class ImportService
         CancellationToken cancellationToken = default)
     {
         var counters = new Counters();
+        var createdMedia = new HashSet<CreatedManagedMedia>();
         long? importFileId = null;
         try
         {
@@ -295,7 +296,8 @@ public sealed class ImportService
                         transactionConnection,
                         messageId,
                         attachments,
-                        cancellationToken);
+                        cancellationToken,
+                        createdMedia);
                     counters.Attachments += attachmentCount;
                     counters.MissingMedia += missing;
                 }
@@ -317,7 +319,16 @@ public sealed class ImportService
             }
             catch
             {
-                transaction.Rollback();
+                try
+                {
+                    transaction.Rollback();
+                }
+                finally
+                {
+                    CleanupUnreferencedMedia(createdMedia);
+                    _mediaCache.Clear();
+                }
+
                 throw;
             }
 
@@ -868,7 +879,8 @@ public sealed class ImportService
         SqliteConnection connection,
         long messageId,
         IReadOnlyList<ParsedAttachment> attachments,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ISet<CreatedManagedMedia> createdMedia)
     {
         var missing = 0;
         var locator = new MediaLocator(_mediaDir);
@@ -907,7 +919,8 @@ public sealed class ImportService
                     connection,
                     item.SourcePath!,
                     item.MimeType,
-                    cancellationToken);
+                    cancellationToken,
+                    createdMedia);
                 WriteParsedAttachment(
                     connection,
                     messageId,
@@ -1024,11 +1037,14 @@ public sealed class ImportService
         string? Sha256,
         string? ManagedPath);
 
+    private readonly record struct CreatedManagedMedia(string Path, string Digest);
+
     private (long Id, long Size) StoreMedia(
         SqliteConnection connection,
         string sourcePath,
         string? mimeType,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ISet<CreatedManagedMedia> createdMedia)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var cacheKey = sourcePath.ToLowerInvariant();
@@ -1041,8 +1057,7 @@ public sealed class ImportService
         }
         else
         {
-            digest = FileHashing.Sha256File(sourcePath, cancellationToken);
-            size = new FileInfo(sourcePath).Length;
+            (digest, size) = FileHashing.HashFile(sourcePath, cancellationToken);
             managed = null;
             if (_copyMedia)
             {
@@ -1053,15 +1068,37 @@ public sealed class ImportService
                 }
 
                 var destination = Path.Combine(_mediaDir, digest[..2], $"{digest}{suffix}");
-                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
                 if (!File.Exists(destination))
                 {
-                    var temporary = destination + $".{Environment.ProcessId}.tmp";
+                    Directory.CreateDirectory(_mediaDir);
+                    var temporary = Path.Combine(
+                        _mediaDir,
+                        $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
                     try
                     {
-                        CopyFile(sourcePath, temporary, cancellationToken);
+                        var copied = FileHashing.CopyFileAndHash(
+                            sourcePath,
+                            temporary,
+                            cancellationToken);
+                        digest = copied.Digest;
+                        size = copied.Size;
+                        destination = Path.Combine(_mediaDir, digest[..2], $"{digest}{suffix}");
+                        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
                         cancellationToken.ThrowIfCancellationRequested();
-                        File.Move(temporary, destination, overwrite: true);
+                        if (!File.Exists(destination))
+                        {
+                            try
+                            {
+                                File.Move(temporary, destination, overwrite: false);
+                                createdMedia.Add(new CreatedManagedMedia(
+                                    Path.GetFullPath(destination),
+                                    digest));
+                            }
+                            catch (IOException) when (File.Exists(destination))
+                            {
+                                // Another writer completed the same content-addressed file first.
+                            }
+                        }
                     }
                     finally
                     {
@@ -1102,38 +1139,34 @@ public sealed class ImportService
         return (id, size);
     }
 
-    private static void CopyFile(
-        string sourcePath,
-        string destinationPath,
-        CancellationToken cancellationToken)
+    private void CleanupUnreferencedMedia(IEnumerable<CreatedManagedMedia> createdMedia)
     {
-        const int BufferSize = 128 * 1024;
-        using var source = new FileStream(
-            sourcePath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            BufferSize,
-            FileOptions.SequentialScan);
-        using var destination = new FileStream(
-            destinationPath,
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.None,
-            BufferSize,
-            FileOptions.SequentialScan);
-        var buffer = new byte[BufferSize];
-        while (true)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var read = source.Read(buffer);
-            cancellationToken.ThrowIfCancellationRequested();
-            if (read == 0)
+            using var connection = _db.OpenConnection();
+            foreach (var item in createdMedia)
             {
-                return;
+                try
+                {
+                    using var referenced = connection.CreateCommand();
+                    referenced.CommandText = "SELECT EXISTS(SELECT 1 FROM media_objects WHERE sha256=@sha OR managed_path=@path)";
+                    referenced.Parameters.AddWithValue("@sha", item.Digest);
+                    referenced.Parameters.AddWithValue("@path", item.Path);
+                    if (Convert.ToInt64(referenced.ExecuteScalar()) == 0 && File.Exists(item.Path))
+                    {
+                        File.Delete(item.Path);
+                    }
+                }
+                catch (Exception ex) when (
+                    ex is IOException or UnauthorizedAccessException or SqliteException)
+                {
+                    // Cleanup is best effort and must not mask the original import failure.
+                }
             }
-
-            destination.Write(buffer, 0, read);
+        }
+        catch (SqliteException)
+        {
+            // Preserve the original import failure if cleanup cannot inspect references.
         }
     }
 
