@@ -60,6 +60,51 @@ public sealed class ChunkedJsonReaderTests : IDisposable
     }
 
     [Fact]
+    public void Missing_root_suffix_after_selected_object_is_rejected()
+    {
+        var path = Write("object-suffix.json", """{"session":{"id":1}""");
+
+        Assert.Throws<ImportFormatException>(
+            () => ChunkedJsonReader.ReadObjectProperty(path, "session", bufferSize: 5));
+    }
+
+    [Fact]
+    public void Missing_root_suffix_after_selected_array_is_rejected()
+    {
+        var path = Write("array-suffix.json", """{"messages":[]""");
+
+        Assert.Throws<ImportFormatException>(
+            () => ChunkedJsonReader.EnumerateObjectArray(path, "messages", bufferSize: 5).ToList());
+    }
+
+    [Fact]
+    public void Trailing_json_content_is_rejected()
+    {
+        var path = Write("trailing.json", """{"messages":[]} true""");
+
+        Assert.Throws<ImportFormatException>(
+            () => ChunkedJsonReader.EnumerateObjectArray(path, "messages", bufferSize: 5).ToList());
+    }
+
+    [Fact]
+    public void Root_property_sniffer_finds_markers_after_large_leading_values()
+    {
+        var padding = new string('x', 20_000);
+        var path = Write("markers.json", $$"""
+            {"padding":"{{padding}}","metadata":{},"chatInfo":{},"messages":[]}
+            """);
+
+        Assert.True(ChunkedJsonReader.ContainsRootProperties(
+            path,
+            new[] { "metadata", "chatInfo" },
+            bufferSize: 7));
+        Assert.False(ChunkedJsonReader.ContainsRootProperties(
+            path,
+            new[] { "metadata", "session" },
+            bufferSize: 7));
+    }
+
+    [Fact]
     public void Array_enumeration_observes_cancellation_between_items()
     {
         var path = Write("cancel.json", """{"messages":[{"id":1},{"id":2}]}""");

@@ -185,6 +185,29 @@ public class ImportServiceTests : IDisposable
     }
 
     [Fact]
+    public void Unreadable_file_is_reported_and_does_not_abort_valid_file()
+    {
+        var root = ExportRoot();
+        var lockedPath = Path.Combine(root, "a-locked.json");
+        File.WriteAllText(lockedPath, Fixtures.QqExport);
+        File.WriteAllText(Path.Combine(root, "b-good.json"), Fixtures.QqExport);
+        using var locked = new FileStream(
+            lockedPath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None);
+        var service = new ImportService(_archive.Db, _mediaDir);
+
+        var result = service.Run(new[] { root });
+
+        Assert.Equal(2, result.FilesFound);
+        Assert.Equal(1, result.FilesImported);
+        Assert.Equal(1, result.FilesFailed);
+        var failed = Assert.Single(result.Files, file => file.Status == "failed");
+        Assert.Contains("无法检查导出格式", failed.Error);
+    }
+
+    [Fact]
     public void Unsupported_export_version_writes_nothing_and_does_not_abort_valid_file()
     {
         var root = ExportRoot();
@@ -221,6 +244,45 @@ public class ImportServiceTests : IDisposable
         Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM messages"));
         Assert.Equal("interrupted", Text(connection, "SELECT status FROM import_files LIMIT 1"));
         Assert.Equal("interrupted", Text(connection, "SELECT status FROM import_runs LIMIT 1"));
+    }
+
+    [Fact]
+    public void Database_constraint_failure_terminates_the_run()
+    {
+        var root = ExportRoot();
+        File.WriteAllText(Path.Combine(root, "invalid-database.json"), "{}");
+        var service = new ImportService(
+            _archive.Db,
+            _mediaDir,
+            formats: new[] { new InvalidDatabaseExportFormat() });
+
+        var error = Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(
+            () => service.Run(new[] { root }));
+
+        Assert.Equal(19, error.SqliteErrorCode);
+        using var connection = _archive.Open();
+        Assert.Equal("failed", Text(connection, "SELECT status FROM import_runs LIMIT 1"));
+    }
+
+    [Fact]
+    public void Source_file_changed_during_import_rolls_back_the_file_transaction()
+    {
+        var root = ExportRoot();
+        var path = Path.Combine(root, "changing.json");
+        File.WriteAllText(path, "{}");
+        var service = new ImportService(
+            _archive.Db,
+            _mediaDir,
+            formats: new[] { new MutatingExportFormat(path) });
+
+        var result = service.Run(new[] { root });
+
+        Assert.Equal(1, result.FilesFailed);
+        var failed = Assert.Single(result.Files);
+        Assert.Contains("导入期间文件发生变化", failed.Error);
+        using var connection = _archive.Open();
+        Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM messages"));
+        Assert.Equal("failed", Text(connection, "SELECT status FROM import_files LIMIT 1"));
     }
 
     private string? _exportRootField;
@@ -314,6 +376,98 @@ public class ImportServiceTests : IDisposable
                 RawPayload: raw,
                 Attachments: Array.Empty<ParsedAttachment>(),
                 CompatiblePayloadHashes: Array.Empty<string>());
+        }
+    }
+
+    private sealed class InvalidDatabaseExportFormat : IChatExportFormat
+    {
+        public string Platform => "qq";
+
+        public bool Matches(string filePath) =>
+            string.Equals(Path.GetFileName(filePath), "invalid-database.json", StringComparison.Ordinal);
+
+        public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+        {
+            var conversation = new ParsedConversation(
+                "invalid-platform",
+                "account",
+                "conversation",
+                "private",
+                "测试会话");
+            return new ExportFile(conversation, _ => new[] { Message() });
+        }
+
+        private static ParsedMessage Message()
+        {
+            return new ParsedMessage(
+                NativeId: "message",
+                LocalId: null,
+                TimestampMs: 1,
+                Sequence: null,
+                SenderNativeId: "sender",
+                SenderName: "发送者",
+                SenderAliases: new[] { "发送者" },
+                Direction: "incoming",
+                MessageType: "text",
+                MediaType: null,
+                Content: "content",
+                SearchText: "content",
+                IsRecalled: false,
+                IsSystem: false,
+                ReplyToNativeId: null,
+                PayloadHash: "payload",
+                SemanticHash: "semantic",
+                SourceLocator: "message:0",
+                RawPayload: new JsonObject(),
+                Attachments: Array.Empty<ParsedAttachment>(),
+                CompatiblePayloadHashes: Array.Empty<string>());
+        }
+    }
+
+    private sealed class MutatingExportFormat(string sourcePath) : IChatExportFormat
+    {
+        public string Platform => "qq";
+
+        public bool Matches(string filePath) =>
+            string.Equals(filePath, sourcePath, StringComparison.OrdinalIgnoreCase);
+
+        public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+        {
+            var conversation = new ParsedConversation(
+                Platform,
+                "account",
+                "conversation",
+                "private",
+                "测试会话");
+            return new ExportFile(conversation, Enumerate);
+        }
+
+        private IEnumerable<ParsedMessage> Enumerate(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return new ParsedMessage(
+                NativeId: "message",
+                LocalId: null,
+                TimestampMs: 1,
+                Sequence: null,
+                SenderNativeId: "sender",
+                SenderName: "发送者",
+                SenderAliases: new[] { "发送者" },
+                Direction: "incoming",
+                MessageType: "text",
+                MediaType: null,
+                Content: "content",
+                SearchText: "content",
+                IsRecalled: false,
+                IsSystem: false,
+                ReplyToNativeId: null,
+                PayloadHash: "payload",
+                SemanticHash: "semantic",
+                SourceLocator: "message:0",
+                RawPayload: new JsonObject(),
+                Attachments: Array.Empty<ParsedAttachment>(),
+                CompatiblePayloadHashes: Array.Empty<string>());
+            File.AppendAllText(sourcePath, " ");
         }
     }
 

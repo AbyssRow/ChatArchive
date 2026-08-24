@@ -23,7 +23,9 @@ internal static class ChunkedJsonReader
             throw InvalidValue(path, propertyName, "对象");
         }
 
-        return ReadObject(source, path);
+        var result = ReadObject(source, path);
+        FinishRootObject(source, path);
+        return result;
     }
 
     public static IEnumerable<JsonObject> EnumerateObjectArray(
@@ -44,6 +46,7 @@ internal static class ChunkedJsonReader
             token = ReadRequired(source, path);
             if (token.Type == JsonTokenType.EndArray)
             {
+                FinishRootObject(source, path);
                 yield break;
             }
 
@@ -53,6 +56,59 @@ internal static class ChunkedJsonReader
             }
 
             yield return ReadObject(source, path);
+        }
+    }
+
+    /// <summary>
+    /// Sniffs required root property names without materializing their values. Once all
+    /// markers are found the caller is expected to perform full validation in Open.
+    /// </summary>
+    public static bool ContainsRootProperties(
+        string path,
+        IReadOnlyCollection<string> propertyNames,
+        CancellationToken cancellationToken = default,
+        int bufferSize = 16 * 1024)
+    {
+        ArgumentNullException.ThrowIfNull(propertyNames);
+        if (propertyNames.Count == 0)
+        {
+            return true;
+        }
+
+        var required = propertyNames.ToHashSet(StringComparer.Ordinal);
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        using var source = OpenSource(path, cancellationToken, bufferSize);
+        var token = ReadRequired(source, path);
+        if (token.Type != JsonTokenType.StartObject)
+        {
+            throw new ImportFormatException(path, "JSON 根节点必须是对象");
+        }
+
+        while (true)
+        {
+            token = ReadRequired(source, path);
+            if (token.Type == JsonTokenType.EndObject)
+            {
+                EnsureEndOfDocument(source, path);
+                return false;
+            }
+
+            if (token.Type != JsonTokenType.PropertyName)
+            {
+                throw new ImportFormatException(path, "JSON 对象属性无效");
+            }
+
+            var value = ReadRequired(source, path);
+            if (token.Text is not null && required.Contains(token.Text))
+            {
+                found.Add(token.Text);
+                if (found.Count == required.Count)
+                {
+                    return true;
+                }
+            }
+
+            SkipValue(source, path, value);
         }
     }
 
@@ -179,6 +235,34 @@ internal static class ChunkedJsonReader
             {
                 depth--;
             }
+        }
+    }
+
+    private static void FinishRootObject(TokenSource source, string path)
+    {
+        while (true)
+        {
+            var token = ReadRequired(source, path);
+            if (token.Type == JsonTokenType.EndObject)
+            {
+                EnsureEndOfDocument(source, path);
+                return;
+            }
+
+            if (token.Type != JsonTokenType.PropertyName)
+            {
+                throw new ImportFormatException(path, "JSON 对象属性无效");
+            }
+
+            SkipValue(source, path, ReadRequired(source, path));
+        }
+    }
+
+    private static void EnsureEndOfDocument(TokenSource source, string path)
+    {
+        if (source.ReadToken() is not null)
+        {
+            throw new ImportFormatException(path, "JSON 根对象后存在额外内容");
         }
     }
 
@@ -344,7 +428,9 @@ internal static class ChunkedJsonReader
 
         private void ReadMore()
         {
+            _cancellationToken.ThrowIfCancellationRequested();
             var read = _stream.Read(_buffer, _start + _length, _buffer.Length - _length);
+            _cancellationToken.ThrowIfCancellationRequested();
             if (read == 0)
             {
                 _isFinalBlock = true;

@@ -220,6 +220,46 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
+    public void Discovery_finds_format_markers_after_large_leading_property()
+    {
+        var root = Path.Combine(_dir, "late-markers");
+        Directory.CreateDirectory(root);
+        var padding = new string('x', 12_000);
+        File.WriteAllText(Path.Combine(root, "qq.json"), $$"""
+            {"padding":"{{padding}}","metadata":{"name":"QQChatExporter","version":"0.1.0"},
+             "chatInfo":{"selfUin":"1","peerUid":"p","name":"n"},"messages":[]}
+            """);
+        File.WriteAllText(Path.Combine(root, "weflow.json"), $$"""
+            {"padding":"{{padding}}","weflow":{"version":"1.0.3"},
+             "session":{"wxid":"p","type":"私聊"},"messages":[]}
+            """);
+
+        var found = ImportDiscovery.Discover(new[] { root });
+
+        Assert.Equal(new[] { "qq", "wechat" }, found.Select(file => file.Platform));
+    }
+
+    [Fact]
+    public void Discovery_reports_unreadable_json_instead_of_silently_omitting_it()
+    {
+        var root = Path.Combine(_dir, "locked-export");
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "locked.json");
+        File.WriteAllText(path, QqFixture);
+        using var locked = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None);
+
+        var found = ImportDiscovery.Discover(new[] { root });
+
+        var candidate = Assert.Single(found);
+        Assert.Equal("unknown", candidate.Platform);
+        Assert.NotNull(candidate.Error);
+    }
+
+    [Fact]
     public void ExportFile_factory_routes_by_format()
     {
         var formats = ExportFormats.Default;

@@ -17,9 +17,9 @@ public sealed class QqExportFormat : IChatExportFormat
             return false;
         }
 
-        var head = ReadHead(filePath, 4096);
-        return head.Contains("QQChatExporter", StringComparison.Ordinal)
-            && head.Contains("\"chatInfo\"", StringComparison.Ordinal);
+        return ChunkedJsonReader.ContainsRootProperties(
+            filePath,
+            new[] { "metadata", "chatInfo" });
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
@@ -59,22 +59,6 @@ public sealed class QqExportFormat : IChatExportFormat
     }
 
     private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
-
-    internal static string ReadHead(string path, int charCount)
-    {
-        try
-        {
-            using var stream = File.OpenRead(path);
-            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            var buffer = new char[charCount];
-            var read = reader.Read(buffer, 0, charCount);
-            return new string(buffer, 0, read);
-        }
-        catch (IOException)
-        {
-            return string.Empty;
-        }
-    }
 }
 
 /// <summary>WeFlow 格式适配器。</summary>
@@ -91,9 +75,9 @@ public sealed class WeFlowExportFormat : IChatExportFormat
             return false;
         }
 
-        var head = QqExportFormat.ReadHead(filePath, 8192);
-        return head.Contains("\"weflow\"", StringComparison.Ordinal)
-            && head.Contains("\"session\"", StringComparison.Ordinal);
+        return ChunkedJsonReader.ContainsRootProperties(
+            filePath,
+            new[] { "weflow", "session" });
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)

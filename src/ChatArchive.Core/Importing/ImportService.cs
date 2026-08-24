@@ -65,11 +65,18 @@ public sealed class ImportService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var discovered = files[index];
-                var result = ImportFile(
-                    discovered.FilePath,
-                    discovered.Platform,
-                    runId,
-                    cancellationToken);
+                var result = discovered.Error is { } discoveryError
+                    ? MakeResult(
+                        discovered.FilePath,
+                        discovered.Platform,
+                        "failed",
+                        new Counters(),
+                        discoveryError)
+                    : ImportFile(
+                        discovered.FilePath,
+                        discovered.Platform,
+                        runId,
+                        cancellationToken);
                 fileResults.Add(result);
                 totals.Add(result);
                 progress?.Report(new ImportProgress(
@@ -183,7 +190,7 @@ public sealed class ImportService
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var digest = FileHashing.Sha256File(filePath);
+            var digest = FileHashing.Sha256File(filePath, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             var fileInfo = new FileInfo(filePath);
             long? completedFileId = null;
@@ -287,11 +294,19 @@ public sealed class ImportService
                     var (attachmentCount, missing) = UpsertAttachments(
                         transactionConnection,
                         messageId,
-                        attachments);
+                        attachments,
+                        cancellationToken);
                     counters.Attachments += attachmentCount;
                     counters.MissingMedia += missing;
                 }
 
+                var finalDigest = FileHashing.Sha256File(filePath, cancellationToken);
+                if (!string.Equals(digest, finalDigest, StringComparison.Ordinal))
+                {
+                    throw new ImportFormatException(filePath, "导入期间文件发生变化，请重试");
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
                 MarkImportFile(
                     transactionConnection,
                     importFileId.Value,
@@ -324,6 +339,16 @@ public sealed class ImportService
 
             throw;
         }
+        catch (SqliteException ex)
+        {
+            counters.Reset();
+            if (importFileId.HasValue)
+            {
+                TryMarkImportFile(importFileId.Value, "failed", counters, ex.Message);
+            }
+
+            throw;
+        }
         catch (Exception ex)
         {
             counters.Reset();
@@ -334,6 +359,23 @@ public sealed class ImportService
             }
 
             return MakeResult(filePath, platform, "failed", counters, ex.Message);
+        }
+    }
+
+    private void TryMarkImportFile(
+        long importFileId,
+        string status,
+        Counters counters,
+        string error)
+    {
+        try
+        {
+            using var connection = _db.OpenConnection();
+            MarkImportFile(connection, importFileId, status, counters, error);
+        }
+        catch (SqliteException)
+        {
+            // Preserve the original database exception when status persistence also fails.
         }
     }
 
@@ -823,12 +865,16 @@ public sealed class ImportService
     }
 
     private (int Count, int Missing) UpsertAttachments(
-        SqliteConnection connection, long messageId, IReadOnlyList<ParsedAttachment> attachments)
+        SqliteConnection connection,
+        long messageId,
+        IReadOnlyList<ParsedAttachment> attachments,
+        CancellationToken cancellationToken)
     {
         var missing = 0;
         var locator = new MediaLocator(_mediaDir);
         foreach (var item in attachments)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             ExistingAttachment? existing = null;
             using (var select = connection.CreateCommand())
             {
@@ -857,7 +903,11 @@ public sealed class ImportService
             var sourceExists = !string.IsNullOrEmpty(item.SourcePath) && File.Exists(item.SourcePath);
             if (sourceExists)
             {
-                var stored = StoreMedia(connection, item.SourcePath!, item.MimeType);
+                var stored = StoreMedia(
+                    connection,
+                    item.SourcePath!,
+                    item.MimeType,
+                    cancellationToken);
                 WriteParsedAttachment(
                     connection,
                     messageId,
@@ -974,8 +1024,13 @@ public sealed class ImportService
         string? Sha256,
         string? ManagedPath);
 
-    private (long Id, long Size) StoreMedia(SqliteConnection connection, string sourcePath, string? mimeType)
+    private (long Id, long Size) StoreMedia(
+        SqliteConnection connection,
+        string sourcePath,
+        string? mimeType,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var cacheKey = sourcePath.ToLowerInvariant();
         string digest;
         long size;
@@ -986,7 +1041,7 @@ public sealed class ImportService
         }
         else
         {
-            digest = FileHashing.Sha256File(sourcePath);
+            digest = FileHashing.Sha256File(sourcePath, cancellationToken);
             size = new FileInfo(sourcePath).Length;
             managed = null;
             if (_copyMedia)
@@ -1002,8 +1057,19 @@ public sealed class ImportService
                 if (!File.Exists(destination))
                 {
                     var temporary = destination + $".{Environment.ProcessId}.tmp";
-                    File.Copy(sourcePath, temporary, overwrite: true);
-                    File.Move(temporary, destination, overwrite: true);
+                    try
+                    {
+                        CopyFile(sourcePath, temporary, cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        File.Move(temporary, destination, overwrite: true);
+                    }
+                    finally
+                    {
+                        if (File.Exists(temporary))
+                        {
+                            File.Delete(temporary);
+                        }
+                    }
                 }
 
                 managed = Path.GetFullPath(destination);
@@ -1034,6 +1100,41 @@ public sealed class ImportService
         select.Parameters.AddWithValue("@sha", digest);
         var id = (long)select.ExecuteScalar()!;
         return (id, size);
+    }
+
+    private static void CopyFile(
+        string sourcePath,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        const int BufferSize = 128 * 1024;
+        using var source = new FileStream(
+            sourcePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            BufferSize,
+            FileOptions.SequentialScan);
+        using var destination = new FileStream(
+            destinationPath,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            BufferSize,
+            FileOptions.SequentialScan);
+        var buffer = new byte[BufferSize];
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = source.Read(buffer);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (read == 0)
+            {
+                return;
+            }
+
+            destination.Write(buffer, 0, read);
+        }
     }
 
     private static void MarkImportFile(

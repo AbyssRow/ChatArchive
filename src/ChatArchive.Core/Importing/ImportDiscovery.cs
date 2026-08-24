@@ -2,7 +2,11 @@ using System.Text.Json;
 
 namespace ChatArchive.Core.Importing;
 
-public sealed record DiscoveredImport(string FilePath, string Platform, long FileSize);
+public sealed record DiscoveredImport(
+    string FilePath,
+    string Platform,
+    long FileSize,
+    string? Error = null);
 
 /// <summary>递归发现受支持导出工具的 JSON 文件；格式嗅探由各 IChatExportFormat 提供。</summary>
 public static class ImportDiscovery
@@ -18,7 +22,7 @@ public static class ImportDiscovery
             .Select(p => p.EndsWith(Path.DirectorySeparatorChar) ? p : p + Path.DirectorySeparatorChar)
             .ToList();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var found = new List<(string Path, string Platform, long Size)>();
+        var found = new List<(string Path, string Platform, long Size, string? Error)>();
 
         foreach (var rawRoot in roots)
         {
@@ -45,7 +49,7 @@ public static class ImportDiscovery
 
         return found
             .OrderBy(item => item.Path.ToLowerInvariant(), StringComparer.Ordinal)
-            .Select(item => new DiscoveredImport(item.Path, item.Platform, item.Size))
+            .Select(item => new DiscoveredImport(item.Path, item.Platform, item.Size, item.Error))
             .ToList();
 
         void Consider(string path)
@@ -69,8 +73,9 @@ public static class ImportDiscovery
             {
                 size = new FileInfo(full).Length;
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
+                found.Add((full, "unknown", 0, $"无法读取文件信息（{ex.Message}）"));
                 return;
             }
 
@@ -81,14 +86,16 @@ public static class ImportDiscovery
                 {
                     matches = format.Matches(full);
                 }
-                catch (Exception ex) when (ex is IOException or ImportFormatException or JsonException)
+                catch (Exception ex) when (
+                    ex is IOException or UnauthorizedAccessException or ImportFormatException or JsonException)
                 {
-                    matches = false;
+                    found.Add((full, "unknown", size, $"无法检查导出格式（{ex.Message}）"));
+                    return;
                 }
 
                 if (matches)
                 {
-                    found.Add((full, format.Platform, size));
+                    found.Add((full, format.Platform, size, null));
                     return;
                 }
             }
