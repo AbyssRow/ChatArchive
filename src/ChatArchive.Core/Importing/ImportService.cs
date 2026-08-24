@@ -1104,7 +1104,15 @@ public sealed class ImportService
                     {
                         if (File.Exists(temporary))
                         {
-                            File.Delete(temporary);
+                            try
+                            {
+                                File.Delete(temporary);
+                            }
+                            catch (Exception ex) when (
+                                ex is IOException or UnauthorizedAccessException)
+                            {
+                                // Temporary cleanup is best effort and must not replace the import outcome.
+                            }
                         }
                     }
                 }

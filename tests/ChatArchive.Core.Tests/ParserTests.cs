@@ -288,6 +288,31 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
+    public void Discovery_does_not_follow_directory_symbolic_links()
+    {
+        var root = Path.Combine(_dir, "link-root");
+        var outside = Path.Combine(_dir, "outside-root");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "outside.json"), QqFixture);
+        var link = Path.Combine(root, "linked-directory");
+        try
+        {
+            Directory.CreateSymbolicLink(link, outside);
+        }
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        var found = ImportDiscovery.Discover(new[] { root });
+
+        Assert.DoesNotContain(found, item => item.Platform == "qq");
+        Assert.Contains(found, item => item.Error?.Contains("链接目录") == true);
+    }
+
+    [Fact]
     public void ExportFile_factory_routes_by_format()
     {
         var formats = ExportFormats.Default;

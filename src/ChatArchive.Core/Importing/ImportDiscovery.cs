@@ -43,6 +43,12 @@ public static class ImportDiscovery
                 continue;
             }
 
+            if (attributes.HasFlag(FileAttributes.ReparsePoint))
+            {
+                RecordError(root, "已跳过链接导入路径，避免扫描选定目录之外的文件");
+                continue;
+            }
+
             if (attributes.HasFlag(FileAttributes.Directory))
             {
                 EnumerateDirectory(root);
@@ -97,10 +103,26 @@ public static class ImportDiscovery
 
                 foreach (var child in directories)
                 {
-                    if (!IsExcluded(child))
+                    if (IsExcluded(child))
                     {
-                        pending.Push(child);
+                        continue;
                     }
+
+                    try
+                    {
+                        if (File.GetAttributes(child).HasFlag(FileAttributes.ReparsePoint))
+                        {
+                            RecordError(child, "已跳过链接目录，避免扫描选定目录之外的文件");
+                            continue;
+                        }
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        RecordError(child, $"无法检查导入目录（{ex.Message}）");
+                        continue;
+                    }
+
+                    pending.Push(child);
                 }
             }
         }
@@ -135,6 +157,20 @@ public static class ImportDiscovery
 
             if (IsExcluded(full))
             {
+                return;
+            }
+
+            try
+            {
+                if (File.GetAttributes(full).HasFlag(FileAttributes.ReparsePoint))
+                {
+                    found.Add((full, "unknown", 0, "已跳过链接文件，避免读取选定目录之外的内容"));
+                    return;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                found.Add((full, "unknown", 0, $"无法读取文件信息（{ex.Message}）"));
                 return;
             }
 
