@@ -225,7 +225,7 @@ if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
 }
 ```
 
-Use an equivalent check for QQ `metadata.name` and version `0.1.0`. WeFlow `Open` scans messages once for self-sender inference; its returned factory reopens and streams the messages on enumeration. Change WeFlow `Matches` to lightweight extension/head markers so discovery never builds a complete `JsonDocument`; full validation belongs to `Open`.
+Use an equivalent check for QQ `metadata.name` and version `0.1.0`. WeFlow `Open` scans messages once for self-sender inference; its returned factory reopens and streams the messages on enumeration. Format discovery uses a streaming root-property sniffer, so markers may occur anywhere in the root object without building a complete `JsonDocument`; full exporter/version validation belongs to `Open`.
 
 - [ ] **Step 5: Verify parser compatibility and commit**
 
@@ -499,9 +499,9 @@ dotnet package list --project ChatArchive.sln --vulnerable --include-transitive 
 
 Expected: no project reports a vulnerable package.
 
-- [ ] **Step 4: Perform a read-only structural check against `input\WX`**
+- [ ] **Step 4: Perform read-only structural checks against the real QQ and WeFlow exports**
 
-Confirm only that both files still advertise WeFlow `1.0.3`, contain 125 total messages, and remain ignored. Do not print message text, sender names, or file contents. Do not import into the real database.
+Confirm only aggregate structure: the WeFlow files advertise `1.0.3` and contain 125 total messages; the QQ files advertise `metadata.name="QQChatExporter"`, version `0.1.0`, and contain 12,576 total messages across 209 JSON files. Compare legacy and streaming hashes/attachment counts, then import QQ into a temporary database with media copying disabled. Do not print message text, sender names, conversation names, or filenames. Do not import into the real database.
 
 - [ ] **Step 5: Review the complete change set**
 
