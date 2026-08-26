@@ -15,12 +15,14 @@ namespace ChatArchive.App;
 public sealed partial class MainWindow : Window
 {
     private readonly ConversationListViewModel _conversations;
+    private readonly ContactsViewModel _contacts;
     private readonly TimelineViewModel _timeline;
     private readonly SearchViewModel _search;
     private readonly StatsViewModel _stats;
     private readonly ImportViewModel _import;
     private readonly TimelineInitialPositionState _initialTimelinePosition = new();
     private CancellationTokenSource? _queryDebounce;
+    private CancellationTokenSource? _contactsQueryDebounce;
     private ScrollViewer? _messageScroll;
     private bool _messagePagingReady;
     private bool _statsLoaded;
@@ -46,6 +48,7 @@ public sealed partial class MainWindow : Window
             var services = AppServices.Instance;
             var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
             _conversations = new ConversationListViewModel(services.Conversations, dispatcher);
+            _contacts = new ContactsViewModel(services.Contacts, services.AvatarStorage);
             _timeline = new TimelineViewModel(services.Conversations, services.MediaLocator, dispatcher);
             _search = new SearchViewModel(services.Search, services.Conversations, dispatcher);
             _stats = new StatsViewModel(services.Stats, dispatcher);
@@ -62,6 +65,18 @@ public sealed partial class MainWindow : Window
                     && _conversations.ErrorMessage.Length > 0)
                 {
                     ShowError(_conversations.ErrorMessage);
+                }
+            };
+            _contacts.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(ContactsViewModel.IsLoading))
+                {
+                    ContactsProgressBar.Visibility = _contacts.IsLoading ? Visibility.Visible : Visibility.Collapsed;
+                }
+                else if (e.PropertyName == nameof(ContactsViewModel.ErrorMessage)
+                         && _contacts.ErrorMessage.Length > 0)
+                {
+                    ShowError(_contacts.ErrorMessage);
                 }
             };
             _timeline.PropertyChanged += (_, e) =>
@@ -126,6 +141,7 @@ public sealed partial class MainWindow : Window
             };
 
             ConversationListControl.ItemsSource = _conversations.Conversations;
+            ContactsListView.ItemsSource = _contacts.Contacts;
             MessageListControl.ItemsSource = _timeline.Entries;
             SearchResultsList.ItemsSource = _search.Results;
             SearchConversationCombo.ItemsSource = _search.ConversationOptions;
@@ -157,8 +173,14 @@ public sealed partial class MainWindow : Window
 
         var tag = item.Tag as string ?? "conversations";
         TimelinePane.Visibility = tag == "conversations" ? Visibility.Visible : Visibility.Collapsed;
+        ContactsRoot.Visibility = tag == "contacts" ? Visibility.Visible : Visibility.Collapsed;
         SearchPane.Visibility = tag == "search" ? Visibility.Visible : Visibility.Collapsed;
         StatsPane.Visibility = tag == "stats" ? Visibility.Visible : Visibility.Collapsed;
+
+        if (tag == "contacts")
+        {
+            _ = _contacts.LoadAsync();
+        }
         if (tag == "stats" && !_statsLoaded)
         {
             _statsLoaded = true;
@@ -458,9 +480,387 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // ---------- 通讯录 ----------
+
+    private void ContactsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _contactsQueryDebounce?.Cancel();
+        _contactsQueryDebounce = new CancellationTokenSource();
+        var token = _contactsQueryDebounce.Token;
+        _ = Task.Delay(300, token).ContinueWith(t =>
+        {
+            if (!t.IsCanceled)
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    _contacts.SearchKeyword = ContactsSearchBox.Text;
+                    _ = _contacts.LoadAsync();
+                });
+            }
+        });
+    }
+
+    private async void ContactsListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ContactsListView.SelectedItem is ContactInfo contact)
+        {
+            await _contacts.SelectContactAsync(contact);
+            UpdateContactDetailView();
+        }
+        else
+        {
+            await _contacts.SelectContactAsync(null);
+            UpdateContactDetailView();
+        }
+    }
+
+    private void UpdateContactDetailView()
+    {
+        var detail = _contacts.SelectedDetail;
+        if (detail is null)
+        {
+            NoContactSelectedPrompt.Visibility = Visibility.Visible;
+            ContactDetailPane.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        NoContactSelectedPrompt.Visibility = Visibility.Collapsed;
+        ContactDetailPane.Visibility = Visibility.Visible;
+
+        DetailDisplayNameBox.Text = detail.DisplayName;
+        DetailNoteBox.Text = detail.Note ?? string.Empty;
+        DetailTotalMessagesText.Text = $"总消息数: {detail.TotalMessageCount:N0} 条";
+
+        DetailAvatarPicture.DisplayName = detail.DisplayName;
+        DetailAvatarPicture.Initials = string.IsNullOrWhiteSpace(detail.DisplayName) ? "?" : detail.DisplayName.Trim()[..1];
+        if (!string.IsNullOrEmpty(detail.CustomAvatarPath))
+        {
+            var resolved = AppServices.Instance.AvatarStorage.ResolveAvatarFullPath(detail.CustomAvatarPath);
+            if (!string.IsNullOrEmpty(resolved) && File.Exists(resolved))
+            {
+                DetailAvatarPicture.ProfilePicture = new BitmapImage(new Uri(resolved));
+            }
+            else
+            {
+                DetailAvatarPicture.ProfilePicture = null;
+            }
+        }
+        else
+        {
+            DetailAvatarPicture.ProfilePicture = null;
+        }
+
+        BoundSendersListView.ItemsSource = detail.BoundSenders;
+        ContactConversationsListView.ItemsSource = detail.Conversations;
+    }
+
+    private async void OnNewContactClick(object sender, RoutedEventArgs e)
+    {
+        var nameBox = new TextBox { Header = "姓名", PlaceholderText = "输入联系人姓名" };
+        var noteBox = new TextBox { Header = "备注（可选）", PlaceholderText = "输入备注信息", AcceptsReturn = true };
+        var panel = new StackPanel { Spacing = 10, Children = { nameBox, noteBox } };
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = "新建联系人",
+            PrimaryButtonText = "创建",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            Content = panel,
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            var name = nameBox.Text?.Trim();
+            if (string.IsNullOrEmpty(name))
+            {
+                ShowError("联系人姓名不能为空");
+                return;
+            }
+
+            try
+            {
+                await _contacts.CreateNewContactAsync(name, noteBox.Text);
+                if (_contacts.SelectedContact is not null)
+                {
+                    ContactsListView.SelectedItem = _contacts.SelectedContact;
+                }
+                UpdateContactDetailView();
+            }
+            catch (Exception ex)
+            {
+                ShowError($"创建联系人失败: {ex.Message}");
+            }
+        }
+    }
+
+    private async void OnChangeAvatarClick(object sender, RoutedEventArgs e)
+    {
+        var detail = _contacts.SelectedDetail;
+        if (detail is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.PicturesLibrary,
+                ViewMode = PickerViewMode.Thumbnail,
+            };
+            picker.FileTypeFilter.Add(".png");
+            picker.FileTypeFilter.Add(".jpg");
+            picker.FileTypeFilter.Add(".jpeg");
+            picker.FileTypeFilter.Add(".webp");
+            picker.FileTypeFilter.Add(".bmp");
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+
+            var file = await picker.PickSingleFileAsync();
+            if (file is not null)
+            {
+                await detail.SaveAvatarFromFileAsync(file.Path);
+                await _contacts.LoadAsync();
+                UpdateContactDetailView();
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"更换头像失败: {ex.Message}");
+        }
+    }
+
+    private async void OnSaveContactClick(object sender, RoutedEventArgs e)
+    {
+        var detail = _contacts.SelectedDetail;
+        if (detail is null)
+        {
+            return;
+        }
+
+        var newName = DetailDisplayNameBox.Text?.Trim();
+        if (string.IsNullOrEmpty(newName))
+        {
+            ShowError("姓名不能为空");
+            return;
+        }
+
+        try
+        {
+            await detail.SaveBasicInfoAsync(newName, DetailNoteBox.Text);
+            await _contacts.LoadAsync();
+            UpdateContactDetailView();
+        }
+        catch (Exception ex)
+        {
+            ShowError($"保存失败: {ex.Message}");
+        }
+    }
+
+    private async void OnDeleteContactClick(object sender, RoutedEventArgs e)
+    {
+        var detail = _contacts.SelectedDetail;
+        if (detail is null)
+        {
+            return;
+        }
+
+        var confirmDialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = "删除联系人",
+            Content = $"确定要删除联系人【{detail.DisplayName}】吗？\n已绑定的账号不会被删除，仅解除关联关系。",
+            PrimaryButtonText = "删除",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+
+        if (await confirmDialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            try
+            {
+                await _contacts.DeleteContactAsync(detail.ContactId);
+                UpdateContactDetailView();
+            }
+            catch (Exception ex)
+            {
+                ShowError($"删除失败: {ex.Message}");
+            }
+        }
+    }
+
+    private async void OnAccountLabelLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is TextBox tb && tb.DataContext is BoundSenderInfo info && _contacts.SelectedDetail is not null)
+        {
+            var newLabel = tb.Text?.Trim();
+            if (newLabel != info.AccountLabel)
+            {
+                try
+                {
+                    await _contacts.SelectedDetail.UpdateAccountLabelAsync(info.SenderId, string.IsNullOrWhiteSpace(newLabel) ? null : newLabel);
+                    UpdateContactDetailView();
+                }
+                catch (Exception ex)
+                {
+                    ShowError($"更新身份标签失败: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private async void OnSetPrimarySenderClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: long senderId } && _contacts.SelectedDetail is not null)
+        {
+            try
+            {
+                await _contacts.SelectedDetail.SetPrimarySenderAsync(senderId);
+                UpdateContactDetailView();
+            }
+            catch (Exception ex)
+            {
+                ShowError($"设置主账号失败: {ex.Message}");
+            }
+        }
+    }
+
+    private async void OnUnbindSenderClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: long senderId } && _contacts.SelectedDetail is not null)
+        {
+            try
+            {
+                await _contacts.SelectedDetail.UnbindSenderAsync(senderId);
+                await _contacts.LoadAsync();
+                UpdateContactDetailView();
+            }
+            catch (Exception ex)
+            {
+                ShowError($"解绑失败: {ex.Message}");
+            }
+        }
+    }
+
+    private async void OnAddBoundAccountClick(object sender, RoutedEventArgs e)
+    {
+        var detail = _contacts.SelectedDetail;
+        if (detail is null)
+        {
+            return;
+        }
+
+        var searchBox = new TextBox { PlaceholderText = "搜索未绑定发送者 (姓名/平台ID/QQ号)..." };
+        var list = new ListView { MaxHeight = 220, SelectionMode = ListViewSelectionMode.Single };
+        var labelBox = new TextBox { Header = "身份标签（可选，如：工作号、大号）", PlaceholderText = "输入身份标签" };
+        var primaryCheck = new CheckBox { Content = "设为主账号", IsChecked = detail.BoundSenders.Count == 0 };
+
+        var availableSenders = new List<BoundSenderInfo>();
+        async Task RefreshAvailable(string? kw)
+        {
+            try
+            {
+                var items = await detail.LoadAvailableSendersAsync(kw);
+                availableSenders.Clear();
+                availableSenders.AddRange(items);
+                list.Items.Clear();
+                foreach (var item in availableSenders)
+                {
+                    var plat = item.Platform == "qq" ? "QQ" : "微信";
+                    var idStr = item.Platform == "qq" ? (item.QQNumber ?? item.NativeId) : item.NativeId;
+                    list.Items.Add(new ListViewItem
+                    {
+                        Content = $"{plat}: {item.OriginalName} ({idStr}) - {item.MessageCount:N0}条",
+                        Tag = item,
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"加载发送者失败: {ex.Message}");
+            }
+        }
+
+        await RefreshAvailable(null);
+
+        searchBox.TextChanged += async (_, _) =>
+        {
+            await RefreshAvailable(searchBox.Text);
+        };
+
+        var panel = new StackPanel
+        {
+            Spacing = 10,
+            MinWidth = 420,
+            Children = { searchBox, list, labelBox, primaryCheck },
+        };
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = "绑定账号",
+            PrimaryButtonText = "绑定",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            Content = panel,
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            if (list.SelectedItem is ListViewItem { Tag: BoundSenderInfo selectedSender })
+            {
+                try
+                {
+                    await detail.BindSenderAsync(
+                        selectedSender.SenderId,
+                        string.IsNullOrWhiteSpace(labelBox.Text) ? null : labelBox.Text.Trim(),
+                        primaryCheck.IsChecked == true);
+                    await _contacts.LoadAsync();
+                    UpdateContactDetailView();
+                }
+                catch (Exception ex)
+                {
+                    ShowError($"绑定账号失败: {ex.Message}");
+                }
+            }
+            else
+            {
+                ShowError("未选择要绑定的账号");
+            }
+        }
+    }
+
+    private async void ContactConversation_Click(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is SenderConversationInfo conv)
+        {
+            SelectNavItem("conversations");
+            try
+            {
+                var detail = await Task.Run(() => AppServices.Instance.Conversations.GetConversation(conv.ConversationId));
+                if (detail?.Conversation is { } info)
+                {
+                    _messagePagingReady = false;
+                    _timeline.Load(info);
+                    _conversations.SelectedConversation = info;
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"打开会话失败: {ex.Message}");
+            }
+        }
+    }
+
     private async System.Threading.Tasks.Task ShowSenderProfile(long senderId)
     {
-        var contact = new ContactViewModel(AppServices.Instance.Senders);
+        var contact = new ContactViewModel(
+            AppServices.Instance.Senders,
+            AppServices.Instance.Contacts,
+            AppServices.Instance.AvatarStorage);
         try
         {
             if (!await contact.LoadAsync(senderId))
@@ -475,11 +875,88 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var panel = new StackPanel { Spacing = 12, MinWidth = 420 };
-        panel.Children.Add(new TextBlock { Text = contact.IdentityLine, FontSize = 13, Opacity = 0.8 });
+        var panel = new StackPanel { Spacing = 12, MinWidth = 440 };
 
-        panel.Children.Add(new TextBlock { Text = "名称记录", FontSize = 12, Opacity = 0.6 });
-        var aliasList = new ListView { MaxHeight = 140, SelectionMode = ListViewSelectionMode.None };
+        var headerGrid = new Grid { ColumnSpacing = 12 };
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var pic = new PersonPicture
+        {
+            Width = 48,
+            Height = 48,
+            DisplayName = contact.DisplayName,
+            Initials = string.IsNullOrWhiteSpace(contact.DisplayName) ? "?" : contact.DisplayName.Trim()[..1],
+        };
+        if (!string.IsNullOrEmpty(contact.CustomAvatarPath))
+        {
+            var resolved = AppServices.Instance.AvatarStorage.ResolveAvatarFullPath(contact.CustomAvatarPath);
+            if (!string.IsNullOrEmpty(resolved) && File.Exists(resolved))
+            {
+                pic.ProfilePicture = new BitmapImage(new Uri(resolved));
+            }
+        }
+        Grid.SetColumn(pic, 0);
+        headerGrid.Children.Add(pic);
+
+        var headerTextStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        headerTextStack.Children.Add(new TextBlock { Text = contact.DisplayName, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        headerTextStack.Children.Add(new TextBlock { Text = contact.IdentityLine, FontSize = 12, Opacity = 0.7 });
+        Grid.SetColumn(headerTextStack, 1);
+        headerGrid.Children.Add(headerTextStack);
+        panel.Children.Add(headerGrid);
+
+        // Bound status / actions
+        if (contact.IsBound && contact.BoundContact is not null)
+        {
+            var boundInfoStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            boundInfoStack.Children.Add(new TextBlock { Text = $"已关联联系人: {contact.BoundContact.DisplayName}", FontSize = 12, Opacity = 0.8, VerticalAlignment = VerticalAlignment.Center });
+
+            var unbindBtn = new Button { Content = "解除关联", FontSize = 11 };
+            unbindBtn.Click += async (_, _) =>
+            {
+                try
+                {
+                    await contact.QuickUnbindContactAsync();
+                    _conversations.Reload();
+                }
+                catch (Exception ex)
+                {
+                    ShowError($"解除关联失败: {ex.Message}");
+                }
+            };
+            boundInfoStack.Children.Add(unbindBtn);
+            panel.Children.Add(boundInfoStack);
+        }
+        else
+        {
+            var bindRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            var createContactBtn = new Button { Content = "新建并绑定联系人", FontSize = 12 };
+            createContactBtn.Click += async (_, _) =>
+            {
+                var nameBox = new TextBox { Header = "联系人姓名", Text = contact.OriginalName };
+                var labelBox = new TextBox { Header = "身份标签(可选)", PlaceholderText = "如: 工作号" };
+                var dlg = new ContentDialog
+                {
+                    XamlRoot = Content.XamlRoot,
+                    Title = "新建联系人并绑定",
+                    PrimaryButtonText = "创建",
+                    CloseButtonText = "取消",
+                    DefaultButton = ContentDialogButton.Primary,
+                    Content = new StackPanel { Spacing = 8, Children = { nameBox, labelBox } },
+                };
+                if (await dlg.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
+                {
+                    await contact.QuickCreateAndBindContactAsync(nameBox.Text.Trim(), labelBox.Text?.Trim());
+                    _conversations.Reload();
+                }
+            };
+            bindRow.Children.Add(createContactBtn);
+            panel.Children.Add(bindRow);
+        }
+
+        panel.Children.Add(new TextBlock { Text = "名称记录", FontSize = 12, Opacity = 0.6, Margin = new Thickness(0, 4, 0, 0) });
+        var aliasList = new ListView { MaxHeight = 120, SelectionMode = ListViewSelectionMode.None };
         aliasList.Items.Add(contact.IdentityLine.Length == 0 ? "-" : contact.DisplayName);
         foreach (var alias in contact.Aliases.Take(30))
         {
@@ -499,8 +976,8 @@ public sealed partial class MainWindow : Window
         }
 
         panel.Children.Add(aliasList);
-        panel.Children.Add(new TextBlock { Text = "出现过的会话（点击跳转）", FontSize = 12, Opacity = 0.6 });
-        var conversationList = new ListView { MaxHeight = 200, IsItemClickEnabled = true, SelectionMode = ListViewSelectionMode.None };
+        panel.Children.Add(new TextBlock { Text = "出现过的会话（点击跳转）", FontSize = 12, Opacity = 0.6, Margin = new Thickness(0, 4, 0, 0) });
+        var conversationList = new ListView { MaxHeight = 160, IsItemClickEnabled = true, SelectionMode = ListViewSelectionMode.None };
         foreach (var conversation in contact.Conversations)
         {
             var row = new StackPanel
@@ -547,6 +1024,7 @@ public sealed partial class MainWindow : Window
                 {
                     _messagePagingReady = false;
                     _timeline.Load(info);
+                    _conversations.SelectedConversation = info;
                 }
             }
             catch (Exception ex)

@@ -1,4 +1,5 @@
 using ChatArchive.Core.Data;
+using ChatArchive.Core.IO;
 using ChatArchive.Core.Media;
 using ChatArchive.Core.Repositories;
 
@@ -16,6 +17,10 @@ public sealed class AppServices
     public SearchRepository Search { get; }
     public SenderRepository Senders { get; }
     public StatsRepository Stats { get; }
+    public ContactRepository Contacts { get; }
+    public ContactRepository ContactRepository => Contacts;
+    public AvatarStorageService AvatarStorage { get; }
+    public AvatarStorageService AvatarStorageService => AvatarStorage;
     public AppSettings Settings { get; }
 
     private AppServices(AppSettings settings)
@@ -31,6 +36,8 @@ public sealed class AppServices
         Search = new SearchRepository(Database);
         Senders = new SenderRepository(Database);
         Stats = new StatsRepository(Database);
+        Contacts = new ContactRepository(Database);
+        AvatarStorage = new AvatarStorageService(Path.Combine(dataDir, "avatars"));
     }
 
     public static AppServices Instance

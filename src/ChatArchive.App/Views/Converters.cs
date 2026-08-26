@@ -1,10 +1,76 @@
+using ChatArchive.App.Services;
 using ChatArchive.App.ViewModels;
 using ChatArchive.Core.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace ChatArchive.App.Views;
+
+public sealed class PathToImageSourceConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, string language)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (value is Uri uri)
+            {
+                return new BitmapImage(uri);
+            }
+
+            if (value is string path && !string.IsNullOrWhiteSpace(path))
+            {
+                string? resolved = null;
+                if (File.Exists(path))
+                {
+                    resolved = Path.GetFullPath(path);
+                }
+                else
+                {
+                    try
+                    {
+                        resolved = AppServices.Instance.AvatarStorage.ResolveAvatarFullPath(path);
+                    }
+                    catch
+                    {
+                        // Fallback or ignore if AppServices is unavailable
+                    }
+
+                    if (string.IsNullOrEmpty(resolved) || !File.Exists(resolved))
+                    {
+                        var appPath = Path.Combine(AppContext.BaseDirectory, path);
+                        if (File.Exists(appPath))
+                        {
+                            resolved = Path.GetFullPath(appPath);
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(resolved) && File.Exists(resolved))
+                {
+                    return new BitmapImage(new Uri(resolved));
+                }
+            }
+        }
+        catch
+        {
+            // Suppress any image conversion failure to avoid UI crash
+        }
+
+        return null;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
+    {
+        throw new NotSupportedException();
+    }
+}
 
 public sealed class MsToDateTimeConverter : IValueConverter
 {
