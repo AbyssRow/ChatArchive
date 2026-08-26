@@ -446,4 +446,42 @@ public sealed class ContactRepositoryTests : IDisposable
         Assert.Single(filteredNative);
         Assert.Equal(s2, filteredNative[0].SenderId);
     }
+
+    [Fact]
+    public void AutoPopulateContactsFromSenders_OnlyIncludesPrivateChatSenders_ExcludesGroupSenders()
+    {
+        // 1. Private chat sender (should be auto-populated)
+        var privateSender = _archive.AddSender("wx_friend", "Private Friend", platform: "wechat");
+        var privateConv = _archive.AddConversation("c_private", "Private Chat with Friend", kind: "private");
+        _archive.AddMessage(privateConv, privateSender, 1000, "Hello");
+
+        // 2. Group only sender (should NOT be auto-populated)
+        var groupSender = _archive.AddSender("qq_stranger", "Group Stranger", platform: "qq");
+        var groupConv = _archive.AddConversation("c_group", "Big Group Chat", kind: "group");
+        _archive.AddMessage(groupConv, groupSender, 1000, "Group message");
+
+        // 3. Self sender (should NOT be auto-populated)
+        var selfSender = _archive.AddSender("wx_me", "Me", platform: "wechat", isSelf: true);
+        _archive.AddMessage(privateConv, selfSender, 1001, "Hi there");
+
+        // Run auto-populate
+        var count = _repository.AutoPopulateContactsFromSenders();
+        Assert.Equal(1, count);
+
+        // Verify list of contacts
+        var contacts = _repository.ListContacts();
+        Assert.Single(contacts);
+        Assert.Equal("Private Chat with Friend", contacts[0].DisplayName);
+
+        // Verify detail
+        var detail = _repository.GetContactDetail(contacts[0].Id);
+        Assert.NotNull(detail);
+        Assert.Single(detail.Senders);
+        Assert.Equal(privateSender, detail.Senders[0].SenderId);
+
+        // Running again should be idempotent (0 added)
+        var secondRun = _repository.AutoPopulateContactsFromSenders();
+        Assert.Equal(0, secondRun);
+    }
 }
+

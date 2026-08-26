@@ -702,6 +702,113 @@ public sealed class ContactRepository
         return finalResult;
     }
 
+    public int AutoPopulateContactsFromSenders()
+    {
+        using var connection = _db.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        using var selectCmd = connection.CreateCommand();
+        selectCmd.Transaction = transaction;
+        selectCmd.CommandText = """
+            SELECT DISTINCT s.id, s.current_name, s.native_id, s.platform
+            FROM senders s
+            WHERE s.is_self = 0
+              AND NOT EXISTS (SELECT 1 FROM contact_senders cs WHERE cs.sender_id = s.id)
+              AND (
+                  EXISTS (
+                      SELECT 1 FROM messages m
+                      JOIN conversations c ON c.id = m.conversation_id
+                      WHERE m.sender_id = s.id AND c.kind = 'private'
+                  )
+                  OR EXISTS (
+                      SELECT 1 FROM conversations c
+                      WHERE c.platform = s.platform AND c.native_id = s.native_id AND c.kind = 'private'
+                  )
+              )
+            ORDER BY s.id;
+            """;
+
+        var unbound = new List<(long SenderId, string CurrentName, string NativeId, string Platform)>();
+        using (var reader = selectCmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                unbound.Add((
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3)
+                ));
+            }
+        }
+
+        if (unbound.Count == 0)
+        {
+            return 0;
+        }
+
+        var resolved = SenderDisplayName.Resolve(
+            connection,
+            unbound.Select(u => (SenderId: u.SenderId, ConversationId: (long?)null)));
+
+        var count = 0;
+        foreach (var item in unbound)
+        {
+            // 优先查找对应的私聊会话标题
+            string? privateConvTitle = null;
+            using (var convCmd = connection.CreateCommand())
+            {
+                convCmd.Transaction = transaction;
+                convCmd.CommandText = """
+                    SELECT c.title FROM conversations c
+                    JOIN messages m ON m.conversation_id = c.id
+                    WHERE m.sender_id = @sid AND c.kind = 'private' AND c.title != ''
+                    ORDER BY c.last_message_at DESC LIMIT 1;
+                    """;
+                convCmd.Parameters.AddWithValue("@sid", item.SenderId);
+                var titleObj = convCmd.ExecuteScalar();
+                if (titleObj != null && titleObj != DBNull.Value)
+                {
+                    privateConvTitle = titleObj.ToString()?.Trim();
+                }
+            }
+
+            var rawName = !string.IsNullOrWhiteSpace(privateConvTitle)
+                ? privateConvTitle
+                : (resolved.TryGetValue((item.SenderId, null), out var rName) && !string.IsNullOrWhiteSpace(rName)
+                    ? rName
+                    : item.CurrentName);
+
+            var name = string.IsNullOrWhiteSpace(rawName)
+                ? (item.Platform == "qq" ? $"QQ_{item.NativeId}" : $"微信_{item.NativeId}")
+                : rawName.Trim();
+
+            using var insertContactCmd = connection.CreateCommand();
+            insertContactCmd.Transaction = transaction;
+            insertContactCmd.CommandText = """
+                INSERT INTO contacts(display_name, created_at, updated_at)
+                VALUES (@name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+                SELECT last_insert_rowid();
+                """;
+            insertContactCmd.Parameters.AddWithValue("@name", name);
+            var contactId = Convert.ToInt64(insertContactCmd.ExecuteScalar());
+
+            using var insertBindingCmd = connection.CreateCommand();
+            insertBindingCmd.Transaction = transaction;
+            insertBindingCmd.CommandText = """
+                INSERT INTO contact_senders(contact_id, sender_id, is_primary, created_at)
+                VALUES (@contactId, @senderId, 1, CURRENT_TIMESTAMP);
+                """;
+            insertBindingCmd.Parameters.AddWithValue("@contactId", contactId);
+            insertBindingCmd.Parameters.AddWithValue("@senderId", item.SenderId);
+            insertBindingCmd.ExecuteNonQuery();
+            count++;
+        }
+
+        transaction.Commit();
+        return count;
+    }
+
     private static IReadOnlyList<AliasInfo> LoadAliases(SqliteConnection connection, long senderId)
     {
         var result = new List<AliasInfo>();
@@ -739,3 +846,4 @@ public sealed class ContactRepository
         return 0;
     }
 }
+

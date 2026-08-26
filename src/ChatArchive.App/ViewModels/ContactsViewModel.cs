@@ -43,6 +43,8 @@ public partial class ContactsViewModel : ObservableObject
 
         try
         {
+            await Task.Run(() => _contactRepository.AutoPopulateContactsFromSenders());
+
             var query = keyword ?? SearchKeyword;
             var list = await Task.Run(() => _contactRepository.ListContacts(
                 string.IsNullOrWhiteSpace(query) ? null : query.Trim()));
