@@ -327,22 +327,38 @@ public class ParserTests : IDisposable
     }
 
     [Theory]
-    [InlineData("0.1.1")]
-    [InlineData("")]
-    public void Qq_rejects_unverified_export_versions(string version)
+    [InlineData("0.2.0")]
+    [InlineData("1.0.0")]
+    public void QqExportFormat_AcceptsNewerVersions_And_RelaxedMetadata(string version)
     {
-        var metadata = version.Length == 0
-            ? "{\"name\":\"QQChatExporter\"}"
-            : $$"""{"name":"QQChatExporter","version":"{{version}}"}""";
-        var path = Path.Combine(_dir, "qq-version.json");
+        var path = Path.Combine(_dir, $"qq-v{version}.json");
         File.WriteAllText(path, $$"""
-            {"metadata":{{metadata}},
-             "chatInfo":{"selfUin":"1","peerUid":"p","name":"n"},
-             "messages":[]}
+            {
+              "metadata": {"name": "QQChatExporter", "version": "{{version}}"},
+              "chatInfo": {"selfUin": "10001", "selfUid": "uSELF", "peerUid": "uPEER", "name": "测试群", "type": "group"},
+              "messages": [
+                {
+                  "id": "m1", "timestamp": 1700000000000, "type": "text",
+                  "sender": {"uid": "uPEER", "name": "好友"},
+                  "content": {"text": "hello"}
+                }
+              ]
+            }
             """);
 
-        var error = Assert.Throws<ImportFormatException>(() => new QqExportFormat().Open(path));
-        Assert.Contains("支持版本 0.1.0", error.Message);
+        var format = new QqExportFormat();
+        Assert.True(format.Matches(path));
+
+        using var exportFile = format.Open(path);
+        Assert.Equal("qq", exportFile.Conversation.Platform);
+        Assert.Equal("uPEER", exportFile.Conversation.NativeId);
+        Assert.Equal("group", exportFile.Conversation.Kind);
+        Assert.Equal("测试群", exportFile.Conversation.Title);
+
+        var messages = exportFile.EnumerateMessages().ToList();
+        Assert.Single(messages);
+        Assert.Equal("m1", messages[0].NativeId);
+        Assert.Equal("hello", messages[0].Content);
     }
 
     [Fact]
@@ -357,6 +373,54 @@ public class ParserTests : IDisposable
 
         using var exportFile = new QqExportFormat().Open(path);
         Assert.Equal("p", exportFile.Conversation.NativeId);
+    }
+
+    [Fact]
+    public void QqChunkedExportFormat_ParsesManifestAndChunks_Correctly()
+    {
+        var chunkedDir = Path.Combine(_dir, "qq-chunked");
+        var chunksDir = Path.Combine(chunkedDir, "chunks");
+        Directory.CreateDirectory(chunksDir);
+
+        var manifestPath = Path.Combine(chunkedDir, "manifest.json");
+        File.WriteAllText(manifestPath, """
+            {
+              "metadata": {"name": "QQChatExporter", "version": "0.2.0"},
+              "chatInfo": {"selfUid": "u_self", "peerUid": "u_group", "name": "QQ交流群", "type": "group"}
+            }
+            """);
+
+        var chunk0Path = Path.Combine(chunksDir, "chunk_0.jsonl");
+        File.WriteAllText(chunk0Path, """{"id":"q1","timestamp":1700000000,"sender":{"uid":"u_self","name":"我自己"},"content":{"type":"text","text":"第一条消息"}}""" + "\n");
+
+        var chunk1Path = Path.Combine(chunksDir, "chunk_1.jsonl");
+        File.WriteAllText(chunk1Path, """{"id":"q2","timestamp":1700000005,"sender":{"uid":"u_peer","name":"群友"},"content":{"type":"image","resources":[{"url":"resources/images/img.jpg"}]}}""" + "\n");
+
+        var format = new QqChunkedExportFormat();
+        Assert.True(format.Matches(manifestPath));
+
+        using var exportFile = format.Open(manifestPath);
+        Assert.Equal("qq", exportFile.Conversation.Platform);
+        Assert.Equal("u_group", exportFile.Conversation.NativeId);
+        Assert.Equal("group", exportFile.Conversation.Kind);
+        Assert.Equal("QQ交流群", exportFile.Conversation.Title);
+
+        var messages = exportFile.EnumerateMessages().ToList();
+        Assert.Equal(2, messages.Count);
+
+        var msg1 = messages[0];
+        Assert.Equal("q1", msg1.NativeId);
+        Assert.Equal("我自己", msg1.SenderName);
+        Assert.Equal("outgoing", msg1.Direction);
+        Assert.Equal("第一条消息", msg1.Content);
+
+        var msg2 = messages[1];
+        Assert.Equal("q2", msg2.NativeId);
+        Assert.Equal("群友", msg2.SenderName);
+        Assert.Equal("incoming", msg2.Direction);
+        Assert.Equal("image", msg2.MediaType);
+        var attachment = Assert.Single(msg2.Attachments);
+        Assert.Equal("resources/images/img.jpg", attachment.DeclaredPath);
     }
 
     [Fact]

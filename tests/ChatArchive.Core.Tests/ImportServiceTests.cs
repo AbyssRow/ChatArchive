@@ -213,7 +213,7 @@ public class ImportServiceTests : IDisposable
         var root = ExportRoot();
         File.WriteAllText(
             Path.Combine(root, "a-unsupported.json"),
-            Fixtures.QqExport.Replace("\"version\": \"0.1.0\"", "\"version\": \"0.1.1\""));
+            Fixtures.QqExport.Replace("\"chatInfo\": {\"selfUin\": \"10001\", \"selfUid\": \"uSELF\", \"peerUid\": \"uPEER\", \"peerUin\": \"12345\", \"name\": \"老张\", \"type\": \"private\"}", "\"chatInfo\": \"invalid\""));
         File.WriteAllText(Path.Combine(root, "b-good.json"), Fixtures.QqExport);
         var service = new ImportService(_archive.Db, _mediaDir);
 

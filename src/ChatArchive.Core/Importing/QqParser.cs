@@ -70,6 +70,41 @@ public static class QqParser
         }
     }
 
+    public static ParsedMessage? ParseChunkedLine(
+        string line,
+        ParsedConversation conversation,
+        string? selfSender,
+        string filePath,
+        int lineIndex)
+    {
+        var trimmed = line.Trim();
+        if (trimmed.Length == 0)
+        {
+            return null;
+        }
+
+        JsonObject raw;
+        try
+        {
+            if (JsonNode.Parse(trimmed) is not JsonObject obj)
+            {
+                return null;
+            }
+
+            raw = obj;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        var selfUid = selfSender ?? conversation.AccountId;
+        var selfUin = selfSender ?? conversation.AccountId;
+        var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
+
+        return ParseMessage(raw, lineIndex, selfUid, selfUin, exportRoot);
+    }
+
     private static ParsedMessage ParseMessage(JsonObject raw, int index, string selfUid, string selfUin, string exportRoot)
     {
         var sender = raw["sender"] as JsonObject;
@@ -91,7 +126,8 @@ public static class QqParser
         aliases = aliases.Distinct().ToList();
         var senderName = aliases.Count > 0 ? aliases[0] : senderNative;
         var uinRaw = ImportText.Clean(SenderField(sender, "uin"));
-        var isSelf = senderNative == selfUid || senderNative == selfUin || uinRaw == selfUin;
+        var isSelf = (!string.IsNullOrEmpty(selfUid) && senderNative == selfUid)
+            || (!string.IsNullOrEmpty(selfUin) && (senderNative == selfUin || uinRaw == selfUin));
 
         var content = raw["content"] as JsonObject ?? new JsonObject();
         var displayContent = ImportText.Clean(GetNode(content, "text"));
@@ -104,13 +140,24 @@ public static class QqParser
         if (displayContent.Length == 0)
         {
             var typeLabel = ImportText.Clean(GetNode(raw, "type"));
+            if (typeLabel.Length == 0)
+            {
+                typeLabel = ImportText.Clean(GetNode(content, "type"));
+            }
+
             var fallbackType = typeLabel.Length > 0 ? typeLabel : "message";
             displayContent = searchable.Count > 0 ? searchable[0] : $"[{fallbackType}]";
         }
 
         var searchText = searchable.Count > 0 ? string.Join("\n", searchable) : displayContent;
-        var timestampMs = ImportText.AsLong(raw["timestamp"]) ?? 0;
+        var rawTimestamp = ImportText.AsLong(raw["timestamp"]) ?? 0;
+        var timestampMs = rawTimestamp >= 10_000_000_000L ? rawTimestamp : rawTimestamp * 1000L;
         var messageType = ImportText.Clean(GetNode(raw, "type")).ToLowerInvariant();
+        if (messageType.Length == 0)
+        {
+            messageType = ImportText.Clean(GetNode(content, "type")).ToLowerInvariant();
+        }
+
         if (messageType.Length == 0)
         {
             messageType = "unknown";
@@ -284,13 +331,29 @@ public static class QqParser
 
             if (kind.Length == 0)
             {
-                kind = "file";
+                var contentType = ImportText.Clean(FirstNode(content, "type")).ToLowerInvariant();
+                if (contentType is "image" or "video" or "audio" or "file" or "voice")
+                {
+                    kind = contentType == "voice" ? "audio" : contentType;
+                }
             }
 
             var filename = OrNull(FirstClean(resource, "filename", "name"));
             var (declaredPath, sourcePath) = ResolveSourcePath(exportRootFixed, resource);
             var mimeType = FirstClean(resource, "mimeType");
-            var mime = mimeType.Length > 0 ? mimeType : ImportText.GuessMime(sourcePath, filename);
+            var mime = mimeType.Length > 0 ? mimeType : ImportText.GuessMime(sourcePath, filename ?? declaredPath);
+
+            if (kind.Length == 0 && mime is not null)
+            {
+                if (mime.StartsWith("image/")) kind = "image";
+                else if (mime.StartsWith("video/")) kind = "video";
+                else if (mime.StartsWith("audio/")) kind = "audio";
+            }
+
+            if (kind.Length == 0)
+            {
+                kind = "file";
+            }
 
             var metadata = new JsonObject();
             foreach (var property in resource)
@@ -318,47 +381,33 @@ public static class QqParser
         return result;
     }
 
-    /// <summary>占位：QQ 导出根目录在服务层注入前先按文件所在目录处理。</summary>
     private static (string? Declared, string? Source) ResolveSourcePath(string exportRoot, JsonObject resource)
     {
         var url = ImportText.Clean(resource["url"]);
         var localPath = ImportText.Clean(resource["localPath"]);
+        var declared = url.Length > 0 ? url : localPath.Length > 0 ? localPath : null;
+
         var candidates = new List<string>();
         if (url.Length > 0 && !url.StartsWith("http://", StringComparison.Ordinal) && !url.StartsWith("https://", StringComparison.Ordinal))
         {
-            var candidate = ImportText.SafeExportPath(exportRoot, url);
-            if (candidate is not null)
-            {
-                candidates.Add(candidate);
-            }
+            candidates.Add(url);
         }
 
         if (localPath.Length > 0)
         {
-            var normalized = localPath.Replace('\\', '/');
-            if (!Path.IsPathRooted(normalized))
-            {
-                foreach (var relative in new[] { "resources/" + normalized, normalized })
-                {
-                    var candidate = ImportText.SafeExportPath(exportRoot, relative);
-                    if (candidate is not null)
-                    {
-                        candidates.Add(candidate);
-                    }
-                }
-            }
+            candidates.Add(localPath);
         }
 
         foreach (var candidate in candidates)
         {
-            if (File.Exists(candidate))
+            var resolved = ImportText.SafeResolveMedia(exportRoot, candidate);
+            if (resolved is not null)
             {
-                return (url.Length > 0 ? url : localPath.Length > 0 ? localPath : null, candidate);
+                return (declared, resolved);
             }
         }
 
-        var declared = url.Length > 0 ? url : localPath.Length > 0 ? localPath : null;
-        return (declared, candidates.Count > 0 ? candidates[0] : null);
+        return (declared, null);
     }
 
     internal static string? ReplyId(JsonObject content)

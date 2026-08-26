@@ -7,51 +7,73 @@ namespace ChatArchive.Core.Importing;
 public sealed class QqExportFormat : IChatExportFormat
 {
     private const string ExporterName = "QQChatExporter";
-    private const string SupportedVersion = "0.1.0";
 
     public string Platform => "qq";
 
     public bool Matches(string filePath)
     {
-        if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Path.GetFileName(filePath), "manifest.json", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
         if (!ChunkedJsonReader.ContainsRootProperties(
                 filePath,
-                new[] { "metadata", "chatInfo" }))
+                new[] { "chatInfo" }))
         {
             return false;
         }
 
-        var metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "metadata");
+        JsonObject? metadata = null;
+        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }))
+        {
+            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "metadata");
+        }
+        else if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "exporter" }))
+        {
+            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "exporter");
+        }
+
+        if (metadata == null)
+        {
+            return false;
+        }
+
         return string.Equals(
             ImportText.Clean(metadata["name"]),
             ExporterName,
-            StringComparison.Ordinal);
+            StringComparison.OrdinalIgnoreCase);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var metadata = ChunkedJsonReader.ReadObjectProperty(
-            filePath,
-            "metadata",
-            cancellationToken);
+        JsonObject? metadata = null;
+        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }, cancellationToken))
+        {
+            metadata = ChunkedJsonReader.ReadObjectProperty(
+                filePath,
+                "metadata",
+                cancellationToken);
+        }
+        else if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "exporter" }, cancellationToken))
+        {
+            metadata = ChunkedJsonReader.ReadObjectProperty(
+                filePath,
+                "exporter",
+                cancellationToken);
+        }
+        else
+        {
+            throw new ImportFormatException(filePath, "缺少 metadata 或 exporter 对象");
+        }
+
         var exporterName = ImportText.Clean(metadata["name"]);
-        if (!string.Equals(exporterName, ExporterName, StringComparison.Ordinal))
+        if (!string.Equals(exporterName, ExporterName, StringComparison.OrdinalIgnoreCase))
         {
             throw new ImportFormatException(
                 filePath,
                 $"QQ 导出器标识无效：应为 {ExporterName}，实际为 {Display(exporterName)}");
-        }
-
-        var version = ImportText.Clean(metadata["version"]);
-        if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
-        {
-            throw new ImportFormatException(
-                filePath,
-                $"不支持的 QQ Chat Exporter 导出版本 {Display(version)}；支持版本 {SupportedVersion}，请先更新 ChatArchive");
         }
 
         var chat = ChunkedJsonReader.ReadObjectProperty(filePath, "chatInfo", cancellationToken);
@@ -69,6 +91,185 @@ public sealed class QqExportFormat : IChatExportFormat
     }
 
     private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
+}
+
+/// <summary>QQ Chat Exporter 分块 JSONL (manifest.json + chunks/*.jsonl) 格式适配器。</summary>
+public sealed class QqChunkedExportFormat : IChatExportFormat
+{
+    private const string ExporterName = "QQChatExporter";
+
+    public string Platform => "qq";
+
+    public bool Matches(string filePath)
+    {
+        if (!string.Equals(Path.GetFileName(filePath), "manifest.json", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!ChunkedJsonReader.ContainsRootProperties(
+                filePath,
+                new[] { "chatInfo" }))
+        {
+            return false;
+        }
+
+        JsonObject? metadata = null;
+        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }))
+        {
+            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "metadata");
+        }
+        else if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "exporter" }))
+        {
+            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "exporter");
+        }
+
+        if (metadata == null)
+        {
+            return false;
+        }
+
+        var name = ImportText.Clean(metadata["name"]);
+        return name.Contains(ExporterName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        JsonObject? metadata = null;
+        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }, cancellationToken))
+        {
+            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "metadata", cancellationToken);
+        }
+        else if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "exporter" }, cancellationToken))
+        {
+            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "exporter", cancellationToken);
+        }
+        else
+        {
+            throw new ImportFormatException(filePath, "缺少 metadata 或 exporter 对象");
+        }
+
+        var exporterName = ImportText.Clean(metadata["name"]);
+        if (!exporterName.Contains(ExporterName, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ImportFormatException(
+                filePath,
+                $"QQ 导出器标识无效：应包含 {ExporterName}，实际为 {Display(exporterName)}");
+        }
+
+        var chat = ChunkedJsonReader.ReadObjectProperty(filePath, "chatInfo", cancellationToken);
+        var conversation = QqParser.ReadConversation(chat, filePath);
+        var selfUid = ImportText.Clean(chat["selfUid"]);
+        var selfUin = ImportText.Clean(chat["selfUin"]);
+        var selfSender = !string.IsNullOrEmpty(selfUid) ? selfUid : !string.IsNullOrEmpty(selfUin) ? selfUin : null;
+
+        var manifestDir = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
+        var chunkFiles = new List<string>();
+        var chunksSubdir = Path.Combine(manifestDir, "chunks");
+        if (Directory.Exists(chunksSubdir))
+        {
+            chunkFiles.AddRange(Directory.GetFiles(chunksSubdir, "*.jsonl"));
+        }
+        chunkFiles.AddRange(Directory.GetFiles(manifestDir, "*.jsonl"));
+
+        var sortedChunks = chunkFiles
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(Path.GetFileName, NaturalStringComparer.Instance)
+            .ToList();
+
+        return new ExportFile(
+            conversation,
+            token => IterateChunkedMessages(sortedChunks, conversation, selfSender, token));
+    }
+
+    private static IEnumerable<ParsedMessage> IterateChunkedMessages(
+        IReadOnlyList<string> chunkFiles,
+        ParsedConversation conversation,
+        string? selfSender,
+        CancellationToken cancellationToken)
+    {
+        var globalIndex = 0;
+        foreach (var chunkFile in chunkFiles)
+        {
+            using var stream = new FileStream(
+                chunkFile,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                FileOptions.SequentialScan);
+            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
+
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var trimmed = line.Trim();
+                if (trimmed.Length == 0)
+                {
+                    continue;
+                }
+
+                var message = QqParser.ParseChunkedLine(trimmed, conversation, selfSender, chunkFile, globalIndex);
+                if (message != null)
+                {
+                    yield return message;
+                    globalIndex++;
+                }
+            }
+        }
+    }
+
+    private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
+
+    private sealed class NaturalStringComparer : IComparer<string?>
+    {
+        public static readonly NaturalStringComparer Instance = new();
+
+        public int Compare(string? x, string? y)
+        {
+            if (ReferenceEquals(x, y)) return 0;
+            if (x is null) return -1;
+            if (y is null) return 1;
+
+            int i = 0, j = 0;
+            while (i < x.Length && j < y.Length)
+            {
+                if (char.IsDigit(x[i]) && char.IsDigit(y[j]))
+                {
+                    int startX = i;
+                    while (i < x.Length && char.IsDigit(x[i])) i++;
+                    int startY = j;
+                    while (j < y.Length && char.IsDigit(y[j])) j++;
+
+                    var spanX = x.AsSpan(startX, i - startX);
+                    var spanY = y.AsSpan(startY, j - startY);
+
+                    if (ulong.TryParse(spanX, out var numX) && ulong.TryParse(spanY, out var numY))
+                    {
+                        var numCmp = numX.CompareTo(numY);
+                        if (numCmp != 0) return numCmp;
+                    }
+                    else
+                    {
+                        var lenCmp = spanX.Length.CompareTo(spanY.Length);
+                        if (lenCmp != 0) return lenCmp;
+                        var cmp = spanX.SequenceCompareTo(spanY);
+                        if (cmp != 0) return cmp;
+                    }
+                }
+                else
+                {
+                    int cmp = char.ToLowerInvariant(x[i]).CompareTo(char.ToLowerInvariant(y[j]));
+                    if (cmp != 0) return cmp;
+                    i++;
+                    j++;
+                }
+            }
+
+            return x.Length.CompareTo(y.Length);
+        }
+    }
 }
 
 /// <summary>WeFlow 格式适配器。</summary>
@@ -460,6 +661,7 @@ public static class ExportFormats
                 return _formats ??= new List<IChatExportFormat>
                 {
                     new QqExportFormat(),
+                    new QqChunkedExportFormat(),
                     new WeFlowExportFormat(),
                     new CipherTalkDetailedJsonFormat(),
                     new ChatLabJsonExportFormat(),
