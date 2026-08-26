@@ -16,14 +16,22 @@ ChatArchive 是一款基于 WinUI 3 与 .NET 开发的现代化 Windows 聊天�
 
 ---
 
-## 📥 支持的导入格式
+## 📥 丰富的导入格式支持
 
-目前支持通过软件界面或后台导入以下工具导出的 JSON 格式数据：
+ChatArchive 采用插件化适配器与自动嗅探引擎，支持通过软件界面直接选择**单文件**或包含聊天记录的**任意多级文件夹**（自动递归识别、自动跳过媒体文件夹以提速）：
 
-| 平台 | 导出工具 | 支持版本 | 说明 |
+| 平台 / 规范 | 导出工具 | 支持格式与扩展名 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **微信 (WeChat)** | [WeFlow](https://github.com/hicccc77/WeFlow) | `1.0.3` | 支持解析 `weflow` + `session` 结构导出的文本、图片、语音、视频及文件。 |
-| **QQ** | [qq-chat-exporter](https://github.com/shuakami/qq-chat-exporter) | `0.1.0` | 支持解析 `QQChatExporter` 格式的私聊、群聊、回复引用与资源附件。 |
+| **微信 (WeChat)** | [WeFlow](https://github.com/nowa277/WeFlow) | 标准 JSON / ArkMe JSON (`.json`) | 兼容全版本 1.x 导出，支持 `senders` 映射字典解析、位置/名片/卡片提取与媒体挂载。 |
+| **微信 (WeChat)** | [CipherTalk](https://github.com/ILoveBingLu/CipherTalk) | Detailed JSON (`.json`) | 支持 `detailed-json` 会话元数据、毫秒时间戳归一、引用回复（`quote`）与完整媒体解析。 |
+| **微信 (WeChat)** | WeClone | CSV (`.csv`) | 基于 RFC 4180 标准 CSV 流式解析器，支持跨行消息与时间戳自动转换。 |
+| **QQ** | [qq-chat-exporter](https://github.com/shuakami/qq-chat-exporter) | 单文件 JSON / 分块 JSONL (`manifest.json` + `chunks/*.jsonl`) | 全版本自适应兼容，支持跨分块流式逐行解析与 `resources/` 媒体资源定位。 |
+| **通用规范** | ChatLab 0.0.2 | Standard JSON (`.json`) / JSONL (`.jsonl`, `.json`) | 标准化 0~99 消息类型映射、`members` 成员名片字典与流式消息解析。 |
+| **通用网页** | WeFlow / CipherTalk / QQ / ChatLab | 内嵌 HTML (`.html`, `.htm`) | 高性能内嵌数据轨提取（免 DOM 解析开销），自动路由至专属格式解析器。 |
+| **纯文本 / 文档** | 通用导出 | Markdown (`.md`) / TXT (`.txt`) | 正则流式时间戳与发送者识别、多行合并与会话标题提取。 |
+| **数据库转储** | WeFlow / CipherTalk | SQL 脚本 (`.sql`) | 流式提取 `INSERT INTO messages` 语句，还原会话与消息字段。 |
+
+> 📖 **完整规范与逆向 Schema 参考**：请参阅 [`docs/EXPORT_FORMATS_SPEC.md`](docs/EXPORT_FORMATS_SPEC.md)。
 
 ---
 
