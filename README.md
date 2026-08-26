@@ -22,7 +22,7 @@ ChatArchive 采用插件化适配器与自动嗅探引擎，支持通过软件�
 
 | 平台 / 规范 | 导出工具 | 支持格式与扩展名 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **微信 (WeChat)** | [WeFlow](https://github.com/nowa277/WeFlow) | 标准 JSON / ArkMe JSON (`.json`) | 兼容全版本 1.x 导出，支持 `senders` 映射字典解析、位置/名片/卡片提取与媒体挂载。 |
+| **微信 (WeChat)** | [WeFlow](https://github.com/hicccc77/WeFlow) | 标准 JSON / ArkMe JSON (`.json`) | 兼容全版本 1.x 导出，支持 `senders` 映射字典解析、位置/名片/卡片提取与媒体挂载。 |
 | **微信 (WeChat)** | [CipherTalk](https://github.com/ILoveBingLu/CipherTalk) | Detailed JSON (`.json`) | 支持 `detailed-json` 会话元数据、毫秒时间戳归一、引用回复（`quote`）与完整媒体解析。 |
 | **微信 (WeChat)** | WeClone | CSV (`.csv`) | 基于 RFC 4180 标准 CSV 流式解析器，支持跨行消息与时间戳自动转换。 |
 | **QQ** | [qq-chat-exporter](https://github.com/shuakami/qq-chat-exporter) | 单文件 JSON / 分块 JSONL (`manifest.json` + `chunks/*.jsonl`) | 全版本自适应兼容，支持跨分块流式逐行解析与 `resources/` 媒体资源定位。 |
