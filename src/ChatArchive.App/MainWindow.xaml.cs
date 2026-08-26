@@ -179,7 +179,7 @@ public sealed partial class MainWindow : Window
 
         if (tag == "contacts")
         {
-            _ = _contacts.LoadAsync();
+            _ = ReloadContactsAsync(_contacts.SelectedContact?.Id);
         }
         if (tag == "stats" && !_statsLoaded)
         {
@@ -480,7 +480,23 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    // ---------- 通讯录 ----------
+    private bool _isRefreshingContacts = false;
+
+    private async Task ReloadContactsAsync(long? preserveContactId = null)
+    {
+        _isRefreshingContacts = true;
+        try
+        {
+            var targetId = preserveContactId ?? _contacts.SelectedContact?.Id ?? (_contacts.SelectedDetail?.ContactId);
+            await _contacts.LoadAsync(preferredSelectedContactId: targetId);
+            ContactsListView.SelectedItem = _contacts.SelectedContact;
+            UpdateContactDetailView();
+        }
+        finally
+        {
+            _isRefreshingContacts = false;
+        }
+    }
 
     private void ContactsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -494,7 +510,7 @@ public sealed partial class MainWindow : Window
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     _contacts.SearchKeyword = ContactsSearchBox.Text;
-                    _ = _contacts.LoadAsync();
+                    _ = ReloadContactsAsync(_contacts.SelectedContact?.Id);
                 });
             }
         });
@@ -502,6 +518,11 @@ public sealed partial class MainWindow : Window
 
     private async void ContactsListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_isRefreshingContacts)
+        {
+            return;
+        }
+
         if (ContactsListView.SelectedItem is ContactInfo contact)
         {
             await _contacts.SelectContactAsync(contact);
@@ -581,12 +602,8 @@ public sealed partial class MainWindow : Window
 
             try
             {
-                await _contacts.CreateNewContactAsync(name, noteBox.Text);
-                if (_contacts.SelectedContact is not null)
-                {
-                    ContactsListView.SelectedItem = _contacts.SelectedContact;
-                }
-                UpdateContactDetailView();
+                var newDetail = await _contacts.CreateNewContactAsync(name, noteBox.Text);
+                await ReloadContactsAsync(newDetail.ContactId);
             }
             catch (Exception ex)
             {
@@ -622,9 +639,9 @@ public sealed partial class MainWindow : Window
             var file = await picker.PickSingleFileAsync();
             if (file is not null)
             {
+                var currentId = detail.ContactId;
                 await detail.SaveAvatarFromFileAsync(file.Path);
-                await _contacts.LoadAsync();
-                UpdateContactDetailView();
+                await ReloadContactsAsync(currentId);
             }
         }
         catch (Exception ex)
@@ -650,9 +667,9 @@ public sealed partial class MainWindow : Window
 
         try
         {
+            var currentId = detail.ContactId;
             await detail.SaveBasicInfoAsync(newName, DetailNoteBox.Text);
-            await _contacts.LoadAsync();
-            UpdateContactDetailView();
+            await ReloadContactsAsync(currentId);
         }
         catch (Exception ex)
         {
@@ -683,7 +700,7 @@ public sealed partial class MainWindow : Window
             try
             {
                 await _contacts.DeleteContactAsync(detail.ContactId);
-                UpdateContactDetailView();
+                await ReloadContactsAsync(null);
             }
             catch (Exception ex)
             {
@@ -694,14 +711,15 @@ public sealed partial class MainWindow : Window
 
     private async void OnAccountLabelLostFocus(object sender, RoutedEventArgs e)
     {
-        if (sender is TextBox tb && tb.DataContext is BoundSenderInfo info && _contacts.SelectedDetail is not null)
+        var detail = _contacts.SelectedDetail;
+        if (sender is TextBox tb && tb.DataContext is BoundSenderInfo info && detail is not null)
         {
             var newLabel = tb.Text?.Trim();
             if (newLabel != info.AccountLabel)
             {
                 try
                 {
-                    await _contacts.SelectedDetail.UpdateAccountLabelAsync(info.SenderId, string.IsNullOrWhiteSpace(newLabel) ? null : newLabel);
+                    await detail.UpdateAccountLabelAsync(info.SenderId, string.IsNullOrWhiteSpace(newLabel) ? null : newLabel);
                     UpdateContactDetailView();
                 }
                 catch (Exception ex)
@@ -714,11 +732,12 @@ public sealed partial class MainWindow : Window
 
     private async void OnSetPrimarySenderClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: long senderId } && _contacts.SelectedDetail is not null)
+        var detail = _contacts.SelectedDetail;
+        if (sender is Button { Tag: long senderId } && detail is not null)
         {
             try
             {
-                await _contacts.SelectedDetail.SetPrimarySenderAsync(senderId);
+                await detail.SetPrimarySenderAsync(senderId);
                 UpdateContactDetailView();
             }
             catch (Exception ex)
@@ -730,13 +749,14 @@ public sealed partial class MainWindow : Window
 
     private async void OnUnbindSenderClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: long senderId } && _contacts.SelectedDetail is not null)
+        var detail = _contacts.SelectedDetail;
+        if (sender is Button { Tag: long senderId } && detail is not null)
         {
             try
             {
-                await _contacts.SelectedDetail.UnbindSenderAsync(senderId);
-                await _contacts.LoadAsync();
-                UpdateContactDetailView();
+                var currentId = detail.ContactId;
+                await detail.UnbindSenderAsync(senderId);
+                await ReloadContactsAsync(currentId);
             }
             catch (Exception ex)
             {
@@ -817,13 +837,13 @@ public sealed partial class MainWindow : Window
             {
                 try
                 {
+                    var currentId = detail.ContactId;
                     await detail.BindSenderAsync(
                         selectedSender.SenderId,
                         string.IsNullOrWhiteSpace(labelBox.Text) ? null : labelBox.Text.Trim(),
                         primaryCheck.IsChecked == true,
                         forceRebind: true);
-                    await _contacts.LoadAsync();
-                    UpdateContactDetailView();
+                    await ReloadContactsAsync(currentId);
                 }
                 catch (Exception ex)
                 {

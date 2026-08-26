@@ -415,4 +415,39 @@ public sealed class ContactsViewModelTests : IDisposable
         Assert.Equal("小明同学", contactVm.DisplayName);
         Assert.Equal("小号", contactVm.AccountLabel);
     }
+
+    [Fact]
+    public async Task LoadAsync_WithPreferredSelectedContactId_PreservesSelectedContactAndDetail()
+    {
+        var s1 = InsertSender("wx_1", "User 1", platform: "wechat");
+        var s2 = InsertSender("wx_2", "User 2", platform: "wechat");
+
+        var c1 = _contactRepository.CreateContact("Contact 1", initialBindings: new[] { (s1, (string?)null, true) });
+        var c2 = _contactRepository.CreateContact("Contact 2", initialBindings: new[] { (s2, (string?)null, true) });
+
+        var vm = new ContactsViewModel(_contactRepository, _avatarStorage);
+        await vm.LoadAsync();
+        Assert.Equal(2, vm.Contacts.Count);
+
+        // Select Contact 2
+        var contact2 = vm.Contacts.First(c => c.Id == c2);
+        await vm.SelectContactAsync(contact2);
+        Assert.NotNull(vm.SelectedContact);
+        Assert.NotNull(vm.SelectedDetail);
+        Assert.Equal(c2, vm.SelectedContact.Id);
+
+        // Modify Contact 2 name in repository
+        _contactRepository.UpdateContact(c2, "Contact 2 Updated", null, "Some note");
+
+        // Reload contacts specifying preferred contact id
+        await vm.LoadAsync(preferredSelectedContactId: c2);
+
+        // Verify selection is preserved with new details
+        Assert.NotNull(vm.SelectedContact);
+        Assert.NotNull(vm.SelectedDetail);
+        Assert.Equal(c2, vm.SelectedContact.Id);
+        Assert.Equal("Contact 2 Updated", vm.SelectedContact.DisplayName);
+        Assert.Equal("Contact 2 Updated", vm.SelectedDetail.DisplayName);
+    }
 }
+

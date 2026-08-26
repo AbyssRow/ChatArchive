@@ -36,10 +36,12 @@ public partial class ContactsViewModel : ObservableObject
         _avatarStorageService = avatarStorageService;
     }
 
-    public async Task LoadAsync(string? keyword = null)
+    public async Task LoadAsync(string? keyword = null, long? preferredSelectedContactId = null)
     {
         IsLoading = true;
         ErrorMessage = string.Empty;
+
+        var targetId = preferredSelectedContactId ?? SelectedContact?.Id;
 
         try
         {
@@ -55,10 +57,17 @@ public partial class ContactsViewModel : ObservableObject
                 Contacts.Add(item);
             }
 
-            if (SelectedContact is not null)
+            if (targetId.HasValue)
             {
-                var match = Contacts.FirstOrDefault(c => c.Id == SelectedContact.Id);
-                SelectedContact = match;
+                var match = Contacts.FirstOrDefault(c => c.Id == targetId.Value);
+                if (match != null)
+                {
+                    await SelectContactAsync(match);
+                }
+                else
+                {
+                    await SelectContactAsync(null);
+                }
             }
         }
         catch (Exception ex)
