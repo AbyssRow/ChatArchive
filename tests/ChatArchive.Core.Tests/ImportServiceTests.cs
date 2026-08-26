@@ -1,3 +1,4 @@
+using ChatArchive.Core.Data;
 using ChatArchive.Core.Importing;
 using ChatArchive.Core.Repositories;
 using System.Text.Json.Nodes;
@@ -643,6 +644,250 @@ public class ImportServiceTests : IDisposable
 
         var stats = new StatsRepository(_archive.Db).GetStats();
         Assert.Equal(1, stats.MissingAttachments);
+    }
+
+    [Fact]
+    public async Task ImportService_ImportsAllSupportedFormats_EndToEnd_IntoDatabase()
+    {
+        var testDir = Path.Combine(Path.GetTempPath(), $"chatarchive-e2e-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(testDir);
+        var exportsDir = Path.Combine(testDir, "exports");
+        Directory.CreateDirectory(exportsDir);
+        var dbDir = Path.Combine(testDir, "db");
+        Directory.CreateDirectory(dbDir);
+        var mediaDir = Path.Combine(testDir, "media");
+        Directory.CreateDirectory(mediaDir);
+
+        try
+        {
+            // 1. WeFlow Arkme JSON
+            var arkmeJson = """
+                {
+                  "weflow": { "version": "1.0.9", "format": "arkme-json" },
+                  "session": { "wxid": "weflow_group@chatroom", "displayName": "ArkMe微信群", "type": "群聊" },
+                  "senders": [
+                    { "senderID": 1, "wxid": "wx_user1", "displayName": "张三", "nickname": "张三昵称", "groupNickname": "张三名片" },
+                    { "senderID": 2, "wxid": "wx_user2", "displayName": "李四", "nickname": "李四昵称" }
+                  ],
+                  "messages": [
+                    { "localId": 1, "createTime": 1700000000, "type": "文本消息", "localType": 1, "content": "来自ArkMe群消息", "isSend": 0, "senderID": 1 },
+                    { "localId": 2, "createTime": 1700000010, "type": "位置消息", "localType": 48, "content": "[位置] 东方明珠", "locationPoiname": "东方明珠", "isSend": 1, "senderID": 2 }
+                  ]
+                }
+                """;
+            File.WriteAllText(Path.Combine(exportsDir, "01_weflow_arkme.json"), arkmeJson);
+
+            // 2. CipherTalk Detailed JSON
+            var cipherTalkJson = """
+                {
+                  "exportInfo": { "version": "0.0.2", "exportedAt": 1700000000, "generator": "CipherTalk", "format": "detailed-json" },
+                  "session": { "wxid": "wxid_ciphertalk_user", "displayName": "CipherTalk私聊", "type": "私聊", "platform": "wechat", "isGroup": false, "ownerId": "wxid_self" },
+                  "messages": [
+                    { "localId": 101, "platformMessageId": "ct_m1", "createTime": 1700000100, "type": "文本消息", "localType": 1, "content": "来自CipherTalk私聊消息", "isSend": 0, "senderUsername": "wxid_ciphertalk_user", "senderDisplayName": "好友CT" },
+                    { "localId": 102, "platformMessageId": "ct_m2", "createTime": 1700000110, "type": "文本消息", "localType": 1, "content": "CipherTalk回复", "isSend": 1, "senderUsername": "wxid_self", "senderDisplayName": "我自己" }
+                  ]
+                }
+                """;
+            File.WriteAllText(Path.Combine(exportsDir, "02_ciphertalk_detailed.json"), cipherTalkJson);
+
+            // 3. ChatLab 0.0.2 JSON
+            var chatLabJson = """
+                {
+                  "chatlab": { "version": "0.0.2", "exportedAt": 1700000000, "generator": "ChatLab" },
+                  "meta": { "name": "ChatLabJSON会话", "platform": "wechat", "type": "private", "ownerId": "wxid_self" },
+                  "members": [
+                    { "platformId": "wxid_cl_json", "accountName": "ChatLab好友" }
+                  ],
+                  "messages": [
+                    { "id": "cl_j1", "sender": "wxid_cl_json", "accountName": "ChatLab好友", "timestamp": 1700000200, "type": 0, "content": "来自ChatLab标准JSON消息" }
+                  ]
+                }
+                """;
+            File.WriteAllText(Path.Combine(exportsDir, "03_chatlab.json"), chatLabJson);
+
+            // 4. ChatLab 0.0.2 JSONL
+            var chatLabJsonl = string.Join("\n", new[]
+            {
+                """{"_type":"header","chatlab":{"version":"0.0.2","exportedAt":1700000000,"generator":"ChatLab"},"meta":{"name":"ChatLabJSONL群","platform":"wechat","type":"group","groupId":"cl_jsonl@chatroom","ownerId":"wxid_self"}}""",
+                """{"_type":"member","platformId":"wxid_cl_jsonl_user","accountName":"JSONL用户","groupNickname":"群管"}""",
+                """{"_type":"message","id":"cl_l1","sender":"wxid_cl_jsonl_user","accountName":"JSONL用户","timestamp":1700000300,"type":0,"content":"来自ChatLab JSONL流式消息"}"""
+            });
+            File.WriteAllText(Path.Combine(exportsDir, "04_chatlab.jsonl"), chatLabJsonl);
+
+            // 5. QQ Chat Exporter Chunked (`manifest.json` + `chunks/*.jsonl`)
+            var qqChunkedDir = Path.Combine(exportsDir, "05_qq_chunked");
+            var qqChunksDir = Path.Combine(qqChunkedDir, "chunks");
+            Directory.CreateDirectory(qqChunksDir);
+            var qqManifest = """
+                {
+                  "metadata": { "name": "QQChatExporter", "version": "0.2.0" },
+                  "chatInfo": { "selfUid": "u_self", "peerUid": "u_qq_chunk_group", "name": "QQ分块群聊", "type": "group" }
+                }
+                """;
+            File.WriteAllText(Path.Combine(qqChunkedDir, "manifest.json"), qqManifest);
+            var qqChunk0 = """{"id":"qq_c1","timestamp":1700000400000,"sender":{"uid":"u_qq_friend","name":"QQ群友"},"content":{"type":"text","text":"来自QQ分块消息1"}}""" + "\n"
+                         + """{"id":"qq_c2","timestamp":1700000410000,"sender":{"uid":"u_self","name":"我自己"},"content":{"type":"text","text":"来自QQ分块消息2"}}""" + "\n";
+            File.WriteAllText(Path.Combine(qqChunksDir, "chunk_0.jsonl"), qqChunk0);
+
+            // 6. 内嵌数据的 HTML 导出
+            var htmlExport = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                  <meta charset="utf-8">
+                  <title>HTML Export</title>
+                  <script id="__DATA__" type="application/json">
+                  {
+                    "metadata": { "name": "QQChatExporter", "version": "0.2.0" },
+                    "chatInfo": { "selfUid": "u_self", "peerUid": "u_qq_html_session", "name": "HTML内嵌QQ会话", "type": "private" },
+                    "messages": [
+                      { "id": "html_q1", "timestamp": 1700000500000, "sender": { "uid": "u_qq_html_session", "name": "HTML好友" }, "content": { "type": "text", "text": "来自HTML内嵌数据消息" } }
+                    ]
+                  }
+                  </script>
+                </head>
+                <body></body>
+                </html>
+                """;
+            File.WriteAllText(Path.Combine(exportsDir, "06_chat_embedded.html"), htmlExport);
+
+            // 7. WeClone CSV
+            var wecloneCsv = """
+                is_sender,sender_name,talker,time,type,content
+                0,CSV好友,wxid_csv_user,2023-11-15 10:00:00,1,来自WeClone CSV消息
+                1,我,wxid_self,2023-11-15 10:00:05,1,CSV回复消息
+                """;
+            File.WriteAllText(Path.Combine(exportsDir, "07_weclone.csv"), wecloneCsv);
+
+            // 8. Markdown 导出
+            var markdownExport = """
+                # 聊天记录: Markdown项目组群
+                [2023-11-15 11:00:00] 王五: 来自Markdown导出的消息
+                [2023-11-15 11:00:05] 赵六: 收到Markdown消息
+                """;
+            File.WriteAllText(Path.Combine(exportsDir, "08_chat_export.md"), markdownExport);
+
+            // 9. TXT 导出
+            var txtExport = """
+                2023-11-15 12:00:00 钱七:
+                来自TXT纯文本导出的消息
+
+                2023-11-15 12:00:05 孙八:
+                收到TXT消息
+                """;
+            File.WriteAllText(Path.Combine(exportsDir, "09_chat_export.txt"), txtExport);
+
+            // 10. SQL 导出
+            var sqlExport = """
+                CREATE TABLE IF NOT EXISTS weflow_messages (local_id TEXT, talker TEXT, create_time INTEGER, is_send INTEGER, type INTEGER, content TEXT);
+                INSERT INTO weflow_messages (local_id, talker, create_time, is_send, type, content) VALUES
+                  ('sql_1', 'wxid_sql_user', 1700000600, 0, 1, '来自SQL导出消息1'),
+                  ('sql_2', 'wxid_sql_user', 1700000610, 1, 1, '来自SQL导出消息2');
+                """;
+            File.WriteAllText(Path.Combine(exportsDir, "10_chat_dump.sql"), sqlExport);
+
+            // 干净的 SQLite 测试数据库
+            var dbPath = Path.Combine(dbDir, "e2e_test.db");
+            var db = new ArchiveDatabase(dbPath);
+            db.EnsureSchema();
+
+            var service = new ImportService(db, mediaDir);
+
+            // 执行全量异步导入 RunAsync
+            var result = await service.RunAsync(new[] { exportsDir });
+
+            // 断言导入统计
+            Assert.Equal(10, result.FilesFound);
+            Assert.Equal(10, result.FilesImported);
+            Assert.Equal(0, result.FilesFailed);
+            Assert.True(result.MessagesSeen > 0);
+            Assert.True(result.Added > 0);
+            Assert.Equal(0, result.Duplicates);
+
+            // 查询数据库确认各会话、联系人/发件人、消息与 FTS 搜索索引
+            using (var connection = db.OpenConnection())
+            {
+                var convCount = Scalar(connection, "SELECT COUNT(*) FROM conversations");
+                Assert.True(convCount >= 10, $"conversations count: {convCount}");
+
+                var senderCount = Scalar(connection, "SELECT COUNT(*) FROM senders");
+                Assert.True(senderCount >= 10, $"senders count: {senderCount}");
+
+                var msgCount = Scalar(connection, "SELECT COUNT(*) FROM messages");
+                Assert.Equal(result.Added, msgCount);
+
+                // 断言各类特征消息确实已入库
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自ArkMe群消息%'"));
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自CipherTalk私聊消息%'"));
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自ChatLab标准JSON消息%'"));
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自ChatLab JSONL流式消息%'"));
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自QQ分块消息1%'"));
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自HTML内嵌数据消息%'"));
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自WeClone CSV消息%'"));
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自Markdown导出的消息%'"));
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自TXT纯文本导出的消息%'"));
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自SQL导出消息1%'"));
+
+                // 断言 FTS 全文搜索索引正确同步触发写入
+                var ftsCount = Scalar(connection, "SELECT COUNT(*) FROM messages_fts");
+                Assert.Equal(msgCount, ftsCount);
+            }
+
+            // 使用 SearchRepository 进行检索验证
+            var searchRepo = new SearchRepository(db);
+            var searchResult = searchRepo.Search("ArkMe");
+            Assert.NotEmpty(searchResult.Items);
+            Assert.Contains(searchResult.Items, item => item.Snippet.Contains("ArkMe"));
+
+            var searchCsv = searchRepo.Search("WeClone");
+            Assert.NotEmpty(searchCsv.Items);
+            Assert.Contains(searchCsv.Items, item => item.Snippet.Contains("WeClone"));
+
+            var searchMd = searchRepo.Search("Markdown");
+            Assert.NotEmpty(searchMd.Items);
+            Assert.Contains(searchMd.Items, item => item.Snippet.Contains("Markdown"));
+
+            // 使用 ContactRepository 验证联系人绑定支持
+            var contactRepo = new ContactRepository(db);
+            using (var connection = db.OpenConnection())
+            {
+                var firstSenderId = Scalar(connection, "SELECT id FROM senders LIMIT 1");
+                var createdContactId = contactRepo.CreateContact(
+                    "测试绑定联系人",
+                    initialBindings: new[] { (SenderId: firstSenderId, Label: (string?)"主要身份", IsPrimary: true) });
+                Assert.True(createdContactId > 0);
+                var contactDetail = contactRepo.GetContactDetail(createdContactId);
+                Assert.NotNull(contactDetail);
+                Assert.Single(contactDetail.Senders);
+            }
+
+            // 二次运行导入，断言所有消息基于 NativeId 与 PayloadHash 完美去重（重复消息数为 0，跳过计数正常）
+            var secondResult = await service.RunAsync(new[] { exportsDir });
+            Assert.Equal(10, secondResult.FilesFound);
+            Assert.Equal(10, secondResult.FilesSkipped);
+            Assert.Equal(0, secondResult.FilesImported);
+            Assert.Equal(0, secondResult.Added);
+            Assert.Equal(0, secondResult.FilesFailed);
+
+            using (var connection = db.OpenConnection())
+            {
+                var msgCountAfter = Scalar(connection, "SELECT COUNT(*) FROM messages");
+                Assert.Equal(result.Added, msgCountAfter);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(testDir))
+            {
+                try
+                {
+                    Directory.Delete(testDir, recursive: true);
+                }
+                catch (IOException)
+                {
+                }
+            }
+        }
     }
 
     public void Dispose() => _archive.Dispose();

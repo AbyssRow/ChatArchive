@@ -40,7 +40,7 @@ CREATE INDEX IF NOT EXISTS ix_import_files_run ON import_files(import_run_id);
 
 CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY,
-    platform TEXT NOT NULL CHECK(platform IN ('qq', 'wechat')),
+    platform TEXT NOT NULL CHECK(platform IN ('qq', 'wechat', 'text', 'sql', 'html')),
     account_id TEXT NOT NULL,
     native_id TEXT NOT NULL,
     kind TEXT NOT NULL CHECK(kind IN ('private', 'group')),
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS conversation_aliases (
 
 CREATE TABLE IF NOT EXISTS senders (
     id INTEGER PRIMARY KEY,
-    platform TEXT NOT NULL CHECK(platform IN ('qq', 'wechat')),
+    platform TEXT NOT NULL CHECK(platform IN ('qq', 'wechat', 'text', 'sql', 'html')),
     account_id TEXT NOT NULL,
     native_id TEXT NOT NULL,
     current_name TEXT NOT NULL,
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     sender_id INTEGER REFERENCES senders(id) ON DELETE SET NULL,
-    platform TEXT NOT NULL CHECK(platform IN ('qq', 'wechat')),
+    platform TEXT NOT NULL CHECK(platform IN ('qq', 'wechat', 'text', 'sql', 'html')),
     native_id TEXT,
     local_id TEXT,
     timestamp_ms INTEGER NOT NULL,
