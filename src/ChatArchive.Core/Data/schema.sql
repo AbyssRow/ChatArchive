@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS app_metadata (
     value TEXT NOT NULL
 );
 
-INSERT INTO app_metadata(key, value) VALUES ('schema_version', '1')
+INSERT INTO app_metadata(key, value) VALUES ('schema_version', '2')
 ON CONFLICT(key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS import_runs (
@@ -218,3 +218,27 @@ CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
         new.sender_name_snapshot, new.conversation_title_snapshot
     );
 END;
+
+CREATE TABLE IF NOT EXISTS contacts (
+    id INTEGER PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    custom_avatar_path TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_contacts_display_name ON contacts(display_name);
+
+CREATE TABLE IF NOT EXISTS contact_senders (
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    sender_id INTEGER NOT NULL REFERENCES senders(id) ON DELETE CASCADE,
+    account_label TEXT,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (contact_id, sender_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_contact_senders_sender ON contact_senders(sender_id);
+CREATE INDEX IF NOT EXISTS ix_contact_senders_contact ON contact_senders(contact_id);
+

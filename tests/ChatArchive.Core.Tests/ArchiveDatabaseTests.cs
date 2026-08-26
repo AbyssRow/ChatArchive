@@ -29,7 +29,7 @@ public class ArchiveDatabaseTests : IDisposable
     }
 
     [Fact]
-    public void EnsureSchema_creates_version_1()
+    public void EnsureSchema_CreatesContactsAndContactSendersTables()
     {
         var db = new ArchiveDatabase(_databasePath);
         db.EnsureSchema();
@@ -37,7 +37,148 @@ public class ArchiveDatabaseTests : IDisposable
         using var connection = db.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT value FROM app_metadata WHERE key='schema_version'";
-        Assert.Equal("1", command.ExecuteScalar());
+        Assert.Equal("2", command.ExecuteScalar());
+
+        // Verify contacts and contact_senders tables
+        Execute(connection, """
+            INSERT INTO contacts(id, display_name, custom_avatar_path, note)
+            VALUES (1, '张三', 'avatars/zhangsan.png', '重要联系人');
+            """);
+
+        Execute(connection, """
+            INSERT INTO senders(id, platform, account_id, native_id, current_name)
+            VALUES (10, 'qq', 'acc', 'user_10', 'Sender Alice');
+            """);
+
+        Execute(connection, """
+            INSERT INTO contact_senders(contact_id, sender_id, account_label, is_primary)
+            VALUES (1, 10, '大号', 1);
+            """);
+
+        Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM contacts WHERE id = 1"));
+        Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM contact_senders WHERE contact_id = 1 AND sender_id = 10"));
+
+        // Verify unique index on sender_id
+        Assert.Throws<SqliteException>(() =>
+        {
+            Execute(connection, """
+                INSERT INTO contacts(id, display_name) VALUES (2, '李四');
+                INSERT INTO contact_senders(contact_id, sender_id) VALUES (2, 10);
+                """);
+        });
+
+        // Verify cascade delete on contact
+        Execute(connection, "DELETE FROM contacts WHERE id = 1");
+        Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM contact_senders WHERE contact_id = 1"));
+    }
+
+    [Fact]
+    public void EnsureSchema_UpgradesFromVersion1ToVersion2()
+    {
+        // 1. Manually create v1 database with existing data
+        using (var connection = new SqliteConnection($"Data Source={_databasePath}"))
+        {
+            connection.Open();
+            Execute(connection, "PRAGMA foreign_keys = ON;");
+            Execute(connection, """
+                CREATE TABLE app_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                INSERT INTO app_metadata(key, value) VALUES ('schema_version', '1');
+
+                CREATE TABLE senders (
+                    id INTEGER PRIMARY KEY,
+                    platform TEXT NOT NULL CHECK(platform IN ('qq', 'wechat')),
+                    account_id TEXT NOT NULL,
+                    native_id TEXT NOT NULL,
+                    current_name TEXT NOT NULL,
+                    is_self INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(platform, account_id, native_id)
+                );
+
+                CREATE TABLE conversations (
+                    id INTEGER PRIMARY KEY,
+                    platform TEXT NOT NULL CHECK(platform IN ('qq', 'wechat')),
+                    account_id TEXT NOT NULL,
+                    native_id TEXT NOT NULL,
+                    kind TEXT NOT NULL CHECK(kind IN ('private', 'group')),
+                    title TEXT NOT NULL,
+                    first_message_at INTEGER,
+                    last_message_at INTEGER,
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(platform, account_id, native_id)
+                );
+
+                CREATE TABLE messages (
+                    id INTEGER PRIMARY KEY,
+                    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                    sender_id INTEGER REFERENCES senders(id) ON DELETE SET NULL,
+                    platform TEXT NOT NULL CHECK(platform IN ('qq', 'wechat')),
+                    native_id TEXT,
+                    local_id TEXT,
+                    timestamp_ms INTEGER NOT NULL,
+                    sequence TEXT,
+                    direction TEXT NOT NULL CHECK(direction IN ('incoming', 'outgoing', 'system')),
+                    message_type TEXT NOT NULL,
+                    media_type TEXT,
+                    content TEXT NOT NULL,
+                    search_text TEXT NOT NULL,
+                    sender_name_snapshot TEXT NOT NULL,
+                    conversation_title_snapshot TEXT NOT NULL,
+                    is_recalled INTEGER NOT NULL DEFAULT 0,
+                    is_system INTEGER NOT NULL DEFAULT 0,
+                    reply_to_native_id TEXT,
+                    payload_hash TEXT NOT NULL,
+                    semantic_hash TEXT NOT NULL,
+                    revision_of_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                    raw_payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                INSERT INTO senders(id, platform, account_id, native_id, current_name)
+                VALUES (1, 'qq', 'acc1', 'u1', 'Alice');
+
+                INSERT INTO conversations(id, platform, account_id, native_id, kind, title)
+                VALUES (10, 'qq', 'acc1', 'c10', 'private', 'Alice Chat');
+
+                INSERT INTO messages(id, conversation_id, sender_id, platform, timestamp_ms, direction,
+                    message_type, content, search_text, sender_name_snapshot, conversation_title_snapshot,
+                    payload_hash, semantic_hash, raw_payload_json)
+                VALUES (100, 10, 1, 'qq', 1700000000000, 'incoming', 'text', 'Hello', 'Hello',
+                    'Alice', 'Alice Chat', 'ph', 'sh', '{}');
+                """);
+        }
+
+        // 2. Perform EnsureSchema()
+        var db = new ArchiveDatabase(_databasePath);
+        db.EnsureSchema();
+
+        // 3. Verify upgraded to v2 and existing data intact
+        using (var connection = db.OpenConnection())
+        {
+            var version = ScalarText(connection, "SELECT value FROM app_metadata WHERE key='schema_version'");
+            Assert.Equal("2", version);
+
+            // Existing data intact
+            Assert.Equal("Alice", ScalarText(connection, "SELECT current_name FROM senders WHERE id = 1"));
+            Assert.Equal("Alice Chat", ScalarText(connection, "SELECT title FROM conversations WHERE id = 10"));
+            Assert.Equal("Hello", ScalarText(connection, "SELECT content FROM messages WHERE id = 100"));
+
+            // New tables exist and work
+            Execute(connection, """
+                INSERT INTO contacts(id, display_name, note) VALUES (1, 'Alice Contact', 'Test note');
+                INSERT INTO contact_senders(contact_id, sender_id, account_label, is_primary) VALUES (1, 1, 'QQ', 1);
+                """);
+            Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM contact_senders WHERE contact_id = 1 AND sender_id = 1"));
+        }
+
+        // 4. Ensure idempotent
+        db.EnsureSchema();
     }
 
     [Fact]
@@ -95,11 +236,13 @@ public class ArchiveDatabaseTests : IDisposable
         var statements = SqlScriptSplitter.Split(sql);
 
         Assert.Contains(statements, s => s.StartsWith("CREATE TABLE IF NOT EXISTS app_metadata", StringComparison.Ordinal));
+        Assert.Contains(statements, s => s.StartsWith("CREATE TABLE IF NOT EXISTS contacts", StringComparison.Ordinal));
+        Assert.Contains(statements, s => s.StartsWith("CREATE TABLE IF NOT EXISTS contact_senders", StringComparison.Ordinal));
         var triggers = statements.Where(s => s.StartsWith("CREATE TRIGGER", StringComparison.Ordinal)).ToList();
         Assert.Equal(3, triggers.Count);
         Assert.All(triggers, s => Assert.EndsWith("END;", s));
         Assert.All(statements.Except(triggers), s => Assert.False(s.EndsWith(";", StringComparison.Ordinal)));
-        Assert.Equal(29, statements.Count);
+        Assert.Equal(34, statements.Count);
     }
 
     private static void Execute(SqliteConnection connection, string text)
@@ -114,5 +257,12 @@ public class ArchiveDatabaseTests : IDisposable
         using var command = connection.CreateCommand();
         command.CommandText = text;
         return Convert.ToInt64(command.ExecuteScalar());
+    }
+
+    private static string? ScalarText(SqliteConnection connection, string text)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = text;
+        return command.ExecuteScalar() as string;
     }
 }
