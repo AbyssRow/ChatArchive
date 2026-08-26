@@ -6,6 +6,9 @@ publish/
 TestResults/
 *.log
 
+# Docs (Internal dev documents)
+docs/
+
 # User & IDE configs
 *.user
 *.suo
