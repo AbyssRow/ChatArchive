@@ -113,6 +113,75 @@ public static class ImportText
         }
     }
 
+    /// <summary>
+    /// 安全解析媒体文件路径，支持多级 fallback 探测：
+    /// 1) exportRoot 下同级
+    /// 2) exportRoot/resources/
+    /// 3) exportRoot/media/
+    /// 4) exportRoot 上级目录 parentDir 及 parentDir/media/<sessionTitle>/
+    /// 如果任何一个路径存在于磁盘（File.Exists），立即返回该有效物理路径。
+    /// 若均未在磁盘发现，返回 SafeExportPath(exportRoot, normalized)（保持原语义）。
+    /// </summary>
+    public static string? SafeResolveMedia(string exportRoot, string declaredPath, string? sessionTitle = null)
+    {
+        if (string.IsNullOrWhiteSpace(declaredPath))
+        {
+            return null;
+        }
+
+        var normalized = declaredPath.Replace('\\', '/').TrimStart('/');
+        if (string.IsNullOrWhiteSpace(normalized) || Path.IsPathRooted(normalized))
+        {
+            return null;
+        }
+
+        var direct = SafeExportPath(exportRoot, normalized);
+        if (direct != null && File.Exists(direct))
+        {
+            return direct;
+        }
+
+        var inResources = SafeExportPath(exportRoot, Path.Combine("resources", normalized));
+        if (inResources != null && File.Exists(inResources))
+        {
+            return inResources;
+        }
+
+        var inMedia = SafeExportPath(exportRoot, Path.Combine("media", normalized));
+        if (inMedia != null && File.Exists(inMedia))
+        {
+            return inMedia;
+        }
+
+        try
+        {
+            var parentDir = Path.GetDirectoryName(Path.GetFullPath(exportRoot));
+            if (!string.IsNullOrEmpty(parentDir))
+            {
+                var inParent = SafeExportPath(parentDir, normalized);
+                if (inParent != null && File.Exists(inParent))
+                {
+                    return inParent;
+                }
+
+                if (!string.IsNullOrWhiteSpace(sessionTitle))
+                {
+                    var inParentMediaSession = SafeExportPath(parentDir, Path.Combine("media", sessionTitle, normalized));
+                    if (inParentMediaSession != null && File.Exists(inParentMediaSession))
+                    {
+                        return inParentMediaSession;
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        {
+            // Ignore path resolution errors when probing parent directory
+        }
+
+        return direct;
+    }
+
     private static readonly Dictionary<string, string> MimeByExtension = new(StringComparer.OrdinalIgnoreCase)
     {
         [".jpg"] = "image/jpeg",

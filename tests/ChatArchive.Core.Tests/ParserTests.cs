@@ -442,6 +442,55 @@ public class ParserTests : IDisposable
         Assert.Equal(expected, actual);
     }
 
+    [Fact]
+    public void SafeResolveMedia_ResolvesMultiLevelFallbackPaths_Correctly()
+    {
+        var exportRoot = Path.Combine(_dir, "session_export");
+        Directory.CreateDirectory(exportRoot);
+
+        // 1. 同级文件探测
+        var directFile = Path.Combine(exportRoot, "image1.png");
+        File.WriteAllText(directFile, "img1");
+        Assert.Equal(directFile, ImportText.SafeResolveMedia(exportRoot, "image1.png"));
+        Assert.Equal(directFile, ImportText.SafeResolveMedia(exportRoot, "/image1.png"));
+        Assert.Equal(directFile, ImportText.SafeResolveMedia(exportRoot, "\\image1.png"));
+
+        // 2. resources/ 子目录探测
+        var resourcesDir = Path.Combine(exportRoot, "resources", "images");
+        Directory.CreateDirectory(resourcesDir);
+        var resourcesFile = Path.Combine(resourcesDir, "image2.png");
+        File.WriteAllText(resourcesFile, "img2");
+        Assert.Equal(resourcesFile, ImportText.SafeResolveMedia(exportRoot, "images/image2.png"));
+
+        // 3. media/ 子目录探测
+        var mediaDir = Path.Combine(exportRoot, "media");
+        Directory.CreateDirectory(mediaDir);
+        var mediaFile = Path.Combine(mediaDir, "image3.png");
+        File.WriteAllText(mediaFile, "img3");
+        Assert.Equal(mediaFile, ImportText.SafeResolveMedia(exportRoot, "image3.png"));
+
+        // 4. 上级目录 SafeExportPath(parentDir, normalized) 与 SafeExportPath(parentDir, Path.Combine("media", sessionTitle, normalized))
+        var parentMediaSessionDir = Path.Combine(_dir, "media", "ChatSession1");
+        Directory.CreateDirectory(parentMediaSessionDir);
+        var parentSessionMediaFile = Path.Combine(parentMediaSessionDir, "image4.png");
+        File.WriteAllText(parentSessionMediaFile, "img4");
+        Assert.Equal(parentSessionMediaFile, ImportText.SafeResolveMedia(exportRoot, "image4.png", "ChatSession1"));
+
+        var parentDirectFile = Path.Combine(_dir, "image5.png");
+        File.WriteAllText(parentDirectFile, "img5");
+        Assert.Equal(parentDirectFile, ImportText.SafeResolveMedia(exportRoot, "image5.png"));
+
+        // 5. 若均未在磁盘发现，返回 SafeExportPath(exportRoot, normalized)
+        var nonExistentPath = Path.Combine(exportRoot, "not_exist.png");
+        Assert.Equal(nonExistentPath, ImportText.SafeResolveMedia(exportRoot, "not_exist.png"));
+
+        // 6. 根路径/越界穿越返回 null
+        Assert.Null(ImportText.SafeResolveMedia(exportRoot, "C:/outside/file.png"));
+        Assert.Null(ImportText.SafeResolveMedia(exportRoot, "/"));
+        Assert.Null(ImportText.SafeResolveMedia(exportRoot, ""));
+        Assert.Null(ImportText.SafeResolveMedia(exportRoot, "../../outside.png"));
+    }
+
     public void Dispose()
     {
         try

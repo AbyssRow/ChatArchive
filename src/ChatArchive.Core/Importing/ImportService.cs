@@ -218,7 +218,7 @@ public sealed class ImportService
                 }
             }
 
-            var format = _formats.First(f => f.Platform == platform);
+            var format = _formats.FirstOrDefault(f => f.Matches(filePath)) ?? _formats.First(f => f.Platform == platform);
             using var exportFile = format.Open(filePath, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
