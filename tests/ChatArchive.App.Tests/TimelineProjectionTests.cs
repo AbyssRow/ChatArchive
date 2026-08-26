@@ -166,6 +166,59 @@ public sealed class TimelineProjectionTests : IDisposable
         Assert.Single(entries.OfType<DateSeparatorEntry>());
     }
 
+    [Fact]
+    public void MessageEntry_projects_custom_avatar_and_account_badge_when_present()
+    {
+        var locator = new MediaLocator(_directory);
+        var message = new MessageItem(
+            1, 1, 100, "张总", "incoming", "text", null,
+            "你好", false, false, LocalTimestamp(2026, 8, 20, 10),
+            Array.Empty<AttachmentInfo>(),
+            CustomAvatarPath: "C:/avatars/zhang.png",
+            AccountLabel: "工作号");
+
+        var entry = new MessageEntry(message, locator);
+
+        Assert.Equal("C:/avatars/zhang.png", entry.AvatarPath);
+        Assert.Equal("工作号", entry.AccountBadge);
+        Assert.Equal("张总 · 工作号", entry.DisplaySenderName);
+        Assert.Equal("张", entry.Initials);
+    }
+
+    [Fact]
+    public void MessageEntry_handles_missing_or_whitespace_account_label_and_avatar()
+    {
+        var locator = new MediaLocator(_directory);
+        var message = new MessageItem(
+            1, 1, 100, "李四", "incoming", "text", null,
+            "收到", false, false, LocalTimestamp(2026, 8, 20, 10),
+            Array.Empty<AttachmentInfo>(),
+            CustomAvatarPath: null,
+            AccountLabel: "   ");
+
+        var entry = new MessageEntry(message, locator);
+
+        Assert.Null(entry.AvatarPath);
+        Assert.Null(entry.AccountBadge);
+        Assert.Equal("李四", entry.DisplaySenderName);
+        Assert.Equal("李", entry.Initials);
+    }
+
+    [Fact]
+    public void MessageEntry_handles_empty_sender_name_initials()
+    {
+        var locator = new MediaLocator(_directory);
+        var message = new MessageItem(
+            1, 1, 100, "   ", "incoming", "text", null,
+            "无名消息", false, false, LocalTimestamp(2026, 8, 20, 10),
+            Array.Empty<AttachmentInfo>());
+
+        var entry = new MessageEntry(message, locator);
+
+        Assert.Equal("?", entry.Initials);
+        Assert.Equal("   ", entry.DisplaySenderName);
+    }
+
     private static MessageItem Message(string type, string content, params AttachmentInfo[] attachments)
     {
         return Message(1, 1_700_000_000_000, content, type, attachments);

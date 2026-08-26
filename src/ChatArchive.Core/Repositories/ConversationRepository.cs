@@ -294,6 +294,11 @@ public sealed class ConversationRepository
         return rows;
     }
 
+    internal sealed record ContactSenderInfo(
+        string DisplayName,
+        string? CustomAvatarPath,
+        string? AccountLabel);
+
     internal static IReadOnlyList<MessageItem> Hydrate(SqliteConnection connection, IEnumerable<MessageRow> rows)
     {
         var list = rows.ToList();
@@ -303,6 +308,13 @@ public sealed class ConversationRepository
         }
 
         var attachments = LoadAttachments(connection, list.Select(r => r.Id).ToList());
+        var senderIds = list
+            .Where(r => r.SenderId.HasValue)
+            .Select(r => r.SenderId!.Value)
+            .Distinct()
+            .ToList();
+
+        var contacts = LoadContacts(connection, senderIds);
         var displayNames = SenderDisplayName.Resolve(
             connection,
             list
@@ -312,10 +324,25 @@ public sealed class ConversationRepository
 
         return list.Select(row =>
         {
-            var displayName = row.SenderId.HasValue
-                && displayNames.TryGetValue((row.SenderId.Value, row.ConversationId), out var name)
-                ? name
-                : row.SenderNameSnapshot;
+            string displayName;
+            string? customAvatarPath = null;
+            string? accountLabel = null;
+
+            if (row.SenderId.HasValue && contacts.TryGetValue(row.SenderId.Value, out var contact))
+            {
+                displayName = contact.DisplayName;
+                customAvatarPath = contact.CustomAvatarPath;
+                accountLabel = contact.AccountLabel;
+            }
+            else if (row.SenderId.HasValue && displayNames.TryGetValue((row.SenderId.Value, row.ConversationId), out var name))
+            {
+                displayName = name;
+            }
+            else
+            {
+                displayName = row.SenderNameSnapshot;
+            }
+
             attachments.TryGetValue(row.Id, out var attachmentList);
             return new MessageItem(
                 row.Id,
@@ -329,8 +356,45 @@ public sealed class ConversationRepository
                 row.IsRecalled,
                 row.IsSystem,
                 row.TimestampMs,
-                attachmentList as IReadOnlyList<AttachmentInfo> ?? Array.Empty<AttachmentInfo>());
+                attachmentList as IReadOnlyList<AttachmentInfo> ?? Array.Empty<AttachmentInfo>(),
+                customAvatarPath,
+                accountLabel);
         }).ToList();
+    }
+
+    internal static Dictionary<long, ContactSenderInfo> LoadContacts(SqliteConnection connection, IReadOnlyCollection<long> senderIds)
+    {
+        var result = new Dictionary<long, ContactSenderInfo>();
+        if (senderIds.Count == 0)
+        {
+            return result;
+        }
+
+        var ids = senderIds.Distinct().ToList();
+        var placeholders = string.Join(",", ids.Select((_, i) => $"@cs{i}"));
+        using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT cs.sender_id, c.display_name, c.custom_avatar_path, cs.account_label
+            FROM contact_senders cs
+            JOIN contacts c ON c.id = cs.contact_id
+            WHERE cs.sender_id IN ({placeholders})
+            """;
+        for (var i = 0; i < ids.Count; i++)
+        {
+            command.Parameters.AddWithValue($"@cs{i}", ids[i]);
+        }
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var senderId = reader.GetInt64(0);
+            var displayName = reader.GetString(1);
+            var customAvatarPath = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var accountLabel = reader.IsDBNull(3) ? null : reader.GetString(3);
+            result[senderId] = new ContactSenderInfo(displayName, customAvatarPath, accountLabel);
+        }
+
+        return result;
     }
 
     internal static Dictionary<long, List<AttachmentInfo>> LoadAttachments(SqliteConnection connection, IReadOnlyCollection<long> messageIds)

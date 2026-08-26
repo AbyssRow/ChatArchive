@@ -12,4 +12,6 @@ public sealed record MessageItem(
     bool IsRecalled,
     bool IsSystem,
     long TimestampMs,
-    IReadOnlyList<AttachmentInfo> Attachments);
+    IReadOnlyList<AttachmentInfo> Attachments,
+    string? CustomAvatarPath = null,
+    string? AccountLabel = null);

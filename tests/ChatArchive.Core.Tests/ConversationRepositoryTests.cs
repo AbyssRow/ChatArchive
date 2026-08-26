@@ -122,6 +122,43 @@ public class ConversationRepositoryTests : IDisposable
         Assert.Equal(1, list[0].MissingMediaCount);
     }
 
+    [Fact]
+    public void Hydrate_loads_contact_display_name_avatar_and_account_label()
+    {
+        var contactRepo = new ContactRepository(_archive.Db);
+        var s1 = _archive.AddSender("s1_native", "小张", platform: "wechat");
+        var s2 = _archive.AddSender("s2_native", "李四", platform: "wechat");
+
+        var contactId = contactRepo.CreateContact("张总", "avatars/zhang.png", initialBindings: new[]
+        {
+            (s1, (string?)"工作号", true)
+        });
+
+        var conv = TestArchive.AddConversation(_archive.Open(), "c1", "会话");
+        var m1 = _archive.AddMessage(conv, s1, 1_700_000_000_000, "你好啊", senderName: "小张快照");
+        var m2 = _archive.AddMessage(conv, s2, 1_700_000_001_000, "收到", senderName: "李四快照");
+
+        var page = _repository.ListMessages(conv);
+        Assert.Equal(2, page.Items.Count);
+
+        var item1 = page.Items.First(i => i.Id == m1);
+        Assert.Equal("张总", item1.SenderName);
+        Assert.Equal("avatars/zhang.png", item1.CustomAvatarPath);
+        Assert.Equal("工作号", item1.AccountLabel);
+
+        var item2 = page.Items.First(i => i.Id == m2);
+        Assert.Equal("李四快照", item2.SenderName);
+        Assert.Null(item2.CustomAvatarPath);
+        Assert.Null(item2.AccountLabel);
+
+        var context = _repository.GetMessageContext(m1, radius: 2);
+        Assert.NotNull(context);
+        var ctxItem1 = context!.Messages.First(i => i.Id == m1);
+        Assert.Equal("张总", ctxItem1.SenderName);
+        Assert.Equal("avatars/zhang.png", ctxItem1.CustomAvatarPath);
+        Assert.Equal("工作号", ctxItem1.AccountLabel);
+    }
+
     private static long mediaObjectId(long id) => id;
 
     public void Dispose() => _archive.Dispose();
