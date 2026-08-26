@@ -1080,6 +1080,215 @@ public class ParserTests : IDisposable
         Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(pathValidJsonl) && d.Platform == "wechat");
     }
 
+    [Fact]
+    public void ChatHtmlExportFormat_ParsesEmbeddedHtmlExports_Correctly()
+    {
+        var format = new ChatHtmlExportFormat();
+
+        // 1. WeFlow HTML
+        var weflowHtml = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <title>WeFlow Export</title>
+              <script id="__WEFLOW_DATA__" type="application/json">{"session":{"wxid":"wxid_weflow_html","displayName":"微信HTML会话","type":"私聊"},"messages":[{"localId":1,"createTime":1700000000,"type":"文本消息","localType":1,"content":"WeFlow HTML内容","isSend":0,"senderUsername":"wxid_weflow_html","senderDisplayName":"微信HTML会话"}]}</script>
+            </head>
+            <body><div id="root"></div></body>
+            </html>
+            """;
+        var weflowPath = Path.Combine(_dir, "weflow_export.html");
+        File.WriteAllText(weflowPath, weflowHtml);
+
+        Assert.True(format.Matches(weflowPath));
+        using (var exportFile = format.Open(weflowPath))
+        {
+            Assert.Equal("wechat", exportFile.Conversation.Platform);
+            Assert.Equal("wxid_weflow_html", exportFile.Conversation.NativeId);
+            Assert.Equal("微信HTML会话", exportFile.Conversation.Title);
+            Assert.Equal("private", exportFile.Conversation.Kind);
+
+            var messages = exportFile.EnumerateMessages().ToList();
+            Assert.Single(messages);
+            Assert.Equal("1", messages[0].LocalId);
+            Assert.Equal("WeFlow HTML内容", messages[0].Content);
+            Assert.Equal("text", messages[0].MessageType);
+            Assert.Equal("incoming", messages[0].Direction);
+        }
+
+        // 2. CipherTalk HTML
+        var cipherTalkHtml = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <title>CipherTalk Export</title>
+              <script id="ciphertalk-data" type="application/json">{"exportInfo":{"version":"0.0.2","generator":"CipherTalk","format":"detailed-json"},"session":{"wxid":"wxid_ciphertalk_html","displayName":"CipherTalk HTML会话","type":"私聊"},"messages":[{"localId":2,"createTime":1700000000,"type":"文本消息","localType":1,"content":"CipherTalk HTML内容","isSend":0,"senderUsername":"wxid_ciphertalk_html","senderDisplayName":"CipherTalk HTML会话"}]}</script>
+            </head>
+            <body><div id="app"></div></body>
+            </html>
+            """;
+        var cipherTalkPath = Path.Combine(_dir, "ciphertalk_export.html");
+        File.WriteAllText(cipherTalkPath, cipherTalkHtml);
+
+        Assert.True(format.Matches(cipherTalkPath));
+        using (var exportFile = format.Open(cipherTalkPath))
+        {
+            Assert.Equal("wechat", exportFile.Conversation.Platform);
+            Assert.Equal("wxid_ciphertalk_html", exportFile.Conversation.NativeId);
+            Assert.Equal("CipherTalk HTML会话", exportFile.Conversation.Title);
+            Assert.Equal("private", exportFile.Conversation.Kind);
+
+            var messages = exportFile.EnumerateMessages().ToList();
+            Assert.Single(messages);
+            Assert.Equal("2", messages[0].LocalId);
+            Assert.Equal("CipherTalk HTML内容", messages[0].Content);
+            Assert.Equal("text", messages[0].MessageType);
+        }
+
+        // 3. QQ Chat Exporter Modern HTML
+        var qqHtml = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <title>QQ Export</title>
+              <script id="__DATA__" type="application/json">{"metadata":{"name":"QQChatExporter","version":"0.2.0"},"chatInfo":{"selfUid":"u_self","peerUid":"u_qq_html","name":"QQ HTML会话","type":"private"},"messages":[{"id":"q_html_1","timestamp":1700000000,"sender":{"uid":"u_qq_html","name":"QQ好友"},"content":{"type":"text","text":"QQ HTML内容"}}]}</script>
+            </head>
+            <body></body>
+            </html>
+            """;
+        var qqPath = Path.Combine(_dir, "qq_export.html");
+        File.WriteAllText(qqPath, qqHtml);
+
+        Assert.True(format.Matches(qqPath));
+        using (var exportFile = format.Open(qqPath))
+        {
+            Assert.Equal("qq", exportFile.Conversation.Platform);
+            Assert.Equal("u_qq_html", exportFile.Conversation.NativeId);
+            Assert.Equal("QQ HTML会话", exportFile.Conversation.Title);
+            Assert.Equal("private", exportFile.Conversation.Kind);
+
+            var messages = exportFile.EnumerateMessages().ToList();
+            Assert.Single(messages);
+            Assert.Equal("q_html_1", messages[0].NativeId);
+            Assert.Equal("QQ HTML内容", messages[0].Content);
+            Assert.Equal("text", messages[0].MessageType);
+        }
+
+        // 4. Window assignment HTML variants (e.g. window.__CIPHERTALK_DATA__, window.__CHAT_DATA__, window.__DATA__)
+        var windowVarHtml = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <script>
+                window.__CIPHERTALK_DATA__ = {
+                  "exportInfo": {"generator": "CipherTalk", "format": "detailed-json"},
+                  "session": {"wxid": "wxid_window", "displayName": "Window会话", "type": "私聊"},
+                  "messages": [{"localId": 10, "createTime": 1700000000, "type": "文本消息", "localType": 1, "content": "JS变量内容", "isSend": 1}]
+                };
+              </script>
+            </head>
+            <body></body>
+            </html>
+            """;
+        var windowVarPath = Path.Combine(_dir, "window_export.htm");
+        File.WriteAllText(windowVarPath, windowVarHtml);
+
+        Assert.True(format.Matches(windowVarPath));
+        using (var exportFile = format.Open(windowVarPath))
+        {
+            Assert.Equal("wxid_window", exportFile.Conversation.NativeId);
+            var messages = exportFile.EnumerateMessages().ToList();
+            Assert.Single(messages);
+            Assert.Equal("JS变量内容", messages[0].Content);
+            Assert.Equal("outgoing", messages[0].Direction);
+        }
+
+        // 5. Plain HTML without embedded chat data
+        var plainHtml = "<html><body><h1>Hello World</h1><p>Not a chat export</p></body></html>";
+        var plainPath = Path.Combine(_dir, "plain.html");
+        File.WriteAllText(plainPath, plainHtml);
+
+        Assert.False(format.Matches(plainPath));
+    }
+
+    [Fact]
+    public void HtmlDataExtractor_ExtractsAndRoutes_ChatLabAndEdgeCases_Correctly()
+    {
+        // 1. ChatLab HTML export
+        var chatlabHtml = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <script id="__DATA__" type="application/json">
+              {
+                "chatlab": {"version": "0.0.2", "generator": "ChatLab"},
+                "meta": {"name": "ChatLab HTML群", "platform": "wechat", "type": "group", "groupId": "cl_html@chatroom"},
+                "members": [{"platformId": "wxid_cl_user", "accountName": "小李"}],
+                "messages": [{"id": "cl_m1", "sender": "wxid_cl_user", "timestamp": 1700000000, "type": 0, "content": "ChatLab 内容"}]
+              }
+              </script>
+            </head>
+            <body></body>
+            </html>
+            """;
+        var chatlabPath = Path.Combine(_dir, "chatlab_export.html");
+        File.WriteAllText(chatlabPath, chatlabHtml);
+
+        var format = new ChatHtmlExportFormat();
+        Assert.True(format.Matches(chatlabPath));
+
+        using (var exportFile = format.Open(chatlabPath))
+        {
+            Assert.Equal("wechat", exportFile.Conversation.Platform);
+            Assert.Equal("cl_html@chatroom", exportFile.Conversation.NativeId);
+            Assert.Equal("group", exportFile.Conversation.Kind);
+            Assert.Equal("ChatLab HTML群", exportFile.Conversation.Title);
+
+            var messages = exportFile.EnumerateMessages().ToList();
+            Assert.Single(messages);
+            Assert.Equal("cl_m1", messages[0].NativeId);
+            Assert.Equal("ChatLab 内容", messages[0].Content);
+        }
+
+        // 2. Window variable with strings containing brackets and semicolons
+        var trickyVarHtml = """
+            <script>
+              window.__CHAT_DATA__ = {
+                "metadata": {"name": "QQChatExporter", "version": "0.2.0"},
+                "chatInfo": {"selfUid": "u1", "peerUid": "u2", "name": "特异字符串测试", "type": "private"},
+                "messages": [
+                  {"id": "q1", "timestamp": 1700000000, "sender": {"uid": "u2", "name": "Friend"}, "content": {"type": "text", "text": "代码: if (x) { a = 1; }; [测试]"}}
+                ]
+              };
+            </script>
+            """;
+        var trickyPath = Path.Combine(_dir, "tricky.html");
+        File.WriteAllText(trickyPath, trickyVarHtml);
+
+        Assert.True(format.Matches(trickyPath));
+        using (var exportFile = format.Open(trickyPath))
+        {
+            Assert.Equal("u2", exportFile.Conversation.NativeId);
+            var messages = exportFile.EnumerateMessages().ToList();
+            Assert.Single(messages);
+            Assert.Equal("代码: if (x) { a = 1; }; [测试]", messages[0].Content);
+        }
+
+        // 3. Discovery detects HTML files
+        var discovered = ImportDiscovery.Discover(new[] { _dir });
+        Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(chatlabPath) && d.Platform == "html");
+        Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(trickyPath) && d.Platform == "html");
+        Assert.DoesNotContain(discovered, d => d.FilePath == Path.GetFullPath(Path.Combine(_dir, "plain.html")));
+
+        // 4. Invalid JSON payload throws ImportFormatException
+        var badJsonHtml = "<script id=\"__WEFLOW_DATA__\" type=\"application/json\">{ invalid json }</script>";
+        var badPath = Path.Combine(_dir, "bad.html");
+        File.WriteAllText(badPath, badJsonHtml);
+        Assert.Throws<ImportFormatException>(() => format.Open(badPath));
+    }
+
     public void Dispose()
     {
         try

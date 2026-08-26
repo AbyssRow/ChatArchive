@@ -99,6 +99,14 @@ public static class ImportDiscovery
                         || string.Equals(
                             Path.GetExtension(file),
                             ".jsonl",
+                            StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(
+                            Path.GetExtension(file),
+                            ".html",
+                            StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(
+                            Path.GetExtension(file),
+                            ".htm",
                             StringComparison.OrdinalIgnoreCase))
                     {
                         Consider(file);

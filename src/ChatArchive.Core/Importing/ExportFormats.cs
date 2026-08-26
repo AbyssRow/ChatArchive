@@ -646,6 +646,36 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
     }
 }
 
+/// <summary>HTML 内嵌数据导出格式适配器 (WeFlow / CipherTalk / QQChatExporter / ChatLab)。</summary>
+public sealed class ChatHtmlExportFormat : IChatExportFormat
+{
+    public string Platform => "html";
+
+    public bool Matches(string filePath)
+    {
+        var ext = Path.GetExtension(filePath);
+        if (!string.Equals(ext, ".html", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(ext, ".htm", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        try
+        {
+            return HtmlDataExtractor.HasEmbeddedPayload(filePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ImportFormatException or System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        return HtmlDataExtractor.ExtractAndRoute(filePath, cancellationToken);
+    }
+}
+
 /// <summary>注册表：新增导出格式时在此追加实例。</summary>
 public static class ExportFormats
 {
@@ -666,6 +696,7 @@ public static class ExportFormats
                     new CipherTalkDetailedJsonFormat(),
                     new ChatLabJsonExportFormat(),
                     new ChatLabJsonlExportFormat(),
+                    new ChatHtmlExportFormat(),
                 };
             }
         }
