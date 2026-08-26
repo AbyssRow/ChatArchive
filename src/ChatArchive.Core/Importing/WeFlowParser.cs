@@ -43,6 +43,7 @@ public static class WeFlowParser
     {
         "quotedContent", "linkTitle", "linkUrl", "appMsgDesc",
         "appMsgSourceName", "locationLabel", "locationPoiname",
+        "musicTitle", "finderTitle",
     };
 
     static WeFlowParser()
@@ -55,10 +56,12 @@ public static class WeFlowParser
             ("[语音]", "audio"),
             ("[表情包]", "emoji"),
             ("[转账]", "transfer"),
+            ("[位置]", "location"),
         };
     }
 
-    public static (ParsedConversation Conversation, string? SelfSender) ReadConversation(JsonDocument document, string filePath)
+    public static (ParsedConversation Conversation, string? SelfSender) ReadConversation(
+        JsonDocument document, string filePath, IReadOnlyDictionary<int, JsonObject>? senders = null)
     {
         if (document.RootElement.ValueKind != JsonValueKind.Object
             || !document.RootElement.TryGetProperty("session", out var sessionElement)
@@ -69,11 +72,38 @@ public static class WeFlowParser
         }
 
         var conversation = ReadConversation(parsedSession, filePath);
+        senders ??= ExtractSenders(document);
         var selfSender = InferSelfSender(
             MessagesOf(document).Select(ElementToObject),
             conversation,
-            CancellationToken.None);
+            CancellationToken.None,
+            senders);
         return (conversation, selfSender);
+    }
+
+    internal static IReadOnlyDictionary<int, JsonObject>? ExtractSenders(JsonDocument document)
+    {
+        if (document.RootElement.ValueKind == JsonValueKind.Object
+            && document.RootElement.TryGetProperty("senders", out var sendersElement)
+            && sendersElement.ValueKind == JsonValueKind.Array)
+        {
+            var dict = new Dictionary<int, JsonObject>();
+            foreach (var item in sendersElement.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.Object && JsonSerializer.Deserialize<JsonObject>(item.GetRawText()) is { } sObj)
+                {
+                    var id = ImportText.AsLong(sObj["senderID"]) ?? ImportText.AsLong(sObj["senderId"]);
+                    if (id.HasValue)
+                    {
+                        dict[(int)id.Value] = sObj;
+                    }
+                }
+            }
+
+            return dict;
+        }
+
+        return null;
     }
 
     internal static ParsedConversation ReadConversation(JsonObject session, string filePath)
@@ -103,7 +133,8 @@ public static class WeFlowParser
     internal static string? InferSelfSender(
         IEnumerable<JsonObject> messages,
         ParsedConversation conversation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<int, JsonObject>? senders = null)
     {
         // 统计自己发送消息的 senderUsername，取出现最多的作为本账号标识。
         var counter = new List<string>();
@@ -117,6 +148,15 @@ public static class WeFlowParser
             }
 
             var sender = ImportText.Clean(TryGetRaw(raw, "senderUsername"));
+            if (sender.Length == 0 && senders != null)
+            {
+                var senderId = ImportText.AsLong(raw["senderID"]) ?? ImportText.AsLong(raw["senderId"]);
+                if (senderId.HasValue && senders.TryGetValue((int)senderId.Value, out var senderObj))
+                {
+                    sender = ImportText.Clean(TryGetRaw(senderObj, "wxid"));
+                }
+            }
+
             if (sender.Length == 0)
             {
                 continue;
@@ -153,13 +193,18 @@ public static class WeFlowParser
     }
 
     public static IEnumerable<ParsedMessage> IterateMessages(
-        JsonDocument document, ParsedConversation conversation, string? selfSender, string filePath)
+        JsonDocument document,
+        ParsedConversation conversation,
+        string? selfSender,
+        string filePath,
+        IReadOnlyDictionary<int, JsonObject>? senders = null)
     {
+        senders ??= ExtractSenders(document);
         var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
         var index = 0;
         foreach (var rawElement in MessagesOf(document))
         {
-            yield return ParseMessage(ElementToObject(rawElement), index++, conversation, selfSender, exportRoot);
+            yield return ParseMessage(ElementToObject(rawElement), index++, conversation, selfSender, exportRoot, senders);
         }
     }
 
@@ -167,26 +212,63 @@ public static class WeFlowParser
         IEnumerable<JsonObject> messages,
         ParsedConversation conversation,
         string? selfSender,
-        string filePath)
+        string filePath,
+        IReadOnlyDictionary<int, JsonObject>? senders = null)
     {
         var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
         var index = 0;
         foreach (var raw in messages)
         {
-            yield return ParseMessage(raw, index++, conversation, selfSender, exportRoot);
+            yield return ParseMessage(raw, index++, conversation, selfSender, exportRoot, senders);
         }
     }
 
     private static ParsedMessage ParseMessage(
-        JsonObject raw, int index, ParsedConversation conversation, string? selfSender, string exportRoot)
+        JsonObject raw,
+        int index,
+        ParsedConversation conversation,
+        string? selfSender,
+        string exportRoot,
+        IReadOnlyDictionary<int, JsonObject>? senders = null)
     {
         var rawContent = OrEmpty(ImportText.Clean(TryGetRaw(raw, "content")), "[空消息]");
         var isSend = AsBool(raw["isSend"]);
         var exportedSender = ImportText.Clean(TryGetRaw(raw, "senderUsername"));
+        var exportedName = ImportText.Clean(TryGetRaw(raw, "senderDisplayName"));
+
+        JsonObject? senderObj = null;
+        var senderId = ImportText.AsLong(raw["senderID"]) ?? ImportText.AsLong(raw["senderId"]);
+        if (senderId.HasValue && senders != null && senders.TryGetValue((int)senderId.Value, out var foundSender))
+        {
+            senderObj = foundSender;
+        }
+
+        string? senderWxid = null;
+        string? senderDisplayName = null;
+        string? senderNickname = null;
+        string? senderGroupNickname = null;
+
+        if (senderObj != null)
+        {
+            senderWxid = ImportText.Clean(TryGetRaw(senderObj, "wxid"));
+            senderDisplayName = ImportText.Clean(TryGetRaw(senderObj, "displayName"));
+            senderNickname = ImportText.Clean(TryGetRaw(senderObj, "nickname"));
+            senderGroupNickname = ImportText.Clean(TryGetRaw(senderObj, "groupNickname"));
+        }
+
+        if (exportedSender.Length == 0 && !string.IsNullOrEmpty(senderWxid))
+        {
+            exportedSender = senderWxid;
+        }
+
+        if (exportedName.Length == 0 && senderObj != null)
+        {
+            exportedName = FirstNonEmpty(senderDisplayName ?? "", senderGroupNickname ?? "", senderNickname ?? "");
+        }
+
         var senderNative = isSend && !string.IsNullOrEmpty(selfSender)
             ? selfSender!
             : exportedSender.Length > 0 ? exportedSender : "unknown";
-        var exportedName = ImportText.Clean(TryGetRaw(raw, "senderDisplayName"));
         var senderName = isSend
             ? "我"
             : FirstNonEmpty(
@@ -205,8 +287,8 @@ public static class WeFlowParser
         var (content, xmlMessageType, xmlSearchValues) = NormalizeContent(rawContent, exportedSender);
         var messageType = xmlMessageType ?? previousMessageType;
 
-        var mediaReference = MediaReference(exportRoot, exportedType, mediaType, content);
-        var previousMediaReference = MediaReference(exportRoot, exportedType, mediaType, rawContent);
+        var mediaReference = MediaReference(exportRoot, exportedType, mediaType, content, conversation.Title);
+        var previousMediaReference = MediaReference(exportRoot, exportedType, mediaType, rawContent, conversation.Title);
 
         var attachments = new List<ParsedAttachment>();
         string? sourcePath = null;
@@ -311,6 +393,28 @@ public static class WeFlowParser
             legacyHashes.Add(CanonicalJson.HashHex(clone));
         }
 
+        var senderAliases = new List<string>();
+        if (isSend)
+        {
+            AddUnique(senderAliases, senderName);
+            AddUnique(senderAliases, senderNative);
+        }
+        else if (senderObj != null)
+        {
+            AddUnique(senderAliases, senderName);
+            if (!string.IsNullOrEmpty(exportedName)) AddUnique(senderAliases, exportedName);
+            if (!string.IsNullOrEmpty(senderDisplayName)) AddUnique(senderAliases, senderDisplayName);
+            if (!string.IsNullOrEmpty(senderGroupNickname)) AddUnique(senderAliases, senderGroupNickname);
+            if (!string.IsNullOrEmpty(senderNickname)) AddUnique(senderAliases, senderNickname);
+            AddUnique(senderAliases, senderNative);
+        }
+        else
+        {
+            senderAliases.Add(senderName);
+            senderAliases.Add(exportedName);
+            senderAliases.Add(senderNative);
+        }
+
         return new ParsedMessage(
             NativeId: nativeId,
             LocalId: localId,
@@ -318,9 +422,7 @@ public static class WeFlowParser
             Sequence: null,
             SenderNativeId: senderNative,
             SenderName: senderName,
-            SenderAliases: isSend
-                ? new[] { senderName, senderNative }
-                : new[] { senderName, exportedName, senderNative },
+            SenderAliases: senderAliases,
             Direction: direction,
             MessageType: messageType,
             MediaType: mediaType ?? (attachments.Count > 0 ? messageType : null),
@@ -362,6 +464,7 @@ public static class WeFlowParser
             case 34: return "audio";
             case 43: return "video";
             case 47: return "emoji";
+            case 48: return "location";
             case 10000: return "system";
         }
 
@@ -519,7 +622,7 @@ public static class WeFlowParser
 
     internal sealed record MediaRef(string? Filename, string? DeclaredPath, string? SourcePath);
 
-    internal static MediaRef? MediaReference(string exportRoot, string exportedType, string? mediaType, string content)
+    internal static MediaRef? MediaReference(string exportRoot, string exportedType, string? mediaType, string content, string? sessionTitle = null)
     {
         if (exportedType == "文件消息" && content.StartsWith("[文件]", StringComparison.Ordinal))
         {
@@ -541,7 +644,7 @@ public static class WeFlowParser
             }
 
             var declaredPath = $"media/files/{extension}/{filename}";
-            return new MediaRef(filename, declaredPath, ImportText.SafeExportPath(exportRoot, declaredPath));
+            return new MediaRef(filename, declaredPath, ImportText.SafeResolveMedia(exportRoot, declaredPath, sessionTitle));
         }
 
         if (!string.IsNullOrEmpty(mediaType)
@@ -556,7 +659,7 @@ public static class WeFlowParser
                 filename = null;
             }
 
-            return new MediaRef(filename, content, ImportText.SafeExportPath(exportRoot, content));
+            return new MediaRef(filename, content, ImportText.SafeResolveMedia(exportRoot, content, sessionTitle));
         }
 
         return null;

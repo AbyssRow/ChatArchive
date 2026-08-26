@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using ChatArchive.Core.IO;
 
 namespace ChatArchive.Core.Importing;
@@ -73,8 +74,6 @@ public sealed class QqExportFormat : IChatExportFormat
 /// <summary>WeFlow 格式适配器。</summary>
 public sealed class WeFlowExportFormat : IChatExportFormat
 {
-    private const string SupportedVersion = "1.0.3";
-
     public string Platform => "wechat";
 
     public bool Matches(string filePath)
@@ -92,30 +91,39 @@ public sealed class WeFlowExportFormat : IChatExportFormat
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
         var metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "weflow", cancellationToken);
-        var version = ImportText.Clean(metadata["version"]);
-        if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
-        {
-            throw new ImportFormatException(
-                filePath,
-                $"不支持的 WeFlow 导出版本 {Display(version)}；支持版本 {SupportedVersion}，请先更新 ChatArchive");
-        }
 
         var session = ChunkedJsonReader.ReadObjectProperty(filePath, "session", cancellationToken);
         var conversation = WeFlowParser.ReadConversation(session, filePath);
+
+        Dictionary<int, JsonObject>? senders = null;
+        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "senders" }, cancellationToken))
+        {
+            senders = new Dictionary<int, JsonObject>();
+            foreach (var senderObj in ChunkedJsonReader.EnumerateObjectArray(filePath, "senders", cancellationToken))
+            {
+                var id = ImportText.AsLong(senderObj["senderID"]) ?? ImportText.AsLong(senderObj["senderId"]);
+                if (id.HasValue)
+                {
+                    senders[(int)id.Value] = senderObj;
+                }
+            }
+        }
+
         var selfSender = WeFlowParser.InferSelfSender(
             ChunkedJsonReader.EnumerateObjectArray(filePath, "messages", cancellationToken),
             conversation,
-            cancellationToken);
+            cancellationToken,
+            senders);
+
         return new ExportFile(
             conversation,
             token => WeFlowParser.IterateMessages(
                 ChunkedJsonReader.EnumerateObjectArray(filePath, "messages", token),
                 conversation,
                 selfSender,
-                filePath));
+                filePath,
+                senders));
     }
-
-    private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
 }
 
 /// <summary>注册表：新增导出格式时在此追加实例。</summary>

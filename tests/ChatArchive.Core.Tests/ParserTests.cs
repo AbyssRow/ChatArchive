@@ -373,10 +373,123 @@ public class ParserTests : IDisposable
         Assert.Contains("QQChatExporter", error.Message);
     }
 
+    private const string ArkmeJsonFixture = """
+        {
+          "weflow": {
+            "version": "1.0.9",
+            "format": "arkme-json"
+          },
+          "session": {
+            "wxid": "group_123@chatroom",
+            "type": "群聊",
+            "remark": "项目讨论群"
+          },
+          "senders": [
+            {
+              "senderID": 1,
+              "wxid": "wxid_self",
+              "displayName": "",
+              "nickname": "我自己的昵称",
+              "groupNickname": "群名片-我"
+            },
+            {
+              "senderID": 2,
+              "wxid": "wxid_alice",
+              "displayName": "爱丽丝备注",
+              "nickname": "Alice",
+              "groupNickname": "群名片-Alice"
+            },
+            {
+              "senderID": 3,
+              "wxid": "wxid_bob",
+              "displayName": "",
+              "nickname": "Bob",
+              "groupNickname": "群名片-Bob"
+            }
+          ],
+          "messages": [
+            {
+              "localId": 1,
+              "createTime": 1700000000,
+              "isSend": true,
+              "senderID": 1,
+              "type": "文本消息",
+              "localType": 1,
+              "content": "大家好"
+            },
+            {
+              "localId": 2,
+              "createTime": 1700000060,
+              "isSend": false,
+              "senderID": 2,
+              "type": "文本消息",
+              "localType": 1,
+              "content": "收到"
+            },
+            {
+              "localId": 3,
+              "createTime": 1700000120,
+              "isSend": false,
+              "senderID": 3,
+              "type": "位置消息",
+              "localType": 48,
+              "content": "[位置] 东方明珠",
+              "locationPoiname": "东方明珠广播电视塔",
+              "locationLabel": "上海市浦东新区世纪大道1号"
+            }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void WeFlowExportFormat_ParsesArkmeJson_And_RelaxedVersions()
+    {
+        var path = Path.Combine(_dir, "arkme_weflow.json");
+        File.WriteAllText(path, ArkmeJsonFixture);
+
+        var format = new WeFlowExportFormat();
+        Assert.True(format.Matches(path));
+
+        using var exportFile = format.Open(path);
+        Assert.Equal("wechat", format.Platform);
+        Assert.Equal("group_123@chatroom", exportFile.Conversation.NativeId);
+        Assert.Equal("group", exportFile.Conversation.Kind);
+        Assert.Equal("项目讨论群", exportFile.Conversation.Title);
+
+        var messages = exportFile.EnumerateMessages().ToList();
+        Assert.Equal(3, messages.Count);
+
+        var msg1 = messages[0];
+        Assert.Equal("wxid_self", msg1.SenderNativeId);
+        Assert.Equal("我", msg1.SenderName);
+        Assert.Equal("outgoing", msg1.Direction);
+        Assert.Equal("text", msg1.MessageType);
+        Assert.Equal("大家好", msg1.Content);
+        Assert.Contains("大家好", msg1.SearchText);
+
+        var msg2 = messages[1];
+        Assert.Equal("wxid_alice", msg2.SenderNativeId);
+        Assert.Equal("爱丽丝备注", msg2.SenderName);
+        Assert.Equal("incoming", msg2.Direction);
+        Assert.Equal("text", msg2.MessageType);
+        Assert.Equal("收到", msg2.Content);
+        Assert.Contains("收到", msg2.SearchText);
+
+        var msg3 = messages[2];
+        Assert.Equal("wxid_bob", msg3.SenderNativeId);
+        Assert.Equal("群名片-Bob", msg3.SenderName);
+        Assert.Equal("incoming", msg3.Direction);
+        Assert.Equal("location", msg3.MessageType);
+        Assert.Equal("[位置] 东方明珠", msg3.Content);
+        Assert.Contains("东方明珠广播电视塔", msg3.SearchText);
+        Assert.Contains("上海市浦东新区世纪大道1号", msg3.SearchText);
+    }
+
     [Theory]
     [InlineData("1.0.4")]
+    [InlineData("1.0.9")]
     [InlineData("")]
-    public void Weflow_rejects_unverified_export_versions(string version)
+    public void Weflow_accepts_relaxed_export_versions(string version)
     {
         var metadata = version.Length == 0 ? "{}" : $$"""{"version":"{{version}}"}""";
         var path = Path.Combine(_dir, "wx-version.json");
@@ -386,8 +499,21 @@ public class ParserTests : IDisposable
              "messages":[]}
             """);
 
+        using var exportFile = new WeFlowExportFormat().Open(path);
+        Assert.Equal("p", exportFile.Conversation.NativeId);
+    }
+
+    [Fact]
+    public void Weflow_rejects_missing_weflow()
+    {
+        var path = Path.Combine(_dir, "wx-missing-weflow.json");
+        File.WriteAllText(path, """
+            {"session":{"wxid":"p","type":"私聊"},
+             "messages":[]}
+            """);
+
         var error = Assert.Throws<ImportFormatException>(() => new WeFlowExportFormat().Open(path));
-        Assert.Contains("支持版本 1.0.3", error.Message);
+        Assert.Contains("weflow", error.Message);
     }
 
     [Fact]
