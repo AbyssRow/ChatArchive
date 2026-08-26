@@ -1,13 +1,35 @@
+# Build & Output
 bin/
 obj/
+artifacts/
+publish/
+TestResults/
+*.log
+
+# User & IDE configs
 *.user
 *.suo
 .vs/
 .vscode/
 .idea/
 .worktrees/
-artifacts/
-publish/
-TestResults/
-*.log
+
+# Data & Database (Protect privacy)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 /input/
+data/
+archive/
+
+# Secrets & Local Configs
+.env
+.env.*
+*.local.json
+appsettings.local.json
+
+# OS files
+Thumbs.db
+.DS_Store
