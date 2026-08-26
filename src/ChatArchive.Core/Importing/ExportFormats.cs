@@ -676,6 +676,82 @@ public sealed class ChatHtmlExportFormat : IChatExportFormat
     }
 }
 
+/// <summary>WeClone CSV 格式适配器。</summary>
+public sealed class WeCloneCsvExportFormat : IChatExportFormat
+{
+    public string Platform => "wechat";
+
+    public bool Matches(string filePath)
+    {
+        return WeCloneCsvParser.Matches(filePath);
+    }
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        var conversation = WeCloneCsvParser.ReadConversation(filePath);
+        return new ExportFile(
+            conversation,
+            token => WeCloneCsvParser.IterateMessages(filePath, conversation, token));
+    }
+}
+
+/// <summary>Markdown 格式聊天记录适配器。</summary>
+public sealed class ChatMarkdownExportFormat : IChatExportFormat
+{
+    public string Platform => "text";
+
+    public bool Matches(string filePath)
+    {
+        return MarkdownChatParser.Matches(filePath);
+    }
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        var conversation = MarkdownChatParser.ReadConversation(filePath);
+        return new ExportFile(
+            conversation,
+            token => MarkdownChatParser.IterateMessages(filePath, conversation, token));
+    }
+}
+
+/// <summary>TXT 纯文本格式聊天记录适配器。</summary>
+public sealed class ChatTextExportFormat : IChatExportFormat
+{
+    public string Platform => "text";
+
+    public bool Matches(string filePath)
+    {
+        return TextChatParser.Matches(filePath);
+    }
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        var conversation = TextChatParser.ReadConversation(filePath);
+        return new ExportFile(
+            conversation,
+            token => TextChatParser.IterateMessages(filePath, conversation, token));
+    }
+}
+
+/// <summary>SQL 脚本转储格式适配器。</summary>
+public sealed class ChatSqlExportFormat : IChatExportFormat
+{
+    public string Platform => "sql";
+
+    public bool Matches(string filePath)
+    {
+        return SqlScriptParser.Matches(filePath);
+    }
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        var conversation = SqlScriptParser.ReadConversation(filePath);
+        return new ExportFile(
+            conversation,
+            token => SqlScriptParser.IterateMessages(filePath, conversation, token));
+    }
+}
+
 /// <summary>注册表：新增导出格式时在此追加实例。</summary>
 public static class ExportFormats
 {
@@ -697,6 +773,10 @@ public static class ExportFormats
                     new ChatLabJsonExportFormat(),
                     new ChatLabJsonlExportFormat(),
                     new ChatHtmlExportFormat(),
+                    new WeCloneCsvExportFormat(),
+                    new ChatMarkdownExportFormat(),
+                    new ChatTextExportFormat(),
+                    new ChatSqlExportFormat(),
                 };
             }
         }

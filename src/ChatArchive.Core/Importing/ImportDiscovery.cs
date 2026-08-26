@@ -92,22 +92,15 @@ public static class ImportDiscovery
 
                 foreach (var file in files)
                 {
-                    if (string.Equals(
-                            Path.GetExtension(file),
-                            ".json",
-                            StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(
-                            Path.GetExtension(file),
-                            ".jsonl",
-                            StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(
-                            Path.GetExtension(file),
-                            ".html",
-                            StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(
-                            Path.GetExtension(file),
-                            ".htm",
-                            StringComparison.OrdinalIgnoreCase))
+                    var ext = Path.GetExtension(file);
+                    if (string.Equals(ext, ".json", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(ext, ".jsonl", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(ext, ".html", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(ext, ".htm", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(ext, ".csv", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(ext, ".md", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(ext, ".txt", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(ext, ".sql", StringComparison.OrdinalIgnoreCase))
                     {
                         Consider(file);
                     }

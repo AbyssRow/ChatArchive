@@ -1289,6 +1289,204 @@ public class ParserTests : IDisposable
         Assert.Throws<ImportFormatException>(() => format.Open(badPath));
     }
 
+    [Fact]
+    public void WeCloneCsvExportFormat_ParsesCsvExports_Correctly()
+    {
+        var csv = """
+            is_sender,sender_name,talker,time,type,content
+            0,好友小王,wxid_wang,2023-11-15 10:00:00,1,你好呀
+            1,我,wxid_self,2023-11-15 10:00:05,1,在的
+            """;
+        var path = Path.Combine(_dir, "weclone.csv");
+        File.WriteAllText(path, csv);
+
+        var format = new WeCloneCsvExportFormat();
+        Assert.True(format.Matches(path));
+
+        using var exportFile = format.Open(path);
+        Assert.Equal("wechat", exportFile.Conversation.Platform);
+        Assert.Equal("wxid_wang", exportFile.Conversation.NativeId);
+        Assert.Equal("好友小王", exportFile.Conversation.Title);
+
+        var messages = exportFile.EnumerateMessages().ToList();
+        Assert.Equal(2, messages.Count);
+
+        var msg0 = messages[0];
+        Assert.Equal("incoming", msg0.Direction);
+        Assert.Equal("好友小王", msg0.SenderName);
+        Assert.Equal("你好呀", msg0.Content);
+        Assert.Equal("text", msg0.MessageType);
+        Assert.False(string.IsNullOrEmpty(msg0.PayloadHash));
+        Assert.False(string.IsNullOrEmpty(msg0.SemanticHash));
+        var expectedTs0 = DateTimeOffset.Parse("2023-11-15 10:00:00").ToUnixTimeMilliseconds();
+        Assert.Equal(expectedTs0, msg0.TimestampMs);
+
+        var msg1 = messages[1];
+        Assert.Equal("outgoing", msg1.Direction);
+        Assert.Equal("我", msg1.SenderName);
+        Assert.Equal("在的", msg1.Content);
+        Assert.Equal("text", msg1.MessageType);
+        var expectedTs1 = DateTimeOffset.Parse("2023-11-15 10:00:05").ToUnixTimeMilliseconds();
+        Assert.Equal(expectedTs1, msg1.TimestampMs);
+    }
+
+    [Fact]
+    public void ChatTextAndMarkdownExportFormats_ParsePlainExports_Correctly()
+    {
+        // 1. Markdown
+        var md = """
+            # 聊天记录: 技术交流群
+            [2023-11-15 10:00:00] 张三: 早上好
+            [2023-11-15 10:00:10] 李四: 大家早
+            """;
+        var mdPath = Path.Combine(_dir, "chat.md");
+        File.WriteAllText(mdPath, md);
+
+        var mdFormat = new ChatMarkdownExportFormat();
+        Assert.True(mdFormat.Matches(mdPath));
+
+        using (var exportFile = mdFormat.Open(mdPath))
+        {
+            Assert.Equal("text", exportFile.Conversation.Platform);
+            Assert.Equal("技术交流群", exportFile.Conversation.Title);
+            Assert.Equal("group", exportFile.Conversation.Kind);
+
+            var messages = exportFile.EnumerateMessages().ToList();
+            Assert.Equal(2, messages.Count);
+
+            Assert.Equal("张三", messages[0].SenderName);
+            Assert.Equal("早上好", messages[0].Content);
+            Assert.Equal(DateTimeOffset.Parse("2023-11-15 10:00:00").ToUnixTimeMilliseconds(), messages[0].TimestampMs);
+
+            Assert.Equal("李四", messages[1].SenderName);
+            Assert.Equal("大家早", messages[1].Content);
+            Assert.Equal(DateTimeOffset.Parse("2023-11-15 10:00:10").ToUnixTimeMilliseconds(), messages[1].TimestampMs);
+        }
+
+        // 2. TXT
+        var txt = """
+            2023-11-15 10:00:00 张三:
+            早上好
+            2023-11-15 10:00:10 李四:
+            大家早
+            """;
+        var txtPath = Path.Combine(_dir, "chat.txt");
+        File.WriteAllText(txtPath, txt);
+
+        var txtFormat = new ChatTextExportFormat();
+        Assert.True(txtFormat.Matches(txtPath));
+
+        using (var exportFile = txtFormat.Open(txtPath))
+        {
+            Assert.Equal("text", exportFile.Conversation.Platform);
+            var messages = exportFile.EnumerateMessages().ToList();
+            Assert.Equal(2, messages.Count);
+
+            Assert.Equal("张三", messages[0].SenderName);
+            Assert.Equal("早上好", messages[0].Content);
+            Assert.Equal(DateTimeOffset.Parse("2023-11-15 10:00:00").ToUnixTimeMilliseconds(), messages[0].TimestampMs);
+
+            Assert.Equal("李四", messages[1].SenderName);
+            Assert.Equal("大家早", messages[1].Content);
+            Assert.Equal(DateTimeOffset.Parse("2023-11-15 10:00:10").ToUnixTimeMilliseconds(), messages[1].TimestampMs);
+        }
+    }
+
+    [Fact]
+    public void ChatSqlExportFormat_ParsesSqlDumps_Correctly()
+    {
+        var sql = """
+            CREATE TABLE messages (id TEXT, talker TEXT, create_time INTEGER, is_send INTEGER, type INTEGER, content TEXT);
+            INSERT INTO messages (id, talker, create_time, is_send, type, content) VALUES ('m_1', 'wxid_bob', 1700000000, 0, 1, '测试SQL内容');
+            """;
+        var sqlPath = Path.Combine(_dir, "dump.sql");
+        File.WriteAllText(sqlPath, sql);
+
+        var format = new ChatSqlExportFormat();
+        Assert.True(format.Matches(sqlPath));
+
+        using var exportFile = format.Open(sqlPath);
+        Assert.Equal("sql", exportFile.Conversation.Platform);
+        Assert.Equal("wxid_bob", exportFile.Conversation.NativeId);
+
+        var messages = exportFile.EnumerateMessages().ToList();
+        var msg = Assert.Single(messages);
+        Assert.Equal("m_1", msg.NativeId);
+        Assert.Equal("wxid_bob", msg.SenderNativeId);
+        Assert.Equal(1700000000000L, msg.TimestampMs);
+        Assert.Equal("incoming", msg.Direction);
+        Assert.Equal("text", msg.MessageType);
+        Assert.Equal("测试SQL内容", msg.Content);
+    }
+
+    [Fact]
+    public void DelimitedAndSqlParsers_EdgeCases_AndDiscovery()
+    {
+        // 1. WeClone CSV with quoted newlines, commas, and group chat
+        var complexCsv = """
+            is_sender,sender_name,talker,time,type,content
+            0,"群友""小李"", 华东",group123@chatroom,2023-11-15 12:30:00,1,"第一行,
+            第二行 ""带引号""
+            第三行"
+            1,我,group123@chatroom,2023-11-15 12:31:00,10000,你撤回了一条消息
+            """;
+        var csvPath = Path.Combine(_dir, "complex.csv");
+        File.WriteAllText(csvPath, complexCsv);
+
+        var csvFormat = new WeCloneCsvExportFormat();
+        Assert.True(csvFormat.Matches(csvPath));
+        using (var exportFile = csvFormat.Open(csvPath))
+        {
+            Assert.Equal("group", exportFile.Conversation.Kind);
+            Assert.Equal("group123@chatroom", exportFile.Conversation.NativeId);
+            Assert.Equal("群友\"小李\", 华东", exportFile.Conversation.Title);
+
+            var msgs = exportFile.EnumerateMessages().ToList();
+            Assert.Equal(2, msgs.Count);
+
+            Assert.Contains("第二行 \"带引号\"", msgs[0].Content);
+            Assert.Equal("incoming", msgs[0].Direction);
+
+            Assert.True(msgs[1].IsSystem);
+            Assert.True(msgs[1].IsRecalled);
+            Assert.Equal("system", msgs[1].Direction);
+        }
+
+        // 2. Multi-row SQL script with comments and escapes
+        var multiSql = """
+            -- SQL Chat Export Dump
+            /* Multiple line comments */
+            CREATE TABLE IF NOT EXISTS `chat_messages` (`msg_id` TEXT, `talker` TEXT, `createtime` INTEGER, `issend` INTEGER, `msg_type` INTEGER, `msg_content` TEXT);
+            INSERT INTO `chat_messages` (`msg_id`, `talker`, `createtime`, `issend`, `msg_type`, `msg_content`) VALUES
+              ('s_1', 'wxid_alice', 1700000100, 1, 1, 'Hello Alice! I\'m here.'),
+              ('s_2', 'wxid_alice', 1700000110, 0, 1, 'Hi! Welcome back.');
+            """;
+        var sqlPath = Path.Combine(_dir, "multi.sql");
+        File.WriteAllText(sqlPath, multiSql);
+
+        var sqlFormat = new ChatSqlExportFormat();
+        Assert.True(sqlFormat.Matches(sqlPath));
+        using (var exportFile = sqlFormat.Open(sqlPath))
+        {
+            Assert.Equal("wxid_alice", exportFile.Conversation.NativeId);
+            var msgs = exportFile.EnumerateMessages().ToList();
+            Assert.Equal(2, msgs.Count);
+
+            Assert.Equal("s_1", msgs[0].NativeId);
+            Assert.Equal("outgoing", msgs[0].Direction);
+            Assert.Equal("Hello Alice! I'm here.", msgs[0].Content);
+
+            Assert.Equal("s_2", msgs[1].NativeId);
+            Assert.Equal("incoming", msgs[1].Direction);
+            Assert.Equal("Hi! Welcome back.", msgs[1].Content);
+        }
+
+        // 3. Discovery finds CSV, MD, TXT, and SQL exports
+        var discovered = ImportDiscovery.Discover(new[] { _dir });
+        Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(csvPath) && d.Platform == "wechat");
+        Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(sqlPath) && d.Platform == "sql");
+    }
+
     public void Dispose()
     {
         try
