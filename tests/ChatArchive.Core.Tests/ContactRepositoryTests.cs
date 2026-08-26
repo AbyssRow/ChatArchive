@@ -248,8 +248,7 @@ public sealed class ContactRepositoryTests : IDisposable
         _repository.BindSender(contact2, sender, accountLabel: "新标签", isPrimary: true, forceRebind: true);
 
         var detail1 = _repository.GetContactDetail(contact1);
-        Assert.NotNull(detail1);
-        Assert.Empty(detail1.Senders);
+        Assert.Null(detail1); // Empty contact1 without notes/avatars is automatically cleaned up
 
         var detail2 = _repository.GetContactDetail(contact2);
         Assert.NotNull(detail2);
@@ -483,5 +482,67 @@ public sealed class ContactRepositoryTests : IDisposable
         var secondRun = _repository.AutoPopulateContactsFromSenders();
         Assert.Equal(0, secondRun);
     }
+
+    [Fact]
+    public void MergeContacts_TransfersSenderAndRemovesEmptyOldContact()
+    {
+        // Contact 1 (Alice on WeChat)
+        var s1 = _archive.AddSender("wx_alice", "Alice WeChat", platform: "wechat");
+        var c1 = _repository.CreateContact("Alice", initialBindings: new[] { (s1, (string?)null, true) });
+
+        // Contact 2 (Alice on QQ)
+        var s2 = _archive.AddSender("qq_alice", "Alice QQ", platform: "qq");
+        var c2 = _repository.CreateContact("Alice QQ", initialBindings: new[] { (s2, (string?)null, true) });
+
+        // Initially both contacts exist
+        var initialList = _repository.ListContacts();
+        Assert.Equal(2, initialList.Count);
+
+        // Merge s2 into c1 (forceRebind = true)
+        _repository.BindSender(c1, s2, accountLabel: "QQ大号", isPrimary: false, forceRebind: true);
+
+        // Verify c1 now has both senders
+        var c1Detail = _repository.GetContactDetail(c1);
+        Assert.NotNull(c1Detail);
+        Assert.Equal(2, c1Detail.Senders.Count);
+        Assert.Contains(c1Detail.Senders, s => s.SenderId == s1);
+        Assert.Contains(c1Detail.Senders, s => s.SenderId == s2 && s.AccountLabel == "QQ大号");
+
+        // Verify c2 was automatically cleaned up (0 senders remaining)
+        var c2Detail = _repository.GetContactDetail(c2);
+        Assert.Null(c2Detail);
+
+        // ListContacts should now show ONLY 1 merged contact!
+        var updatedList = _repository.ListContacts();
+        Assert.Single(updatedList);
+        Assert.Equal(c1, updatedList[0].Id);
+    }
+
+    [Fact]
+    public void ListAvailableSendersToBind_ReturnsAllBindableSendersWithCurrentBoundContact()
+    {
+        var s1 = _archive.AddSender("wx_user1", "User 1", platform: "wechat");
+        var s2 = _archive.AddSender("qq_user2", "User 2", platform: "qq");
+        var s3 = _archive.AddSender("wx_user3", "User 3", platform: "wechat");
+
+        var c1 = _repository.CreateContact("Contact One", initialBindings: new[] { (s1, (string?)null, true) });
+        var c2 = _repository.CreateContact("Contact Two", initialBindings: new[] { (s2, (string?)null, true) });
+
+        // When c1 queries available senders to bind:
+        // - s1 is already bound to c1 -> excluded
+        // - s2 is bound to c2 -> included with BoundContactName = "Contact Two"
+        // - s3 is unbound -> included with BoundContactName = null
+        var available = _repository.ListAvailableSendersToBind(c1);
+        Assert.Equal(2, available.Count);
+
+        var s2Entry = available.FirstOrDefault(s => s.SenderId == s2);
+        Assert.NotNull(s2Entry);
+        Assert.Equal("Contact Two", s2Entry.BoundContactName);
+
+        var s3Entry = available.FirstOrDefault(s => s.SenderId == s3);
+        Assert.NotNull(s3Entry);
+        Assert.Null(s3Entry.BoundContactName);
+    }
 }
+
 

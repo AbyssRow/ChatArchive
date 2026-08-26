@@ -141,6 +141,20 @@ public sealed class ContactRepository
             cmd.ExecuteNonQuery();
         }
 
+        using (var cleanCmd = connection.CreateCommand())
+        {
+            cleanCmd.Transaction = transaction;
+            cleanCmd.CommandText = """
+                DELETE FROM contacts
+                WHERE id = @cid
+                  AND NOT EXISTS (SELECT 1 FROM contact_senders WHERE contact_id = @cid)
+                  AND (note IS NULL OR note = '')
+                  AND (custom_avatar_path IS NULL OR custom_avatar_path = '');
+                """;
+            cleanCmd.Parameters.AddWithValue("@cid", contactId);
+            cleanCmd.ExecuteNonQuery();
+        }
+
         transaction.Commit();
     }
 
@@ -335,7 +349,17 @@ public sealed class ContactRepository
         using var connection = _db.OpenConnection();
         using var cmd = connection.CreateCommand();
 
-        var where = new List<string>();
+        var where = new List<string>
+        {
+            """
+            (
+                EXISTS (SELECT 1 FROM contact_senders cs WHERE cs.contact_id = c.id)
+                OR (c.note IS NOT NULL AND c.note != '')
+                OR (c.custom_avatar_path IS NOT NULL AND c.custom_avatar_path != '')
+            )
+            """
+        };
+
         if (!string.IsNullOrWhiteSpace(keyword))
         {
             var trimmed = keyword.Trim();
@@ -362,7 +386,7 @@ public sealed class ContactRepository
             cmd.Parameters.AddWithValue("@query", $"%{trimmed}%");
         }
 
-        var whereClause = where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : string.Empty;
+        var whereClause = "WHERE " + string.Join(" AND ", where);
 
         cmd.CommandText = $"""
             SELECT c.id, c.display_name, c.custom_avatar_path, c.note,
@@ -391,6 +415,95 @@ public sealed class ContactRepository
         }
 
         return list;
+    }
+
+    public IReadOnlyList<BoundSenderInfo> ListAvailableSendersToBind(long currentContactId, string? keyword = null)
+    {
+        using var connection = _db.OpenConnection();
+        using var cmd = connection.CreateCommand();
+
+        var where = new List<string>
+        {
+            "s.is_self = 0",
+            "NOT EXISTS (SELECT 1 FROM contact_senders cs WHERE cs.sender_id = s.id AND cs.contact_id = @currentCid)"
+        };
+        cmd.Parameters.AddWithValue("@currentCid", currentContactId);
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var trimmed = keyword.Trim();
+            where.Add("""
+                (
+                    s.current_name LIKE @query
+                    OR s.native_id LIKE @query
+                    OR c.display_name LIKE @query
+                    OR cs.account_label LIKE @query
+                    OR EXISTS (
+                        SELECT 1 FROM sender_aliases sa
+                        WHERE sa.sender_id = s.id AND sa.alias LIKE @query
+                    )
+                )
+                """);
+            cmd.Parameters.AddWithValue("@query", $"%{trimmed}%");
+        }
+
+        var whereClause = "WHERE " + string.Join(" AND ", where);
+
+        cmd.CommandText = $"""
+            SELECT s.id, s.platform, s.native_id, s.current_name,
+                   c.display_name AS bound_contact_name, cs.account_label,
+                   (SELECT COUNT(*) FROM messages m WHERE m.sender_id = s.id) AS msg_count
+            FROM senders s
+            LEFT JOIN contact_senders cs ON cs.sender_id = s.id
+            LEFT JOIN contacts c ON c.id = cs.contact_id
+            {whereClause}
+            ORDER BY msg_count DESC, s.id DESC;
+            """;
+
+        var rawList = new List<(long SenderId, string Platform, string NativeId, string CurrentName, string? BoundContactName, string? AccountLabel, long MessageCount)>();
+        using (var reader = cmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                rawList.Add((
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.GetInt64(6)
+                ));
+            }
+        }
+
+        var result = new List<BoundSenderInfo>(rawList.Count);
+        foreach (var raw in rawList)
+        {
+            var aliases = LoadAliases(connection, raw.SenderId);
+            var resolvedNames = SenderDisplayName.Resolve(
+                connection,
+                new[] { (SenderId: raw.SenderId, (long?)null) });
+            var originalName = resolvedNames.TryGetValue((raw.SenderId, null), out var dn)
+                ? dn
+                : raw.CurrentName;
+
+            var qqNumber = raw.Platform == "qq" ? SenderRepository.FindQqNumber(connection, raw.SenderId, aliases) : null;
+
+            result.Add(new BoundSenderInfo(
+                raw.SenderId,
+                raw.Platform,
+                raw.NativeId,
+                qqNumber,
+                originalName,
+                raw.AccountLabel,
+                false,
+                raw.MessageCount,
+                raw.BoundContactName
+            ));
+        }
+
+        return result;
     }
 
     public IReadOnlyList<BoundSenderInfo> ListUnboundSenders(string? keyword = null)
@@ -531,6 +644,20 @@ public sealed class ContactRepository
                     cmd.CommandText = "DELETE FROM contact_senders WHERE sender_id = @sid;";
                     cmd.Parameters.AddWithValue("@sid", senderId);
                     cmd.ExecuteNonQuery();
+                }
+
+                using (var cleanCmd = connection.CreateCommand())
+                {
+                    cleanCmd.Transaction = transaction;
+                    cleanCmd.CommandText = """
+                        DELETE FROM contacts
+                        WHERE id = @oldCid
+                          AND NOT EXISTS (SELECT 1 FROM contact_senders WHERE contact_id = @oldCid)
+                          AND (note IS NULL OR note = '')
+                          AND (custom_avatar_path IS NULL OR custom_avatar_path = '');
+                        """;
+                    cleanCmd.Parameters.AddWithValue("@oldCid", existingContactId.Value);
+                    cleanCmd.ExecuteNonQuery();
                 }
 
                 using (var cmd = connection.CreateCommand())

@@ -120,7 +120,7 @@ public partial class ContactDetailViewModel : ObservableObject
         long senderId,
         string? accountLabel = null,
         bool isPrimary = false,
-        bool forceRebind = false)
+        bool forceRebind = true)
     {
         await Task.Run(() => _contactRepository.BindSender(
             ContactId,
@@ -171,6 +171,6 @@ public partial class ContactDetailViewModel : ObservableObject
 
     public async Task<IReadOnlyList<BoundSenderInfo>> LoadAvailableSendersAsync(string? keyword = null)
     {
-        return await Task.Run(() => _contactRepository.ListUnboundSenders(keyword));
+        return await Task.Run(() => _contactRepository.ListAvailableSendersToBind(ContactId, keyword));
     }
 }

@@ -771,9 +771,12 @@ public sealed partial class MainWindow : Window
                 {
                     var plat = item.Platform == "qq" ? "QQ" : "微信";
                     var idStr = item.Platform == "qq" ? (item.QQNumber ?? item.NativeId) : item.NativeId;
+                    var status = !string.IsNullOrEmpty(item.BoundContactName)
+                        ? $" [当前归属: {item.BoundContactName} (合并转移)]"
+                        : " [未绑定]";
                     list.Items.Add(new ListViewItem
                     {
-                        Content = $"{plat}: {item.OriginalName} ({idStr}) - {item.MessageCount:N0}条",
+                        Content = $"{plat}: {item.OriginalName} ({idStr}) - {item.MessageCount:N0}条{status}",
                         Tag = item,
                     });
                 }
@@ -794,15 +797,15 @@ public sealed partial class MainWindow : Window
         var panel = new StackPanel
         {
             Spacing = 10,
-            MinWidth = 420,
+            MinWidth = 460,
             Children = { searchBox, list, labelBox, primaryCheck },
         };
 
         var dialog = new ContentDialog
         {
             XamlRoot = Content.XamlRoot,
-            Title = "绑定账号",
-            PrimaryButtonText = "绑定",
+            Title = "绑定/合并账号",
+            PrimaryButtonText = "确认绑定",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Primary,
             Content = panel,
@@ -817,7 +820,8 @@ public sealed partial class MainWindow : Window
                     await detail.BindSenderAsync(
                         selectedSender.SenderId,
                         string.IsNullOrWhiteSpace(labelBox.Text) ? null : labelBox.Text.Trim(),
-                        primaryCheck.IsChecked == true);
+                        primaryCheck.IsChecked == true,
+                        forceRebind: true);
                     await _contacts.LoadAsync();
                     UpdateContactDetailView();
                 }
