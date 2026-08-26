@@ -9,6 +9,7 @@ TestResults/
 # Docs & AI Assistant Scratch
 docs/
 .superpowers/
+AGENT.md
 
 # User & IDE configs
 *.user
