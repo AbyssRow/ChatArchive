@@ -617,6 +617,234 @@ public class ParserTests : IDisposable
         Assert.Null(ImportText.SafeResolveMedia(exportRoot, "../../outside.png"));
     }
 
+    // ---------- CipherTalk ----------
+
+    private const string CipherTalkDetailedJsonFixture = """
+        {
+          "exportInfo": {
+            "version": "0.0.2",
+            "exportedAt": 1700000000,
+            "generator": "CipherTalk",
+            "format": "detailed-json"
+          },
+          "session": {
+            "wxid": "wxid_friend",
+            "displayName": "好友A",
+            "type": "私聊",
+            "platform": "wechat",
+            "isGroup": false,
+            "ownerId": "wxid_self"
+          },
+          "messages": [
+            {
+              "localId": 101,
+              "platformMessageId": "987654321",
+              "createTime": 1700000000,
+              "type": "文本消息",
+              "localType": 1,
+              "content": "你好呀",
+              "isSend": 0,
+              "senderUsername": "wxid_friend",
+              "senderDisplayName": "好友A"
+            },
+            {
+              "localId": 102,
+              "createTime": 1700000005,
+              "type": "图片消息",
+              "localType": 3,
+              "content": "[图片] images/20231115/102_abc.jpg",
+              "isSend": 1,
+              "senderUsername": "wxid_self",
+              "senderDisplayName": "我"
+            }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void CipherTalkParser_ParsesDetailedJson_Correctly()
+    {
+        var path = Path.Combine(_dir, "ciphertalk_detailed.json");
+        File.WriteAllText(path, CipherTalkDetailedJsonFixture);
+
+        var format = new CipherTalkDetailedJsonFormat();
+        Assert.True(format.Matches(path));
+
+        using var exportFile = format.Open(path);
+        Assert.Equal("wechat", exportFile.Conversation.Platform);
+        Assert.Equal("wxid_friend", exportFile.Conversation.NativeId);
+        Assert.Equal("private", exportFile.Conversation.Kind);
+        Assert.Equal("好友A", exportFile.Conversation.Title);
+
+        var messages = exportFile.EnumerateMessages().ToList();
+        Assert.Equal(2, messages.Count);
+
+        var msg1 = messages[0];
+        Assert.Equal("incoming", msg1.Direction);
+        Assert.Equal("text", msg1.MessageType);
+        Assert.Equal("你好呀", msg1.Content);
+        Assert.Equal("wxid_friend", msg1.SenderNativeId);
+        Assert.Equal("好友A", msg1.SenderName);
+
+        var msg2 = messages[1];
+        Assert.Equal("outgoing", msg2.Direction);
+        Assert.Equal("image", msg2.MessageType);
+        Assert.Equal("[图片] images/20231115/102_abc.jpg", msg2.Content);
+        Assert.Equal("wxid_self", msg2.SenderNativeId);
+        Assert.Equal("我", msg2.SenderName);
+        var attachment = Assert.Single(msg2.Attachments);
+        Assert.Equal("image", attachment.Kind);
+        Assert.Equal("102_abc.jpg", attachment.Filename);
+        Assert.Equal("images/20231115/102_abc.jpg", attachment.DeclaredPath);
+    }
+
+    [Fact]
+    public void CipherTalkParser_ParsesGroupAndQuotesAndSpecialTypes()
+    {
+        var json = """
+            {
+              "exportInfo": {
+                "version": "0.0.2",
+                "generator": "CipherTalk",
+                "format": "detailed-json"
+              },
+              "session": {
+                "wxid": "12345678@chatroom",
+                "displayName": "技术讨论群",
+                "type": "群聊",
+                "platform": "wechat",
+                "isGroup": true,
+                "ownerId": "wxid_self"
+              },
+              "messages": [
+                {
+                  "localId": 201,
+                  "platformMessageId": "msg_quote_1",
+                  "createTime": 1700000100,
+                  "type": "引用消息",
+                  "localType": 1,
+                  "content": "收到你的方案",
+                  "isSend": 0,
+                  "senderUsername": "wxid_bob",
+                  "senderDisplayName": "Bob",
+                  "quote": {
+                    "sourceMessageId": "987654321",
+                    "content": "你好呀"
+                  }
+                },
+                {
+                  "localId": 202,
+                  "createTime": 1700000200,
+                  "type": "语音消息",
+                  "localType": 34,
+                  "content": "[语音] voices/20231115/202.amr",
+                  "voiceDuration": 5.2,
+                  "isSend": 1,
+                  "senderUsername": "wxid_self",
+                  "senderDisplayName": "我"
+                },
+                {
+                  "localId": 203,
+                  "createTime": 1700000300,
+                  "type": "转账消息",
+                  "localType": 2000,
+                  "content": "[微信转账] 给你转账 100 元",
+                  "isSend": 0,
+                  "senderUsername": "wxid_bob",
+                  "senderDisplayName": "Bob"
+                },
+                {
+                  "localId": 204,
+                  "createTime": 1700000400,
+                  "type": "系统消息",
+                  "localType": 10000,
+                  "content": "对方撤回了一条消息",
+                  "isSend": 0,
+                  "senderUsername": "wxid_bob"
+                }
+              ]
+            }
+            """;
+
+        var path = Path.Combine(_dir, "ciphertalk_group.json");
+        File.WriteAllText(path, json);
+
+        var format = new CipherTalkDetailedJsonFormat();
+        Assert.True(format.Matches(path));
+
+        using var exportFile = format.Open(path);
+        Assert.Equal("wechat", exportFile.Conversation.Platform);
+        Assert.Equal("wxid_self", exportFile.Conversation.AccountId);
+        Assert.Equal("12345678@chatroom", exportFile.Conversation.NativeId);
+        Assert.Equal("group", exportFile.Conversation.Kind);
+        Assert.Equal("技术讨论群", exportFile.Conversation.Title);
+
+        var messages = exportFile.EnumerateMessages().ToList();
+        Assert.Equal(4, messages.Count);
+
+        var quoteMsg = messages[0];
+        Assert.Equal("987654321", quoteMsg.ReplyToNativeId);
+        Assert.Equal("incoming", quoteMsg.Direction);
+        Assert.Contains("你好呀", quoteMsg.SearchText);
+
+        var audioMsg = messages[1];
+        Assert.Equal("audio", audioMsg.MessageType);
+        Assert.Equal("outgoing", audioMsg.Direction);
+        var audioAttachment = Assert.Single(audioMsg.Attachments);
+        Assert.Equal("audio", audioAttachment.Kind);
+        Assert.Equal(5.2, audioAttachment.Duration);
+
+        var transferMsg = messages[2];
+        Assert.Equal("transfer", transferMsg.MessageType);
+
+        var systemMsg = messages[3];
+        Assert.Equal("system", systemMsg.MessageType);
+        Assert.True(systemMsg.IsSystem);
+        Assert.True(systemMsg.IsRecalled);
+        Assert.Equal("system", systemMsg.Direction);
+    }
+
+    [Fact]
+    public void CipherTalkDetailedJsonFormat_Discovery_And_StreamingHashes()
+    {
+        var path = Path.Combine(_dir, "ciphertalk_stream.json");
+        File.WriteAllText(path, CipherTalkDetailedJsonFixture);
+
+        using var document = ImportText.ParseDocument(path);
+        var (conversation, selfSender) = CipherTalkParser.ReadConversation(document, path);
+        var expected = CipherTalkParser.IterateMessages(document, conversation, selfSender, path)
+            .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
+            .ToList();
+
+        using var exportFile = new CipherTalkDetailedJsonFormat().Open(path);
+        var actual = exportFile.EnumerateMessages()
+            .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
+            .ToList();
+
+        Assert.Equal(expected, actual);
+
+        var discovered = ImportDiscovery.Discover(new[] { _dir });
+        Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(path) && d.Platform == "wechat");
+    }
+
+    [Fact]
+    public void CipherTalkDetailedJsonFormat_Rejects_Invalid_Generator_And_Format()
+    {
+        var invalid = """
+            {
+              "exportInfo": { "generator": "Unknown", "format": "unknown" },
+              "session": { "wxid": "wxid_1" },
+              "messages": []
+            }
+            """;
+        var path = Path.Combine(_dir, "ciphertalk_invalid.json");
+        File.WriteAllText(path, invalid);
+
+        var format = new CipherTalkDetailedJsonFormat();
+        Assert.False(format.Matches(path));
+        Assert.Throws<ImportFormatException>(() => format.Open(path));
+    }
+
     public void Dispose()
     {
         try

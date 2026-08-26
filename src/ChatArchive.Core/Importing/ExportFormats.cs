@@ -126,6 +126,71 @@ public sealed class WeFlowExportFormat : IChatExportFormat
     }
 }
 
+/// <summary>CipherTalk Detailed JSON 格式适配器。</summary>
+public sealed class CipherTalkDetailedJsonFormat : IChatExportFormat
+{
+    public string Platform => "wechat";
+
+    public bool Matches(string filePath)
+    {
+        if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!ChunkedJsonReader.ContainsRootProperties(
+                filePath,
+                new[] { "exportInfo", "session", "messages" }))
+        {
+            return false;
+        }
+
+        var exportInfo = ChunkedJsonReader.ReadObjectProperty(filePath, "exportInfo");
+        var generator = ImportText.Clean(exportInfo["generator"]);
+        var format = ImportText.Clean(exportInfo["format"]);
+        return string.Equals(generator, "CipherTalk", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(format, "detailed-json", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        var exportInfo = ChunkedJsonReader.ReadObjectProperty(filePath, "exportInfo", cancellationToken);
+        var generator = ImportText.Clean(exportInfo["generator"]);
+        var format = ImportText.Clean(exportInfo["format"]);
+        if (!string.Equals(generator, "CipherTalk", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(format, "detailed-json", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ImportFormatException(
+                filePath,
+                $"CipherTalk 导出器标识无效：generator={generator}, format={format}");
+        }
+
+        var session = ChunkedJsonReader.ReadObjectProperty(filePath, "session", cancellationToken);
+        var conversation = CipherTalkParser.ReadConversation(session, filePath);
+
+        var ownerId = ImportText.Clean(session["ownerId"]);
+        if (string.IsNullOrEmpty(ownerId))
+        {
+            ownerId = ImportText.Clean(session["ownerID"]);
+        }
+
+        var selfSender = !string.IsNullOrEmpty(ownerId)
+            ? ownerId
+            : CipherTalkParser.InferSelfSender(
+                ChunkedJsonReader.EnumerateObjectArray(filePath, "messages", cancellationToken),
+                conversation,
+                cancellationToken);
+
+        return new ExportFile(
+            conversation,
+            token => CipherTalkParser.IterateMessages(
+                ChunkedJsonReader.EnumerateObjectArray(filePath, "messages", token),
+                conversation,
+                selfSender,
+                filePath));
+    }
+}
+
 /// <summary>注册表：新增导出格式时在此追加实例。</summary>
 public static class ExportFormats
 {
@@ -142,6 +207,7 @@ public static class ExportFormats
                 {
                     new QqExportFormat(),
                     new WeFlowExportFormat(),
+                    new CipherTalkDetailedJsonFormat(),
                 };
             }
         }
