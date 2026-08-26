@@ -31,8 +31,6 @@ ChatArchive 采用插件化适配器与自动嗅探引擎，支持通过软件�
 | **纯文本 / 文档** | 通用导出 | Markdown (`.md`) / TXT (`.txt`) | 正则流式时间戳与发送者识别、多行合并与会话标题提取。 |
 | **数据库转储** | WeFlow / CipherTalk | SQL 脚本 (`.sql`) | 流式提取 `INSERT INTO messages` 语句，还原会话与消息字段。 |
 
-> 📖 **完整规范与逆向 Schema 参考**：请参阅 [`docs/EXPORT_FORMATS_SPEC.md`](docs/EXPORT_FORMATS_SPEC.md)。
-
 ---
 
 ## 🛠️ 技术栈
