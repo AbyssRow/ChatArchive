@@ -34,6 +34,7 @@
             <local:BoolToVisibilityConverter x:Key="BoolToVis" />
             <local:NullToCollapsedConverter x:Key="NullToCollapsed" />
             <local:PathToImageSourceConverter x:Key="PathToImageSource" />
+            <local:CountTextConverter x:Key="CountText" />
 
             <DataTemplate x:Key="ConversationTemplate">
                 <Grid Padding="12,8" ColumnSpacing="10">
