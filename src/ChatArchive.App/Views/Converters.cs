@@ -109,10 +109,13 @@ public sealed class PlatformLabelConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, string language)
     {
-        return value is string p ? p switch
+        return value is string p ? p.ToLowerInvariant() switch
         {
             "qq" => "QQ",
             "wechat" => "微信",
+            "text" => "文本/MD",
+            "html" => "网页",
+            "sql" => "SQL",
             _ => string.Empty,
         } : string.Empty;
     }

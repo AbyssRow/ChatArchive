@@ -217,11 +217,14 @@
                              TextChanged="ConversationQuery_TextChanged" />
                     <ComboBox x:Name="FilterCombo" Grid.Row="1" SelectedIndex="0" HorizontalAlignment="Stretch"
                               SelectionChanged="Filter_SelectionChanged">
-                        <ComboBoxItem Content="全部" Tag="" />
+                        <ComboBoxItem Content="全部会话" Tag="" />
                         <ComboBoxItem Content="QQ 私聊" Tag="qq|private" />
                         <ComboBoxItem Content="QQ 群聊" Tag="qq|group" />
                         <ComboBoxItem Content="微信私聊" Tag="wechat|private" />
                         <ComboBoxItem Content="微信群聊" Tag="wechat|group" />
+                        <ComboBoxItem Content="文本 / Markdown" Tag="text|private" />
+                        <ComboBoxItem Content="网页 / HTML" Tag="html|private" />
+                        <ComboBoxItem Content="SQL 导出" Tag="sql|private" />
                     </ComboBox>
                     <ListView x:Name="ConversationListControl" Grid.Row="2"
                               ItemTemplate="{StaticResource ConversationTemplate}"
@@ -473,6 +476,9 @@
                             <ComboBoxItem Content="全平台" Tag="" />
                             <ComboBoxItem Content="QQ" Tag="qq" />
                             <ComboBoxItem Content="微信" Tag="wechat" />
+                            <ComboBoxItem Content="文本/MD" Tag="text" />
+                            <ComboBoxItem Content="网页" Tag="html" />
+                            <ComboBoxItem Content="SQL" Tag="sql" />
                         </ComboBox>
                         <ComboBox x:Name="SearchKindCombo" SelectedIndex="0" MinWidth="110"
                                   SelectionChanged="SearchFilter_Changed">

@@ -228,6 +228,34 @@ public sealed partial class MainWindow : Window
         var progress = new ProgressBar { IsIndeterminate = true, Visibility = Visibility.Collapsed };
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.85 };
 
+        var addFile = new Button { Content = "添加文件…" };
+        addFile.Click += async (_, _) =>
+        {
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.ComputerFolder,
+                ViewMode = PickerViewMode.List,
+            };
+            picker.FileTypeFilter.Add(".json");
+            picker.FileTypeFilter.Add(".jsonl");
+            picker.FileTypeFilter.Add(".html");
+            picker.FileTypeFilter.Add(".htm");
+            picker.FileTypeFilter.Add(".csv");
+            picker.FileTypeFilter.Add(".md");
+            picker.FileTypeFilter.Add(".txt");
+            picker.FileTypeFilter.Add(".sql");
+            picker.FileTypeFilter.Add("*");
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+            var files = await picker.PickMultipleFilesAsync();
+            if (files is not null)
+            {
+                foreach (var file in files)
+                {
+                    _import.AddPath(file.Path);
+                }
+            }
+        };
+
         var addFolder = new Button { Content = "添加文件夹…" };
         addFolder.Click += async (_, _) =>
         {
@@ -253,6 +281,7 @@ public sealed partial class MainWindow : Window
             status.Text = _import.StatusText;
             progress.IsIndeterminate = _import.IsRunning;
             progress.Visibility = _import.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+            addFile.IsEnabled = !_import.IsRunning;
             addFolder.IsEnabled = !_import.IsRunning;
             clear.IsEnabled = !_import.IsRunning;
             start.IsEnabled = !_import.IsRunning && _import.Paths.Count > 0;
@@ -260,13 +289,15 @@ public sealed partial class MainWindow : Window
 
         pathsPanel.Children.Add(new TextBlock
         {
-            Text = "选择包含 QQ Chat Exporter / WeFlow 导出 JSON 的文件夹；\n多次导出日期可重叠，应用会按内容自动去重。",
+            Text = "支持导入以下软件与格式的导出文件或文件夹（自动递归嗅探与深度解析）：\n• 微信：WeFlow (JSON / ArkMe)、CipherTalk (Detailed JSON)、WeClone (CSV)\n• QQ：QQ Chat Exporter (单文件 JSON / 分块 JSONL manifest)\n• 通用：ChatLab (JSON / JSONL)、内嵌 HTML、Markdown、TXT、SQL 脚本\n• 支持多次重叠导入，应用会按内容哈希与消息原生 ID 自动去重。",
             TextWrapping = TextWrapping.Wrap,
-            Opacity = 0.75,
+            Opacity = 0.85,
             FontSize = 12,
+            LineHeight = 18,
         });
         pathsPanel.Children.Add(list);
         var buttonsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        buttonsRow.Children.Add(addFile);
         buttonsRow.Children.Add(addFolder);
         buttonsRow.Children.Add(clear);
         buttonsRow.Children.Add(start);

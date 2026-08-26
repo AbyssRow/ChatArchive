@@ -18,7 +18,7 @@ public partial class ImportViewModel : ObservableObject
     public partial bool IsRunning { get; set; }
 
     [ObservableProperty]
-    public partial string StatusText { get; set; } = "选择包含导出 JSON 的文件夹，可以多选后一次导入。";
+    public partial string StatusText { get; set; } = "选择包含聊天记录导出文件（JSON/JSONL/HTML/CSV/MD/TXT/SQL）或文件夹，支持多选后一次导入。";
 
     [ObservableProperty]
     public partial double ProgressValue { get; set; }

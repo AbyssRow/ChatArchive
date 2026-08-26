@@ -32,6 +32,9 @@ public sealed class ConverterTests
         var converter = new PlatformLabelConverter();
         Assert.Equal("QQ", converter.Convert("qq", typeof(string), null!, string.Empty));
         Assert.Equal("微信", converter.Convert("wechat", typeof(string), null!, string.Empty));
+        Assert.Equal("文本/MD", converter.Convert("text", typeof(string), null!, string.Empty));
+        Assert.Equal("网页", converter.Convert("html", typeof(string), null!, string.Empty));
+        Assert.Equal("SQL", converter.Convert("sql", typeof(string), null!, string.Empty));
         Assert.Equal(string.Empty, converter.Convert("other", typeof(string), null!, string.Empty));
     }
 
