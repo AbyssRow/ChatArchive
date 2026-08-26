@@ -191,6 +191,260 @@ public sealed class CipherTalkDetailedJsonFormat : IChatExportFormat
     }
 }
 
+/// <summary>ChatLab 0.0.2 Standard JSON 格式适配器。</summary>
+public sealed class ChatLabJsonExportFormat : IChatExportFormat
+{
+    private const string SupportedVersion = "0.0.2";
+
+    public string Platform => "wechat";
+
+    public bool Matches(string filePath)
+    {
+        if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!ChunkedJsonReader.ContainsRootProperties(
+                filePath,
+                new[] { "chatlab", "meta" }))
+        {
+            return false;
+        }
+
+        var chatlab = ChunkedJsonReader.ReadObjectProperty(filePath, "chatlab");
+        var version = ImportText.Clean(chatlab["version"]);
+        return string.Equals(version, SupportedVersion, StringComparison.Ordinal);
+    }
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        var chatlab = ChunkedJsonReader.ReadObjectProperty(filePath, "chatlab", cancellationToken);
+        var version = ImportText.Clean(chatlab["version"]);
+        if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
+        {
+            throw new ImportFormatException(
+                filePath,
+                $"不支持的 ChatLab 导出版本 {Display(version)}；支持版本 {SupportedVersion}");
+        }
+
+        var meta = ChunkedJsonReader.ReadObjectProperty(filePath, "meta", cancellationToken);
+
+        List<JsonObject>? members = null;
+        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "members" }, cancellationToken))
+        {
+            members = ChunkedJsonReader.EnumerateObjectArray(filePath, "members", cancellationToken).ToList();
+        }
+
+        var conversation = ChatLabParser.ReadConversation(meta, filePath, members);
+
+        var ownerId = ImportText.Clean(FirstNonEmpty(
+            ImportText.Clean(meta["ownerId"]),
+            ImportText.Clean(meta["ownerID"]),
+            ImportText.Clean(meta["selfWxid"]),
+            ImportText.Clean(meta["selfId"]),
+            ImportText.Clean(meta["accountId"])));
+
+        var selfSender = !string.IsNullOrEmpty(ownerId)
+            ? ownerId
+            : ChatLabParser.InferSelfSender(
+                ChunkedJsonReader.EnumerateObjectArray(filePath, "messages", cancellationToken),
+                conversation,
+                cancellationToken);
+
+        return new ExportFile(
+            conversation,
+            token => ChatLabParser.IterateMessages(
+                ChunkedJsonReader.EnumerateObjectArray(filePath, "messages", token),
+                conversation,
+                selfSender,
+                filePath,
+                members));
+    }
+
+    private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (var value in values)
+        {
+            if (value.Length > 0)
+            {
+                return value;
+            }
+        }
+
+        return string.Empty;
+    }
+}
+
+/// <summary>ChatLab 0.0.2 JSONL 格式适配器。</summary>
+public sealed class ChatLabJsonlExportFormat : IChatExportFormat
+{
+    private const string SupportedVersion = "0.0.2";
+
+    public string Platform => "wechat";
+
+    public bool Matches(string filePath)
+    {
+        try
+        {
+            using var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite,
+                bufferSize: 4096,
+                FileOptions.SequentialScan);
+            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
+
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length == 0)
+                {
+                    continue;
+                }
+
+                if (!trimmed.Contains("\"_type\"", StringComparison.Ordinal) || !trimmed.Contains("\"chatlab\"", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                if (System.Text.Json.Nodes.JsonNode.Parse(trimmed) is System.Text.Json.Nodes.JsonObject obj)
+                {
+                    var typeTag = ImportText.Clean(obj["_type"]);
+                    if (!string.Equals(typeTag, "header", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
+
+                    if (obj["chatlab"] is System.Text.Json.Nodes.JsonObject chatlab)
+                    {
+                        var version = ImportText.Clean(chatlab["version"]);
+                        return string.Equals(version, SupportedVersion, StringComparison.Ordinal);
+                    }
+                }
+
+                return false;
+            }
+
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        JsonObject? header = null;
+        var members = new List<JsonObject>();
+        var memberDict = new Dictionary<string, JsonObject>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan))
+            using (var reader = new StreamReader(stream, System.Text.Encoding.UTF8))
+            {
+                string? line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var trimmed = line.Trim();
+                    if (trimmed.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    if (System.Text.Json.Nodes.JsonNode.Parse(trimmed) is not System.Text.Json.Nodes.JsonObject obj)
+                    {
+                        continue;
+                    }
+
+                    var typeTag = ImportText.Clean(obj["_type"]).ToLowerInvariant();
+                    if (typeTag == "header")
+                    {
+                        header ??= obj;
+                    }
+                    else if (typeTag == "member")
+                    {
+                        members.Add(obj);
+                        var mId = ChatLabParser.ExtractMemberPlatformId(obj);
+                        if (mId.Length > 0)
+                        {
+                            memberDict[mId] = obj;
+                        }
+                    }
+                    else if (typeTag == "message" && header != null)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new ImportFormatException(filePath, $"读取失败（{ex.Message}）");
+        }
+
+        if (header == null)
+        {
+            throw new ImportFormatException(filePath, "ChatLab JSONL 缺少有效 header");
+        }
+
+        if (header["chatlab"] is not JsonObject chatlab)
+        {
+            throw new ImportFormatException(filePath, "ChatLab JSONL header 缺少 chatlab 对象");
+        }
+
+        var version = ImportText.Clean(chatlab["version"]);
+        if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
+        {
+            throw new ImportFormatException(
+                filePath,
+                $"不支持的 ChatLab 导出版本 {Display(version)}；支持版本 {SupportedVersion}");
+        }
+
+        var meta = header["meta"] as JsonObject ?? header;
+        var conversation = ChatLabParser.ReadConversation(meta, filePath, members);
+
+        var ownerId = ImportText.Clean(FirstNonEmpty(
+            ImportText.Clean(meta["ownerId"]),
+            ImportText.Clean(meta["ownerID"]),
+            ImportText.Clean(meta["selfWxid"]),
+            ImportText.Clean(meta["selfId"]),
+            ImportText.Clean(meta["accountId"])));
+
+        var selfSender = !string.IsNullOrEmpty(ownerId) ? ownerId : null;
+
+        return new ExportFile(
+            conversation,
+            token => ChatLabParser.IterateJsonlMessages(filePath, conversation, selfSender, token, memberDict));
+    }
+
+    private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (var value in values)
+        {
+            if (value.Length > 0)
+            {
+                return value;
+            }
+        }
+
+        return string.Empty;
+    }
+}
+
 /// <summary>注册表：新增导出格式时在此追加实例。</summary>
 public static class ExportFormats
 {
@@ -208,6 +462,8 @@ public static class ExportFormats
                     new QqExportFormat(),
                     new WeFlowExportFormat(),
                     new CipherTalkDetailedJsonFormat(),
+                    new ChatLabJsonExportFormat(),
+                    new ChatLabJsonlExportFormat(),
                 };
             }
         }

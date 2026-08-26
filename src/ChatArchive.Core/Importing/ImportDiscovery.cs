@@ -95,6 +95,10 @@ public static class ImportDiscovery
                     if (string.Equals(
                             Path.GetExtension(file),
                             ".json",
+                            StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(
+                            Path.GetExtension(file),
+                            ".jsonl",
                             StringComparison.OrdinalIgnoreCase))
                     {
                         Consider(file);

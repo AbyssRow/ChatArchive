@@ -845,6 +845,177 @@ public class ParserTests : IDisposable
         Assert.Throws<ImportFormatException>(() => format.Open(path));
     }
 
+    [Fact]
+    public void ChatLabParser_ParsesJsonAndJsonl_Correctly()
+    {
+        // 1. JSONL 测试用例
+        var jsonlLines = new[]
+        {
+            """{"_type":"header","chatlab":{"version":"0.0.2","exportedAt":1700000000,"generator":"ChatLab"},"meta":{"name":"开源群","platform":"wechat","type":"group","groupId":"open@chatroom"}}""",
+            """{"_type":"member","platformId":"wxid_u1","accountName":"张三","groupNickname":"群主"}""",
+            """{"_type":"message","id":"m1","sender":"wxid_u1","accountName":"张三","timestamp":1700000000,"type":0,"content":"欢迎加入"}"""
+        };
+        var pathJsonl = Path.Combine(_dir, "chatlab_test.jsonl");
+        File.WriteAllLines(pathJsonl, jsonlLines);
+
+        var formatJsonl = new ChatLabJsonlExportFormat();
+        Assert.True(formatJsonl.Matches(pathJsonl));
+
+        using (var exportFileJsonl = formatJsonl.Open(pathJsonl))
+        {
+            Assert.Equal("wechat", exportFileJsonl.Conversation.Platform);
+            Assert.Equal("open@chatroom", exportFileJsonl.Conversation.NativeId);
+            Assert.Equal("group", exportFileJsonl.Conversation.Kind);
+            Assert.Equal("开源群", exportFileJsonl.Conversation.Title);
+
+            var messagesJsonl = exportFileJsonl.EnumerateMessages().ToList();
+            Assert.Single(messagesJsonl);
+
+            var msg1 = messagesJsonl[0];
+            Assert.Equal("m1", msg1.NativeId);
+            Assert.Equal("wxid_u1", msg1.SenderNativeId);
+            Assert.Equal("群主", msg1.SenderName);
+            Assert.Equal("text", msg1.MessageType);
+            Assert.Equal("欢迎加入", msg1.Content);
+        }
+
+        // 2. Standard JSON 测试用例
+        var jsonContent = """
+            {
+              "chatlab": {"version": "0.0.2", "exportedAt": 1700000000, "generator": "WeFlow"},
+              "meta": {"name": "私聊测试", "platform": "wechat", "type": "private", "ownerId": "wxid_self"},
+              "members": [
+                {"platformId": "wxid_bob", "accountName": "Bob"}
+              ],
+              "messages": [
+                {"id": "m2", "sender": "wxid_bob", "accountName": "Bob", "timestamp": 1700000000, "type": 1, "content": "media/images/pic.jpg"}
+              ]
+            }
+            """;
+        var pathJson = Path.Combine(_dir, "chatlab_test.json");
+        File.WriteAllText(pathJson, jsonContent);
+
+        var formatJson = new ChatLabJsonExportFormat();
+        Assert.True(formatJson.Matches(pathJson));
+
+        using (var exportFileJson = formatJson.Open(pathJson))
+        {
+            Assert.Equal("wechat", exportFileJson.Conversation.Platform);
+            Assert.Equal("wxid_bob", exportFileJson.Conversation.NativeId);
+            Assert.Equal("private", exportFileJson.Conversation.Kind);
+            Assert.Equal("私聊测试", exportFileJson.Conversation.Title);
+
+            var messagesJson = exportFileJson.EnumerateMessages().ToList();
+            Assert.Single(messagesJson);
+
+            var msg2 = messagesJson[0];
+            Assert.Equal("m2", msg2.NativeId);
+            Assert.Equal("wxid_bob", msg2.SenderNativeId);
+            Assert.Equal("Bob", msg2.SenderName);
+            Assert.Equal("image", msg2.MessageType);
+            Assert.Equal("media/images/pic.jpg", msg2.Content);
+            var attachment = Assert.Single(msg2.Attachments);
+            Assert.Equal("image", attachment.Kind);
+            Assert.Equal("pic.jpg", attachment.Filename);
+            Assert.Equal("media/images/pic.jpg", attachment.DeclaredPath);
+        }
+    }
+
+    [Fact]
+    public void ChatLabParser_ParsesAllIntegerTypes_AndQuotes_Correctly()
+    {
+        var jsonContent = """
+            {
+              "chatlab": {"version": "0.0.2", "exportedAt": 1700000000, "generator": "ChatLab"},
+              "meta": {"name": "多类型测试群", "platform": "wechat", "type": "group", "groupId": "group_types@chatroom"},
+              "members": [
+                {"platformId": "wxid_self", "accountName": "我", "groupNickname": "群主-我"},
+                {"platformId": "wxid_alice", "accountName": "Alice", "groupNickname": "爱丽丝"}
+              ],
+              "messages": [
+                {"id": "t0", "sender": "wxid_alice", "timestamp": 1700000000, "type": 0, "content": "文本消息"},
+                {"id": "t1", "sender": "wxid_alice", "timestamp": 1700000001, "type": 1, "content": "img.png"},
+                {"id": "t2", "sender": "wxid_alice", "timestamp": 1700000002, "type": 2, "content": "voice.amr", "voiceDuration": 4.5},
+                {"id": "t3", "sender": "wxid_alice", "timestamp": 1700000003, "type": 3, "content": "video.mp4"},
+                {"id": "t4", "sender": "wxid_alice", "timestamp": 1700000004, "type": 4, "content": "doc.pdf"},
+                {"id": "t5", "sender": "wxid_alice", "timestamp": 1700000005, "type": 5, "content": "sticker.gif"},
+                {"id": "t7", "sender": "wxid_alice", "timestamp": 1700000007, "type": 7, "content": "https://example.com", "title": "链接标题"},
+                {"id": "t8", "sender": "wxid_alice", "timestamp": 1700000008, "type": 8, "content": "东方明珠", "locationLabel": "世纪大道1号"},
+                {"id": "t23", "sender": "wxid_alice", "timestamp": 1700000023, "type": 23, "content": "语音通话结束"},
+                {"id": "t24", "sender": "wxid_alice", "timestamp": 1700000024, "type": 24, "content": "小程序分享"},
+                {"id": "t25", "sender": "wxid_alice", "timestamp": 1700000025, "type": 25, "content": "回复消息", "quote": {"sourceMessageId": "t0", "content": "文本消息"}},
+                {"id": "t27", "sender": "wxid_alice", "timestamp": 1700000027, "type": 27, "content": "名片消息"},
+                {"id": "t80", "sender": "wxid_alice", "timestamp": 1700000080, "type": 80, "content": "对方撤回了一条消息"},
+                {"id": "t99", "sender": "wxid_alice", "timestamp": 1700000099, "type": 99, "content": "未知消息"}
+              ]
+            }
+            """;
+        var path = Path.Combine(_dir, "chatlab_types.json");
+        File.WriteAllText(path, jsonContent);
+
+        var format = new ChatLabJsonExportFormat();
+        using var exportFile = format.Open(path);
+        var messages = exportFile.EnumerateMessages().ToList();
+        Assert.Equal(14, messages.Count);
+
+        Assert.Equal("text", messages[0].MessageType);
+        Assert.Equal("image", messages[1].MessageType);
+        Assert.Equal("audio", messages[2].MessageType);
+        Assert.Equal(4.5, messages[2].Attachments[0].Duration);
+        Assert.Equal("video", messages[3].MessageType);
+        Assert.Equal("file", messages[4].MessageType);
+        Assert.Equal("emoji", messages[5].MessageType);
+        Assert.Equal("link", messages[6].MessageType);
+        Assert.Equal("location", messages[7].MessageType);
+        Assert.Contains("世纪大道1号", messages[7].SearchText);
+        Assert.Equal("call", messages[8].MessageType);
+        Assert.Equal("mini_program", messages[9].MessageType);
+        Assert.Equal("reply", messages[10].MessageType);
+        Assert.Equal("t0", messages[10].ReplyToNativeId);
+        Assert.Contains("文本消息", messages[10].SearchText);
+        Assert.Equal("contact", messages[11].MessageType);
+        Assert.Equal("system", messages[12].MessageType);
+        Assert.True(messages[12].IsSystem);
+        Assert.True(messages[12].IsRecalled);
+        Assert.Equal("other", messages[13].MessageType);
+    }
+
+    [Fact]
+    public void ChatLabExportFormat_RejectsInvalidVersions_And_DiscoversCorrectly()
+    {
+        var invalidJson = """
+            {
+              "chatlab": {"version": "0.0.1", "generator": "ChatLab"},
+              "meta": {"name": "旧版本", "platform": "wechat", "groupId": "old@chatroom"},
+              "messages": []
+            }
+            """;
+        var pathInvalidJson = Path.Combine(_dir, "chatlab_old.json");
+        File.WriteAllText(pathInvalidJson, invalidJson);
+
+        var formatJson = new ChatLabJsonExportFormat();
+        Assert.False(formatJson.Matches(pathInvalidJson));
+        Assert.Throws<ImportFormatException>(() => formatJson.Open(pathInvalidJson));
+
+        var invalidJsonl = """{"_type":"header","chatlab":{"version":"0.0.3"},"meta":{"name":"未来版本"}}""";
+        var pathInvalidJsonl = Path.Combine(_dir, "chatlab_future.jsonl");
+        File.WriteAllText(pathInvalidJsonl, invalidJsonl);
+
+        var formatJsonl = new ChatLabJsonlExportFormat();
+        Assert.False(formatJsonl.Matches(pathInvalidJsonl));
+        Assert.Throws<ImportFormatException>(() => formatJsonl.Open(pathInvalidJsonl));
+
+        var validJsonl = """
+            {"_type":"header","chatlab":{"version":"0.0.2"},"meta":{"name":"有效群","groupId":"valid@chatroom"}}
+            {"_type":"message","id":"m_v1","sender":"wxid_1","timestamp":1700000000,"type":0,"content":"hello"}
+            """;
+        var pathValidJsonl = Path.Combine(_dir, "chatlab_valid.jsonl");
+        File.WriteAllText(pathValidJsonl, validJsonl);
+
+        var discovered = ImportDiscovery.Discover(new[] { _dir });
+        Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(pathValidJsonl) && d.Platform == "wechat");
+    }
+
     public void Dispose()
     {
         try
