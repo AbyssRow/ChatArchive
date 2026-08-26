@@ -11,6 +11,32 @@ public sealed record DiscoveredImport(
 /// <summary>递归发现受支持导出工具的 JSON 文件；格式嗅探由各 IChatExportFormat 提供。</summary>
 public static class ImportDiscovery
 {
+    public static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".json",
+        ".jsonl",
+        ".html",
+        ".htm",
+        ".csv",
+        ".md",
+        ".txt",
+        ".sql"
+    };
+
+    public static readonly HashSet<string> DefaultPrunedDirectories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "resources",
+        "media",
+        "images",
+        "voices",
+        "videos",
+        "emojis",
+        "files",
+        "avatars",
+        "node_modules",
+        ".git"
+    };
+
     public static IReadOnlyList<DiscoveredImport> Discover(
         IEnumerable<string> roots,
         IReadOnlyList<IChatExportFormat>? formats = null,
@@ -90,17 +116,19 @@ public static class ImportDiscovery
                     continue;
                 }
 
+                var hasQqChunkedManifest = files.Any(file =>
+                    string.Equals(Path.GetFileName(file), "manifest.json", StringComparison.OrdinalIgnoreCase)
+                    && formats.Any(format => (format is QqChunkedExportFormat || string.Equals(format.Platform, "qq", StringComparison.OrdinalIgnoreCase)) && SafeMatches(format, file)));
+
                 foreach (var file in files)
                 {
                     var ext = Path.GetExtension(file);
-                    if (string.Equals(ext, ".json", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(ext, ".jsonl", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(ext, ".html", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(ext, ".htm", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(ext, ".csv", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(ext, ".md", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(ext, ".txt", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(ext, ".sql", StringComparison.OrdinalIgnoreCase))
+                    if (hasQqChunkedManifest && string.Equals(ext, ".jsonl", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (SupportedExtensions.Contains(ext))
                     {
                         Consider(file);
                     }
@@ -108,6 +136,17 @@ public static class ImportDiscovery
 
                 foreach (var child in directories)
                 {
+                    var dirName = Path.GetFileName(child);
+                    if (DefaultPrunedDirectories.Contains(dirName))
+                    {
+                        continue;
+                    }
+
+                    if (hasQqChunkedManifest && string.Equals(dirName, "chunks", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
                     if (IsExcluded(child))
                     {
                         continue;
@@ -129,6 +168,18 @@ public static class ImportDiscovery
 
                     pending.Push(child);
                 }
+            }
+        }
+
+        static bool SafeMatches(IChatExportFormat format, string filePath)
+        {
+            try
+            {
+                return format.Matches(filePath);
+            }
+            catch
+            {
+                return false;
             }
         }
 
