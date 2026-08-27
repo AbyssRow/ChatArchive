@@ -10,6 +10,8 @@ public partial class ContactsViewModel : ObservableObject
 {
     private readonly ContactRepository _contactRepository;
     private readonly AvatarStorageService? _avatarStorageService;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher;
+    private long _loadGeneration;
 
     public ObservableCollection<ContactInfo> Contacts { get; } = new();
 
@@ -30,14 +32,17 @@ public partial class ContactsViewModel : ObservableObject
 
     public ContactsViewModel(
         ContactRepository contactRepository,
-        AvatarStorageService? avatarStorageService = null)
+        AvatarStorageService? avatarStorageService = null,
+        Microsoft.UI.Dispatching.DispatcherQueue? dispatcher = null)
     {
         _contactRepository = contactRepository;
         _avatarStorageService = avatarStorageService;
+        _dispatcher = dispatcher;
     }
 
-    public async Task LoadAsync(string? keyword = null, long? preferredSelectedContactId = null)
+    public async Task LoadAsync(string? keyword = null, long? preferredSelectedContactId = null, bool autoPopulate = false)
     {
+        var generation = Interlocked.Increment(ref _loadGeneration);
         IsLoading = true;
         ErrorMessage = string.Empty;
 
@@ -45,38 +50,82 @@ public partial class ContactsViewModel : ObservableObject
 
         try
         {
-            await Task.Run(() => _contactRepository.AutoPopulateContactsFromSenders());
+            if (autoPopulate)
+            {
+                await Task.Run(() => _contactRepository.AutoPopulateContactsFromSenders());
+            }
 
             var query = keyword ?? SearchKeyword;
             var list = await Task.Run(() => _contactRepository.ListContacts(
                 string.IsNullOrWhiteSpace(query) ? null : query.Trim()));
 
-            Contacts.Clear();
-            foreach (var item in list)
+            if (Volatile.Read(ref _loadGeneration) != generation)
             {
-                Contacts.Add(item);
+                return;
             }
 
-            if (targetId.HasValue)
+            async Task ApplyAsync()
             {
-                var match = Contacts.FirstOrDefault(c => c.Id == targetId.Value);
-                if (match != null)
+                if (Volatile.Read(ref _loadGeneration) != generation)
                 {
-                    await SelectContactAsync(match);
+                    return;
                 }
-                else
+
+                Contacts.Clear();
+                foreach (var item in list)
                 {
-                    await SelectContactAsync(null);
+                    Contacts.Add(item);
                 }
+
+                if (targetId.HasValue)
+                {
+                    var match = Contacts.FirstOrDefault(c => c.Id == targetId.Value);
+                    if (match != null)
+                    {
+                        await SelectContactAsync(match);
+                    }
+                    else
+                    {
+                        await SelectContactAsync(null);
+                    }
+                }
+            }
+
+            if (_dispatcher is not null && !_dispatcher.HasThreadAccess)
+            {
+                var tcs = new TaskCompletionSource();
+                _dispatcher.TryEnqueue(async () =>
+                {
+                    try
+                    {
+                        await ApplyAsync();
+                        tcs.SetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.SetException(ex);
+                    }
+                });
+                await tcs.Task;
+            }
+            else
+            {
+                await ApplyAsync();
             }
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"加载联系人列表失败：{ex.Message}";
+            if (Volatile.Read(ref _loadGeneration) == generation)
+            {
+                ErrorMessage = $"加载联系人列表失败：{ex.Message}";
+            }
         }
         finally
         {
-            IsLoading = false;
+            if (Volatile.Read(ref _loadGeneration) == generation)
+            {
+                IsLoading = false;
+            }
         }
     }
 
@@ -90,7 +139,7 @@ public partial class ContactsViewModel : ObservableObject
             return;
         }
 
-        var detailVm = new ContactDetailViewModel(_contactRepository, _avatarStorageService);
+        var detailVm = new ContactDetailViewModel(_contactRepository, _avatarStorageService, _dispatcher);
         var loaded = await detailVm.LoadAsync(contact.Id);
         if (loaded)
         {
@@ -123,7 +172,7 @@ public partial class ContactsViewModel : ObservableObject
         }
         else
         {
-            var detailVm = new ContactDetailViewModel(_contactRepository, _avatarStorageService);
+            var detailVm = new ContactDetailViewModel(_contactRepository, _avatarStorageService, _dispatcher);
             await detailVm.LoadAsync(newId);
             SelectedDetail = detailVm;
         }

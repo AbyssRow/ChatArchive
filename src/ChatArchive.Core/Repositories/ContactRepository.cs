@@ -133,6 +133,20 @@ public sealed class ContactRepository
             cmd.ExecuteNonQuery();
         }
 
+        using (var promoteCmd = connection.CreateCommand())
+        {
+            promoteCmd.Transaction = transaction;
+            promoteCmd.CommandText = """
+                UPDATE contact_senders
+                SET is_primary = 1
+                WHERE contact_id = @cid AND rowid = (
+                    SELECT rowid FROM contact_senders WHERE contact_id = @cid ORDER BY sender_id ASC LIMIT 1
+                ) AND NOT EXISTS (SELECT 1 FROM contact_senders WHERE contact_id = @cid AND is_primary = 1);
+                """;
+            promoteCmd.Parameters.AddWithValue("@cid", contactId);
+            promoteCmd.ExecuteNonQuery();
+        }
+
         using (var cmd = connection.CreateCommand())
         {
             cmd.Transaction = transaction;
@@ -273,12 +287,17 @@ public sealed class ContactRepository
             }
         }
 
+        var senderIds = senderRawList.Select(r => r.SenderId).Distinct().ToList();
+        var aliasesBatch = LoadAliasesBatch(connection, senderIds);
+        var resolvedNames = SenderDisplayName.Resolve(
+            connection,
+            senderRawList.Select(r => (SenderId: r.SenderId, ConversationId: (long?)null)));
+
         foreach (var raw in senderRawList)
         {
-            var aliases = LoadAliases(connection, raw.SenderId);
-            var resolvedNames = SenderDisplayName.Resolve(
-                connection,
-                new[] { (SenderId: raw.SenderId, (long?)null) });
+            aliasesBatch.TryGetValue(raw.SenderId, out var aliases);
+            aliases ??= new List<AliasInfo>();
+
             var originalName = resolvedNames.TryGetValue((raw.SenderId, null), out var dn)
                 ? dn
                 : raw.CurrentName;
@@ -477,13 +496,18 @@ public sealed class ContactRepository
             }
         }
 
+        var senderIds = rawList.Select(r => r.SenderId).Distinct().ToList();
+        var aliasesBatch = LoadAliasesBatch(connection, senderIds);
+        var resolvedNames = SenderDisplayName.Resolve(
+            connection,
+            rawList.Select(r => (SenderId: r.SenderId, ConversationId: (long?)null)));
+
         var result = new List<BoundSenderInfo>(rawList.Count);
         foreach (var raw in rawList)
         {
-            var aliases = LoadAliases(connection, raw.SenderId);
-            var resolvedNames = SenderDisplayName.Resolve(
-                connection,
-                new[] { (SenderId: raw.SenderId, (long?)null) });
+            aliasesBatch.TryGetValue(raw.SenderId, out var aliases);
+            aliases ??= new List<AliasInfo>();
+
             var originalName = resolvedNames.TryGetValue((raw.SenderId, null), out var dn)
                 ? dn
                 : raw.CurrentName;
@@ -557,20 +581,25 @@ public sealed class ContactRepository
             }
         }
 
-        var result = new List<BoundSenderInfo>(rawList.Count);
+        var senderIdsUnbound = rawList.Select(r => r.SenderId).Distinct().ToList();
+        var aliasesBatchUnbound = LoadAliasesBatch(connection, senderIdsUnbound);
+        var resolvedNamesUnbound = SenderDisplayName.Resolve(
+            connection,
+            rawList.Select(r => (SenderId: r.SenderId, ConversationId: (long?)null)));
+
+        var resultUnbound = new List<BoundSenderInfo>(rawList.Count);
         foreach (var raw in rawList)
         {
-            var aliases = LoadAliases(connection, raw.SenderId);
-            var resolvedNames = SenderDisplayName.Resolve(
-                connection,
-                new[] { (SenderId: raw.SenderId, (long?)null) });
-            var originalName = resolvedNames.TryGetValue((raw.SenderId, null), out var dn)
+            aliasesBatchUnbound.TryGetValue(raw.SenderId, out var aliases);
+            aliases ??= new List<AliasInfo>();
+
+            var originalName = resolvedNamesUnbound.TryGetValue((raw.SenderId, null), out var dn)
                 ? dn
                 : raw.CurrentName;
 
             var qqNumber = raw.Platform == "qq" ? SenderRepository.FindQqNumber(connection, raw.SenderId, aliases) : null;
 
-            result.Add(new BoundSenderInfo(
+            resultUnbound.Add(new BoundSenderInfo(
                 raw.SenderId,
                 raw.Platform,
                 raw.NativeId,
@@ -582,7 +611,7 @@ public sealed class ContactRepository
             ));
         }
 
-        return result;
+        return resultUnbound;
     }
 
     private static void BindSenderInternal(
@@ -934,6 +963,54 @@ public sealed class ContactRepository
 
         transaction.Commit();
         return count;
+    }
+
+    private static Dictionary<long, List<AliasInfo>> LoadAliasesBatch(
+        SqliteConnection connection,
+        IReadOnlyCollection<long> senderIds)
+    {
+        var result = new Dictionary<long, List<AliasInfo>>();
+        if (senderIds.Count == 0)
+        {
+            return result;
+        }
+
+        var ids = senderIds.Distinct().ToList();
+        foreach (var chunk in ids.Chunk(500))
+        {
+            var placeholders = string.Join(",", chunk.Select((_, i) => $"@s{i}"));
+            using var command = connection.CreateCommand();
+            command.CommandText = $"""
+                SELECT sender_id, alias, MIN(first_seen_at), MAX(last_seen_at), COUNT(DISTINCT conversation_id)
+                FROM sender_aliases
+                WHERE sender_id IN ({placeholders})
+                GROUP BY sender_id, alias
+                ORDER BY MAX(last_seen_at) DESC, alias
+                """;
+            for (var i = 0; i < chunk.Length; i++)
+            {
+                command.Parameters.AddWithValue($"@s{i}", chunk[i]);
+            }
+
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var senderId = reader.GetInt64(0);
+                var alias = reader.GetString(1);
+                var firstSeen = reader.IsDBNull(2) ? null : (long?)reader.GetInt64(2);
+                var lastSeen = reader.IsDBNull(3) ? null : (long?)reader.GetInt64(3);
+
+                if (!result.TryGetValue(senderId, out var list))
+                {
+                    list = new List<AliasInfo>();
+                    result[senderId] = list;
+                }
+
+                list.Add(new AliasInfo(alias, null, firstSeen, lastSeen));
+            }
+        }
+
+        return result;
     }
 
     private static IReadOnlyList<AliasInfo> LoadAliases(SqliteConnection connection, long senderId)

@@ -758,26 +758,28 @@ public static class ExportFormats
     private static readonly object Gate = new();
     private static List<IChatExportFormat>? _formats;
 
+    private static List<IChatExportFormat> CreateDefaultFormats() => new()
+    {
+        new QqExportFormat(),
+        new QqChunkedExportFormat(),
+        new WeFlowExportFormat(),
+        new CipherTalkDetailedJsonFormat(),
+        new ChatLabJsonExportFormat(),
+        new ChatLabJsonlExportFormat(),
+        new ChatHtmlExportFormat(),
+        new WeCloneCsvExportFormat(),
+        new ChatMarkdownExportFormat(),
+        new ChatTextExportFormat(),
+        new ChatSqlExportFormat(),
+    };
+
     public static IReadOnlyList<IChatExportFormat> Default
     {
         get
         {
             lock (Gate)
             {
-                return _formats ??= new List<IChatExportFormat>
-                {
-                    new QqExportFormat(),
-                    new QqChunkedExportFormat(),
-                    new WeFlowExportFormat(),
-                    new CipherTalkDetailedJsonFormat(),
-                    new ChatLabJsonExportFormat(),
-                    new ChatLabJsonlExportFormat(),
-                    new ChatHtmlExportFormat(),
-                    new WeCloneCsvExportFormat(),
-                    new ChatMarkdownExportFormat(),
-                    new ChatTextExportFormat(),
-                    new ChatSqlExportFormat(),
-                };
+                return _formats ??= CreateDefaultFormats();
             }
         }
     }
@@ -787,7 +789,7 @@ public static class ExportFormats
     {
         lock (Gate)
         {
-            _formats ??= new List<IChatExportFormat>();
+            _formats ??= CreateDefaultFormats();
             _formats.Add(format);
         }
     }

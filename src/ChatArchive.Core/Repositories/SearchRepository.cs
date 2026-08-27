@@ -24,9 +24,10 @@ public sealed class SearchRepository
 
         long? cursorTs = null;
         long? cursorId = null;
-        if (!string.IsNullOrEmpty(cursor))
+        if (!string.IsNullOrEmpty(cursor) && CursorCodec.TryDecode(cursor, out var ts, out var id))
         {
-            (cursorTs, cursorId) = CursorCodec.Decode(cursor);
+            cursorTs = ts;
+            cursorId = id;
         }
 
         var useFts = SupportsTrigram(query);
@@ -212,37 +213,21 @@ public sealed class SearchRepository
     }
 
     /// <summary>
-    /// trigram 分词器只能命中连续三个及以上字母数字的串；否则退回 LIKE。
+    /// trigram 分词器只能命中连续三个及以上字母数字的串；若包含短词（如 "hi alice", "好的 谢谢"）则必须全部 token 长度 >= 3，否则退回 LIKE。
     /// </summary>
     internal static bool SupportsTrigram(string query)
     {
-        var run = 0;
-        foreach (var ch in query)
-        {
-            if (char.IsLetterOrDigit(ch))
-            {
-                run++;
-                if (run >= 3)
-                {
-                    return true;
-                }
-            }
-            else
-            {
-                run = 0;
-            }
-        }
-
-        return false;
+        var tokens = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Length > 0 && tokens.All(t => t.Length >= 3);
     }
 
     internal static string MakeSnippet(string content, string searchText, string query)
     {
         var source = content.Length > 0 ? content : searchText;
-        var index = source.IndexOf(query, StringComparison.Ordinal);
+        var index = source.IndexOf(query, StringComparison.OrdinalIgnoreCase);
         if (index < 0)
         {
-            index = searchText.IndexOf(query, StringComparison.Ordinal);
+            index = searchText.IndexOf(query, StringComparison.OrdinalIgnoreCase);
             source = searchText;
             if (index < 0)
             {

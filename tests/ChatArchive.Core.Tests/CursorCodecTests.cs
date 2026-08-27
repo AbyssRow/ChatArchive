@@ -19,12 +19,23 @@ public class CursorCodecTests
 
     [Theory]
     [InlineData("")]
+    [InlineData(null)]
     [InlineData("abc")]
     [InlineData("12_")]
     [InlineData("_34")]
     [InlineData("1_2_3")]
-    public void Decode_rejects_invalid(string cursor)
+    public void Decode_rejects_invalid(string? cursor)
     {
-        Assert.Throws<FormatException>(() => Data.CursorCodec.Decode(cursor));
+        Assert.Throws<FormatException>(() => Data.CursorCodec.Decode(cursor!));
+        Assert.False(Data.CursorCodec.TryDecode(cursor, out _, out _));
+    }
+
+    [Theory]
+    [InlineData("1700000000000_42", 1700000000000, 42)]
+    public void TryDecode_succeeds_for_valid(string cursor, long expectedTs, long expectedId)
+    {
+        Assert.True(Data.CursorCodec.TryDecode(cursor, out var ts, out var id));
+        Assert.Equal(expectedTs, ts);
+        Assert.Equal(expectedId, id);
     }
 }

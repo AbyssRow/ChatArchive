@@ -206,7 +206,7 @@ public static class SqlScriptParser
         {
             cancellationToken.ThrowIfCancellationRequested();
             var trimmed = line.Trim();
-            if (trimmed.StartsWith("--", StringComparison.Ordinal) || trimmed.StartsWith("/*", StringComparison.Ordinal))
+            if (!inString && (trimmed.StartsWith("--", StringComparison.Ordinal) || trimmed.StartsWith("/*", StringComparison.Ordinal)))
             {
                 continue;
             }
@@ -305,6 +305,7 @@ public static class SqlScriptParser
         var currentField = new StringBuilder();
         var inTuple = false;
         var inString = false;
+        var isQuoted = false;
         var stringQuote = '\0';
 
         for (var i = 0; i < valuesText.Length; i++)
@@ -365,25 +366,33 @@ public static class SqlScriptParser
                     inTuple = true;
                     currentTuple = new List<string?>();
                     currentField.Clear();
+                    isQuoted = false;
                 }
                 else if (c == ')' && inTuple)
                 {
-                    AddCurrentField(currentTuple, currentField);
+                    AddCurrentField(currentTuple, currentField, isQuoted);
                     inTuple = false;
                     result.Add(currentTuple);
+                    isQuoted = false;
                 }
                 else if (c == ',' && inTuple)
                 {
-                    AddCurrentField(currentTuple, currentField);
+                    AddCurrentField(currentTuple, currentField, isQuoted);
+                    isQuoted = false;
                 }
                 else if ((c == '\'' || c == '"') && inTuple)
                 {
                     inString = true;
                     stringQuote = c;
+                    isQuoted = true;
+                    currentField.Clear();
                 }
                 else if (inTuple)
                 {
-                    currentField.Append(c);
+                    if (!isQuoted)
+                    {
+                        currentField.Append(c);
+                    }
                 }
             }
         }
@@ -391,19 +400,26 @@ public static class SqlScriptParser
         return result;
     }
 
-    private static void AddCurrentField(List<string?> tuple, StringBuilder field)
+    private static void AddCurrentField(List<string?> tuple, StringBuilder field, bool isQuoted)
     {
-        var raw = field.ToString().Trim();
-        field.Clear();
-
-        if (string.Equals(raw, "NULL", StringComparison.OrdinalIgnoreCase))
+        if (isQuoted)
         {
-            tuple.Add(null);
+            tuple.Add(field.ToString());
         }
         else
         {
-            tuple.Add(raw);
+            var raw = field.ToString().Trim();
+            if (string.Equals(raw, "NULL", StringComparison.OrdinalIgnoreCase))
+            {
+                tuple.Add(null);
+            }
+            else
+            {
+                tuple.Add(raw);
+            }
         }
+
+        field.Clear();
     }
 
     private static string? GetValue(Dictionary<string, string?> row, params string[] candidateKeys)

@@ -158,15 +158,10 @@ public static class ImportText
             var parentDir = Path.GetDirectoryName(Path.GetFullPath(exportRoot));
             if (!string.IsNullOrEmpty(parentDir))
             {
-                var inParent = SafeExportPath(parentDir, normalized);
-                if (inParent != null && File.Exists(inParent))
+                var cleanTitle = SanitizeSessionTitle(sessionTitle);
+                if (!string.IsNullOrWhiteSpace(cleanTitle))
                 {
-                    return inParent;
-                }
-
-                if (!string.IsNullOrWhiteSpace(sessionTitle))
-                {
-                    var inParentMediaSession = SafeExportPath(parentDir, Path.Combine("media", sessionTitle, normalized));
+                    var inParentMediaSession = SafeExportPath(parentDir, Path.Combine("media", cleanTitle, normalized));
                     if (inParentMediaSession != null && File.Exists(inParentMediaSession))
                     {
                         return inParentMediaSession;
@@ -180,6 +175,92 @@ public static class ImportText
         }
 
         return direct;
+    }
+
+    public static string SanitizeSessionTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return string.Empty;
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var chars = title.Where(ch => !invalidChars.Contains(ch) && ch != '/' && ch != '\\').ToArray();
+        var sanitized = new string(chars).Trim();
+        return (sanitized == "." || sanitized == "..") ? string.Empty : sanitized;
+    }
+
+    public static long ParseFlexibleTimestamp(string? timeStr)
+    {
+        if (string.IsNullOrWhiteSpace(timeStr))
+        {
+            return 0;
+        }
+
+        timeStr = timeStr.Trim();
+        if (long.TryParse(timeStr, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var rawLong))
+        {
+            return rawLong >= 10_000_000_000L ? rawLong : rawLong * 1000L;
+        }
+
+        if (double.TryParse(timeStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rawDouble))
+        {
+            var asLong = (long)rawDouble;
+            return asLong >= 10_000_000_000L ? asLong : asLong * 1000L;
+        }
+
+        var normalized = System.Text.RegularExpressions.Regex.Replace(timeStr, @"(\d{4})年(\d{1,2})月(\d{1,2})日?", "$1-$2-$3");
+
+        string[] formats = [
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss.fff",
+            "yyyy-MM-dd HH:mm",
+            "yyyy-M-d HH:mm:ss",
+            "yyyy-M-d HH:mm:ss.fff",
+            "yyyy-M-d HH:mm",
+            "yyyy/MM/dd HH:mm:ss",
+            "yyyy/MM/dd HH:mm:ss.fff",
+            "yyyy/MM/dd HH:mm",
+            "yyyy/M/d HH:mm:ss",
+            "yyyy/M/d HH:mm",
+            "yyyy.MM.dd HH:mm:ss",
+            "yyyy.MM.dd HH:mm:ss.fff",
+            "yyyy.MM.dd HH:mm",
+            "yyyy.M.d HH:mm:ss",
+            "yyyy.M.d HH:mm",
+            "yyyy-MM-ddTHH:mm:sszzz",
+            "yyyy-MM-ddTHH:mm:ss.fffzzz",
+            "yyyy-MM-ddTHH:mm:ssZ",
+            "yyyy-MM-ddTHH:mm:ss.fffZ",
+            "yyyy-MM-ddTHH:mm:ss",
+            "yyyy-MM-ddTHH:mm:ss.fff",
+            "yyyy-MM-dd",
+            "yyyy-M-d",
+            "yyyy/MM/dd",
+            "yyyy/M/d",
+            "yyyy.MM.dd",
+            "yyyy.M.d"
+        ];
+
+        if (DateTimeOffset.TryParseExact(normalized, formats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out var dtoExact))
+        {
+            return dtoExact.ToUnixTimeMilliseconds();
+        }
+
+        if (DateTimeOffset.TryParse(normalized, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out var dto))
+        {
+            return dto.ToUnixTimeMilliseconds();
+        }
+
+        if (DateTime.TryParse(normalized, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt))
+        {
+            var local = TimeZoneInfo.Local;
+            var unspecified = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
+            var offset = local.GetUtcOffset(unspecified);
+            return new DateTimeOffset(unspecified, offset).ToUnixTimeMilliseconds();
+        }
+
+        return 0;
     }
 
     private static readonly Dictionary<string, string> MimeByExtension = new(StringComparer.OrdinalIgnoreCase)

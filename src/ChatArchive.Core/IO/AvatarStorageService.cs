@@ -147,13 +147,25 @@ public sealed class AvatarStorageService
             return null;
         }
 
+        string fullPath;
         if (Path.IsPathRooted(relativeOrHashPath))
         {
-            return File.Exists(relativeOrHashPath) ? Path.GetFullPath(relativeOrHashPath) : null;
+            fullPath = Path.GetFullPath(relativeOrHashPath);
+        }
+        else
+        {
+            var combined = Path.Combine(AvatarDirectory, relativeOrHashPath);
+            fullPath = Path.GetFullPath(combined);
         }
 
-        var combined = Path.Combine(AvatarDirectory, relativeOrHashPath);
-        return File.Exists(combined) ? Path.GetFullPath(combined) : null;
+        var fullAvatarDir = Path.GetFullPath(AvatarDirectory);
+        var normalizedDir = fullAvatarDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(normalizedDir, StringComparison.OrdinalIgnoreCase) && !string.Equals(fullPath, fullAvatarDir, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return File.Exists(fullPath) ? fullPath : null;
     }
 
     private static string NormalizeExtension(string extension)
@@ -167,6 +179,12 @@ public sealed class AvatarStorageService
         if (!trimmed.StartsWith('.'))
         {
             trimmed = "." + trimmed;
+        }
+
+        var withoutDot = trimmed.Substring(1);
+        if (withoutDot.Length == 0 || withoutDot.Length > 10 || !withoutDot.All(char.IsAsciiLetterOrDigit))
+        {
+            throw new ArgumentException($"Invalid extension: {extension}", nameof(extension));
         }
 
         return trimmed.ToLowerInvariant();

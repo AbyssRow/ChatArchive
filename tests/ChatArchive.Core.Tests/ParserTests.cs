@@ -659,7 +659,7 @@ public class ParserTests : IDisposable
         File.WriteAllText(mediaFile, "img3");
         Assert.Equal(mediaFile, ImportText.SafeResolveMedia(exportRoot, "image3.png"));
 
-        // 4. 上级目录 SafeExportPath(parentDir, normalized) 与 SafeExportPath(parentDir, Path.Combine("media", sessionTitle, normalized))
+        // 4. 上级目录 SafeExportPath(parentDir, Path.Combine("media", sessionTitle, normalized))
         var parentMediaSessionDir = Path.Combine(_dir, "media", "ChatSession1");
         Directory.CreateDirectory(parentMediaSessionDir);
         var parentSessionMediaFile = Path.Combine(parentMediaSessionDir, "image4.png");
@@ -668,7 +668,9 @@ public class ParserTests : IDisposable
 
         var parentDirectFile = Path.Combine(_dir, "image5.png");
         File.WriteAllText(parentDirectFile, "img5");
-        Assert.Equal(parentDirectFile, ImportText.SafeResolveMedia(exportRoot, "image5.png"));
+        // SafeResolveMedia does not probe unconstrained parent dir, so it resolves to exportRoot fallback
+        Assert.Equal(Path.Combine(exportRoot, "image5.png"), ImportText.SafeResolveMedia(exportRoot, "image5.png"));
+        Assert.NotEqual(parentDirectFile, ImportText.SafeResolveMedia(exportRoot, "image5.png"));
 
         // 5. 若均未在磁盘发现，返回 SafeExportPath(exportRoot, normalized)
         var nonExistentPath = Path.Combine(exportRoot, "not_exist.png");
@@ -1485,6 +1487,116 @@ public class ParserTests : IDisposable
         var discovered = ImportDiscovery.Discover(new[] { _dir });
         Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(csvPath) && d.Platform == "wechat");
         Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(sqlPath) && d.Platform == "sql");
+    }
+
+    [Theory]
+    [InlineData("2024年03月15日 14:30:00")]
+    [InlineData("2024-03-15 14:30:00")]
+    [InlineData("2024/03/15 14:30:00")]
+    [InlineData("2024.03.15 14:30:00")]
+    [InlineData("2024-5-1 12:00:00")]
+    [InlineData("2024-5-1 12:00")]
+    [InlineData("2024/5/1 12:00:00")]
+    [InlineData("2024/5/1 12:00")]
+    [InlineData("2024.5.1 12:00:00")]
+    [InlineData("2024.5.1 12:00")]
+    [InlineData("2024-5-1")]
+    [InlineData("2024/5/1")]
+    [InlineData("2024.5.1")]
+    public void ParseFlexibleTimestamp_Parses_Various_Date_Formats(string timeStr)
+    {
+        var ts = ImportText.ParseFlexibleTimestamp(timeStr);
+        Assert.True(ts > 0);
+    }
+
+    [Fact]
+    public void SqlScriptParser_Handles_NullLiteral_And_Multiline_Comments()
+    {
+        var sqlContent = """
+            -- Top comment
+            INSERT INTO `chat_messages` (`msg_id`, `talker`, `createtime`, `issend`, `msg_type`, `msg_content`) VALUES
+              ('s_1', 'user1', 1700000100, 1, 1, 'NULL'),
+              ('s_2', 'user1', 1700000110, 0, 1, NULL),
+              ('s_3', 'user1', 1700000120, 1, 1, 'Line 1
+            -- this is not a comment
+            /* neither is this */
+            Line 2');
+            """;
+        var sqlPath = Path.Combine(_dir, "null_and_comments.sql");
+        File.WriteAllText(sqlPath, sqlContent);
+
+        var format = new ChatSqlExportFormat();
+        using var exportFile = format.Open(sqlPath);
+        var msgs = exportFile.EnumerateMessages().ToList();
+
+        Assert.Equal(3, msgs.Count);
+        Assert.Equal("NULL", msgs[0].Content);
+        Assert.Equal(string.Empty, msgs[1].Content);
+        Assert.Contains("-- this is not a comment", msgs[2].Content);
+        Assert.Contains("/* neither is this */", msgs[2].Content);
+    }
+
+    [Fact]
+    public void QqParser_IterateMessages_ThrowsImportFormatException_WhenMissingChatInfo()
+    {
+        var json = """
+            {
+              "messages": [
+                {"id": "m1", "timestamp": 1700000000000, "type": "text", "content": {"text": "hello"}}
+              ]
+            }
+            """;
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var conv = new ParsedConversation("qq", "self", "peer", "private", "Peer");
+        var ex = Assert.Throws<ImportFormatException>(() => QqParser.IterateMessages(doc, conv, "invalid_qq.json").ToList());
+        Assert.Contains("缺少 chatInfo 节点", ex.Message);
+    }
+
+    [Fact]
+    public void TextChatParser_And_MarkdownChatParser_Support_SingleDigit_MonthAndDay()
+    {
+        var txtContent = """
+            会话：测试好友
+            2024-5-1 12:00:00 Alice: 你好单数字月日
+            [2024-5-2 13:00:00] Bob: 收到单数字
+            """;
+        var txtPath = Path.Combine(_dir, "singledigit.txt");
+        File.WriteAllText(txtPath, txtContent);
+
+        var txtFormat = new ChatTextExportFormat();
+        using (var exportFile = txtFormat.Open(txtPath))
+        {
+            var msgs = exportFile.EnumerateMessages().ToList();
+            Assert.Equal(2, msgs.Count);
+            Assert.Equal("你好单数字月日", msgs[0].Content);
+            Assert.Equal("收到单数字", msgs[1].Content);
+            Assert.True(msgs[0].TimestampMs > 0);
+            Assert.True(msgs[1].TimestampMs > 0);
+        }
+
+        var mdContent = """
+            # 聊天记录：测试Markdown
+            [2024-5-1 12:00:00] Alice: Markdown单数字测试
+            """;
+        var mdPath = Path.Combine(_dir, "singledigit.md");
+        File.WriteAllText(mdPath, mdContent);
+
+        var mdFormat = new ChatMarkdownExportFormat();
+        using (var exportFile = mdFormat.Open(mdPath))
+        {
+            var msgs = exportFile.EnumerateMessages().ToList();
+            Assert.Single(msgs);
+            Assert.Equal("Markdown单数字测试", msgs[0].Content);
+            Assert.True(msgs[0].TimestampMs > 0);
+        }
+    }
+
+    [Fact]
+    public void ExportFormats_Register_Preserves_Default_Formats()
+    {
+        var dummyFormat = new ChatSqlExportFormat();
+        ExportFormats.Register(dummyFormat);
+        Assert.True(ExportFormats.Default.Count >= 11);
     }
 
     public void Dispose()

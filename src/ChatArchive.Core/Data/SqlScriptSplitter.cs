@@ -27,6 +27,39 @@ public static class SqlScriptSplitter
 
         while (i < script.Length)
         {
+            if (script[i] == '-' && i + 1 < script.Length && script[i + 1] == '-')
+            {
+                while (i < script.Length)
+                {
+                    current.Append(script[i]);
+                    if (script[i] == '\n')
+                    {
+                        i++;
+                        break;
+                    }
+                    i++;
+                }
+                continue;
+            }
+
+            if (script[i] == '/' && i + 1 < script.Length && script[i + 1] == '*')
+            {
+                current.Append("/*");
+                i += 2;
+                while (i < script.Length)
+                {
+                    if (script[i] == '*' && i + 1 < script.Length && script[i + 1] == '/')
+                    {
+                        current.Append("*/");
+                        i += 2;
+                        break;
+                    }
+                    current.Append(script[i]);
+                    i++;
+                }
+                continue;
+            }
+
             if (script[i] == '\'')
             {
                 current.Append(script[i]);

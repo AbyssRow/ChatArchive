@@ -692,8 +692,29 @@ public static class ChatLabParser
                 {
                     var declared = $"media/files/{extension}/{fileCandidate}";
                     var resolved = ImportText.SafeResolveMedia(exportRoot, declared, sessionTitle);
-                    return (declared, resolved, fileCandidate);
+                    if (resolved != null && File.Exists(resolved))
+                    {
+                        return (declared, resolved, fileCandidate);
+                    }
+
+                    candidatePaths.Add(declared);
                 }
+            }
+        }
+
+        foreach (var candidate in candidatePaths)
+        {
+            var normalized = candidate.Replace('\\', '/').Trim();
+            if (normalized.Length == 0)
+            {
+                continue;
+            }
+
+            var filename = Path.GetFileName(normalized);
+            var resolved = ImportText.SafeResolveMedia(exportRoot, normalized, sessionTitle);
+            if (resolved != null && File.Exists(resolved))
+            {
+                return (normalized, resolved, filename.Length > 0 ? filename : null);
             }
         }
 

@@ -87,7 +87,7 @@ public partial class ContactViewModel : ObservableObject
                 var boundSender = detail?.Senders.FirstOrDefault(s => s.SenderId == senderId);
                 AccountLabel = boundSender?.AccountLabel;
 
-                var platformName = profile.Platform == "qq" ? "QQ" : "微信";
+                var platformName = GetPlatformDisplayName(profile.Platform);
                 var idStr = profile.Platform == "qq"
                     ? (profile.QQNumber ?? profile.NativeId)
                     : profile.NativeId;
@@ -101,9 +101,11 @@ public partial class ContactViewModel : ObservableObject
                 DisplayName = profile.CurrentName;
                 CustomAvatarPath = null;
                 AccountLabel = null;
-                IdentityLine = (profile.Platform == "qq"
-                    ? $"QQ {profile.QQNumber ?? profile.NativeId}"
-                    : $"微信 {profile.NativeId}");
+                var platformName = GetPlatformDisplayName(profile.Platform);
+                var idStr = profile.Platform == "qq"
+                    ? (profile.QQNumber ?? profile.NativeId)
+                    : profile.NativeId;
+                IdentityLine = $"{platformName} {idStr}";
             }
         }
         else
@@ -113,9 +115,11 @@ public partial class ContactViewModel : ObservableObject
             DisplayName = profile.CurrentName;
             CustomAvatarPath = null;
             AccountLabel = null;
-            IdentityLine = (profile.Platform == "qq"
-                ? $"QQ {profile.QQNumber ?? profile.NativeId}"
-                : $"微信 {profile.NativeId}");
+            var platformName = GetPlatformDisplayName(profile.Platform);
+            var idStr = profile.Platform == "qq"
+                ? (profile.QQNumber ?? profile.NativeId)
+                : profile.NativeId;
+            IdentityLine = $"{platformName} {idStr}";
         }
 
         Aliases.Clear();
@@ -219,4 +223,14 @@ public partial class ContactViewModel : ObservableObject
         await Task.Run(() => _contactRepository.UnbindSender(BoundContact.Id, SenderId));
         await LoadAsync(SenderId);
     }
+
+    private static string GetPlatformDisplayName(string? platform) => platform?.ToLowerInvariant() switch
+    {
+        "qq" => "QQ",
+        "wechat" => "微信",
+        "text" => "文本",
+        "html" => "网页",
+        "sql" => "SQL",
+        _ => platform ?? string.Empty,
+    };
 }

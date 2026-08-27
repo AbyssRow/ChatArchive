@@ -115,11 +115,12 @@ public sealed class SenderRepository
                 reader.IsDBNull(3) ? null : reader.GetInt64(3)));
         }
 
+        var resolved = SenderDisplayName.Resolve(
+            connection,
+            result.Select(row => (SenderId: senderId, ConversationId: (long?)row.ConversationId)));
+
         foreach (var row in result)
         {
-            var resolved = SenderDisplayName.Resolve(
-                connection,
-                new[] { (SenderId: senderId, ConversationId: (long?)row.ConversationId) });
             if (resolved.TryGetValue((senderId, row.ConversationId), out var name))
             {
                 nameInConversation[row.ConversationId] = name;

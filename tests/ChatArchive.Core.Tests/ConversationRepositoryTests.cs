@@ -159,6 +159,21 @@ public class ConversationRepositoryTests : IDisposable
         Assert.Equal("工作号", ctxItem1.AccountLabel);
     }
 
+    [Theory]
+    [InlineData("invalid_cursor")]
+    [InlineData("-1_abc")]
+    [InlineData("abc")]
+    [InlineData("_123")]
+    public void ListMessages_WithInvalidCursor_FallsBackGracefully(string invalidCursor)
+    {
+        var conv = TestArchive.AddConversation(_archive.Open(), "c1", "会话");
+        _archive.AddMessage(conv, null, 1_700_000_000_000, "测试消息");
+
+        var page = _repository.ListMessages(conv, cursor: invalidCursor);
+        Assert.Single(page.Items);
+        Assert.Equal("测试消息", page.Items[0].Content);
+    }
+
     private static long mediaObjectId(long id) => id;
 
     public void Dispose() => _archive.Dispose();

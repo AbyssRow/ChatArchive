@@ -48,10 +48,6 @@ public sealed class MigrationRunner
             File.Copy(targetDb, backup, overwrite: true);
             Say($"已备份现有目标库 → {backup}");
         }
-        else
-        {
-            File.Delete(targetDb);
-        }
 
         Say("复制数据库（SQLite Backup API，自动包含 WAL 内容，源库只读）…");
         using (var source = new SqliteConnection(
@@ -138,6 +134,7 @@ public sealed class MigrationRunner
         foreach (var (id, newPath) in updates)
         {
             using var update = connection.CreateCommand();
+            update.Transaction = transaction;
             update.CommandText = "UPDATE media_objects SET managed_path=@p WHERE id=@id";
             update.Parameters.AddWithValue("@p", newPath);
             update.Parameters.AddWithValue("@id", id);

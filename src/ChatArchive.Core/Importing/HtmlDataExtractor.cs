@@ -95,8 +95,41 @@ public static partial class HtmlDataExtractor
             return false;
         }
 
-        var payload = ExtractJsonPayloadFromFile(filePath);
-        return !string.IsNullOrWhiteSpace(payload);
+        try
+        {
+            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 64 * 1024, FileOptions.SequentialScan);
+            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
+
+            var buffer = new char[64 * 1024];
+            var read = reader.Read(buffer, 0, buffer.Length);
+            if (read <= 0)
+            {
+                return false;
+            }
+
+            var chunk = new string(buffer, 0, read);
+            if (ScriptTagRegex().IsMatch(chunk) || WindowVarRegex().IsMatch(chunk))
+            {
+                return true;
+            }
+
+            var read2 = reader.Read(buffer, 0, buffer.Length);
+            if (read2 > 0)
+            {
+                var overlap = chunk.Substring(Math.Max(0, chunk.Length - 1024));
+                var chunk2 = overlap + new string(buffer, 0, read2);
+                if (ScriptTagRegex().IsMatch(chunk2) || WindowVarRegex().IsMatch(chunk2))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

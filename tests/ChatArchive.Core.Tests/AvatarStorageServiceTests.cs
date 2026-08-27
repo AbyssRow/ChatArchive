@@ -98,6 +98,20 @@ public sealed class AvatarStorageServiceTests : IDisposable
         using var stream = new MemoryStream([1, 2, 3]);
         Assert.Throws<ArgumentException>(() => _service.SaveAvatarFromStream(stream, ""));
         Assert.Throws<ArgumentException>(() => _service.SaveAvatarFromStream(stream, "   "));
+        Assert.Throws<ArgumentException>(() => _service.SaveAvatarFromStream(stream, "../malicious.ext"));
+        Assert.Throws<ArgumentException>(() => _service.SaveAvatarFromStream(stream, ".png;exe"));
+        Assert.Throws<ArgumentException>(() => _service.SaveAvatarFromStream(stream, ".verylongextensionexceedinglimit"));
+        Assert.Throws<ArgumentException>(() => _service.SaveAvatarFromStream(stream, ".!@#"));
+    }
+
+    [Fact]
+    public void ResolveAvatarFullPath_Prevents_Sandbox_Escape()
+    {
+        var outsideFile = Path.Combine(_testDir, "outside.png");
+        File.WriteAllBytes(outsideFile, [1, 2, 3]);
+
+        Assert.Null(_service.ResolveAvatarFullPath("../outside.png"));
+        Assert.Null(_service.ResolveAvatarFullPath("../../outside.png"));
     }
 
     [Fact]
@@ -169,21 +183,34 @@ public sealed class AvatarStorageServiceTests : IDisposable
     }
 
     [Fact]
-    public void ResolveAvatarFullPath_ResolvesExistingAbsolutePath()
+    public void ResolveAvatarFullPath_ResolvesExistingAbsolutePath_InsideAvatarDirectory()
+    {
+        var data = Encoding.UTF8.GetBytes("avatar in avatar dir");
+        using var stream = new MemoryStream(data);
+        var fileName = _service.SaveAvatarFromStream(stream, ".png");
+        var internalFile = Path.Combine(_avatarDir, fileName);
+
+        var resolvedPath = _service.ResolveAvatarFullPath(internalFile);
+
+        Assert.NotNull(resolvedPath);
+        Assert.Equal(Path.GetFullPath(internalFile), Path.GetFullPath(resolvedPath!));
+    }
+
+    [Fact]
+    public void ResolveAvatarFullPath_ReturnsNull_ForAbsolutePath_OutsideAvatarDirectory()
     {
         var externalFile = Path.Combine(_testDir, "external_avatar.png");
         File.WriteAllBytes(externalFile, [10, 20, 30]);
 
         var resolvedPath = _service.ResolveAvatarFullPath(externalFile);
 
-        Assert.NotNull(resolvedPath);
-        Assert.Equal(Path.GetFullPath(externalFile), Path.GetFullPath(resolvedPath!));
+        Assert.Null(resolvedPath);
     }
 
     [Fact]
     public void ResolveAvatarFullPath_ReturnsNull_ForNonExistentAbsolutePath()
     {
-        var nonExistentAbsolute = Path.Combine(_testDir, "does_not_exist_abs.png");
+        var nonExistentAbsolute = Path.Combine(_avatarDir, "does_not_exist_abs.png");
         Assert.False(File.Exists(nonExistentAbsolute));
 
         var resolvedPath = _service.ResolveAvatarFullPath(nonExistentAbsolute);

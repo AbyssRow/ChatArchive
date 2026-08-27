@@ -449,5 +449,31 @@ public sealed class ContactsViewModelTests : IDisposable
         Assert.Equal("Contact 2 Updated", vm.SelectedContact.DisplayName);
         Assert.Equal("Contact 2 Updated", vm.SelectedDetail.DisplayName);
     }
+
+    [Fact]
+    public async Task DeleteContactAsync_DoesNotRecreateDeletedContact()
+    {
+        var s1 = InsertSender("wx_del", "Deleted User", platform: "wechat");
+        var conv1 = InsertConversation("wx_del", "Deleted User Chat", platform: "wechat");
+        InsertMessage(conv1, s1, "Hello from private sender");
+
+        var vm = new ContactsViewModel(_contactRepository, _avatarStorage);
+        // Load initially with autoPopulate = true
+        await vm.LoadAsync(autoPopulate: true);
+        Assert.Single(vm.Contacts);
+        var contactId = vm.Contacts[0].Id;
+
+        // Delete the contact
+        await vm.DeleteContactAsync(contactId);
+
+        // Contacts list should be empty and selection cleared
+        Assert.Empty(vm.Contacts);
+        Assert.Null(vm.SelectedContact);
+        Assert.Null(vm.SelectedDetail);
+
+        // Calling LoadAsync() without autoPopulate does not recreate the deleted contact
+        await vm.LoadAsync();
+        Assert.Empty(vm.Contacts);
+    }
 }
 

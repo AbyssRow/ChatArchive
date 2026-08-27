@@ -136,9 +136,10 @@ public sealed class ConversationRepository
     {
         long? cursorTs = null;
         long? cursorId = null;
-        if (!string.IsNullOrEmpty(cursor))
+        if (!string.IsNullOrEmpty(cursor) && CursorCodec.TryDecode(cursor, out var ts, out var id))
         {
-            (cursorTs, cursorId) = CursorCodec.Decode(cursor);
+            cursorTs = ts;
+            cursorId = id;
         }
 
         var pageSize = Math.Clamp(limit, 1, 200);
@@ -371,27 +372,30 @@ public sealed class ConversationRepository
         }
 
         var ids = senderIds.Distinct().ToList();
-        var placeholders = string.Join(",", ids.Select((_, i) => $"@cs{i}"));
-        using var command = connection.CreateCommand();
-        command.CommandText = $"""
-            SELECT cs.sender_id, c.display_name, c.custom_avatar_path, cs.account_label
-            FROM contact_senders cs
-            JOIN contacts c ON c.id = cs.contact_id
-            WHERE cs.sender_id IN ({placeholders})
-            """;
-        for (var i = 0; i < ids.Count; i++)
+        foreach (var chunk in ids.Chunk(500))
         {
-            command.Parameters.AddWithValue($"@cs{i}", ids[i]);
-        }
+            var placeholders = string.Join(",", chunk.Select((_, i) => $"@cs{i}"));
+            using var command = connection.CreateCommand();
+            command.CommandText = $"""
+                SELECT cs.sender_id, c.display_name, c.custom_avatar_path, cs.account_label
+                FROM contact_senders cs
+                JOIN contacts c ON c.id = cs.contact_id
+                WHERE cs.sender_id IN ({placeholders})
+                """;
+            for (var i = 0; i < chunk.Length; i++)
+            {
+                command.Parameters.AddWithValue($"@cs{i}", chunk[i]);
+            }
 
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
-        {
-            var senderId = reader.GetInt64(0);
-            var displayName = reader.GetString(1);
-            var customAvatarPath = reader.IsDBNull(2) ? null : reader.GetString(2);
-            var accountLabel = reader.IsDBNull(3) ? null : reader.GetString(3);
-            result[senderId] = new ContactSenderInfo(displayName, customAvatarPath, accountLabel);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var senderId = reader.GetInt64(0);
+                var displayName = reader.GetString(1);
+                var customAvatarPath = reader.IsDBNull(2) ? null : reader.GetString(2);
+                var accountLabel = reader.IsDBNull(3) ? null : reader.GetString(3);
+                result[senderId] = new ContactSenderInfo(displayName, customAvatarPath, accountLabel);
+            }
         }
 
         return result;
@@ -406,48 +410,51 @@ public sealed class ConversationRepository
         }
 
         var ids = messageIds.ToList();
-        var placeholders = string.Join(",", ids.Select((_, i) => $"@m{i}"));
-        using var command = connection.CreateCommand();
-        command.CommandText = $$"""
-            SELECT a.id, a.message_id, a.ordinal, a.kind, a.filename, a.is_available,
-                   a.mime_type, a.width, a.height, a.duration, a.declared_path,
-                   mo.managed_path, a.source_path, mo.sha256
-            FROM attachments a
-            LEFT JOIN media_objects mo ON mo.id = a.media_object_id
-            WHERE a.message_id IN ({{placeholders}})
-            ORDER BY a.message_id, a.ordinal
-            """;
-        for (var i = 0; i < ids.Count; i++)
+        foreach (var chunk in ids.Chunk(500))
         {
-            command.Parameters.AddWithValue($"@m{i}", ids[i]);
-        }
-
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
-        {
-            var item = new AttachmentInfo(
-                reader.GetInt64(0),
-                reader.GetInt32(2),
-                reader.GetString(3),
-                reader.IsDBNull(4) ? null : reader.GetString(4),
-                reader.GetInt64(5) != 0,
-                reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                reader.IsDBNull(9) ? null : reader.GetDouble(9),
-                reader.IsDBNull(10) ? null : reader.GetString(10),
-                reader.IsDBNull(11) ? null : reader.GetString(11),
-                reader.IsDBNull(12) ? null : reader.GetString(12),
-                reader.IsDBNull(13) ? null : reader.GetString(13));
-
-            var messageId = reader.GetInt64(1);
-            if (!grouped.TryGetValue(messageId, out var list))
+            var placeholders = string.Join(",", chunk.Select((_, i) => $"@m{i}"));
+            using var command = connection.CreateCommand();
+            command.CommandText = $$"""
+                SELECT a.id, a.message_id, a.ordinal, a.kind, a.filename, a.is_available,
+                       a.mime_type, a.width, a.height, a.duration, a.declared_path,
+                       mo.managed_path, a.source_path, mo.sha256
+                FROM attachments a
+                LEFT JOIN media_objects mo ON mo.id = a.media_object_id
+                WHERE a.message_id IN ({{placeholders}})
+                ORDER BY a.message_id, a.ordinal
+                """;
+            for (var i = 0; i < chunk.Length; i++)
             {
-                list = new List<AttachmentInfo>();
-                grouped[messageId] = list;
+                command.Parameters.AddWithValue($"@m{i}", chunk[i]);
             }
 
-            list.Add(item);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var item = new AttachmentInfo(
+                    reader.GetInt64(0),
+                    reader.GetInt32(2),
+                    reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.GetInt64(5) != 0,
+                    reader.IsDBNull(6) ? null : reader.GetString(6),
+                    reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                    reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                    reader.IsDBNull(9) ? null : reader.GetDouble(9),
+                    reader.IsDBNull(10) ? null : reader.GetString(10),
+                    reader.IsDBNull(11) ? null : reader.GetString(11),
+                    reader.IsDBNull(12) ? null : reader.GetString(12),
+                    reader.IsDBNull(13) ? null : reader.GetString(13));
+
+                var messageId = reader.GetInt64(1);
+                if (!grouped.TryGetValue(messageId, out var list))
+                {
+                    list = new List<AttachmentInfo>();
+                    grouped[messageId] = list;
+                }
+
+                list.Add(item);
+            }
         }
 
         return grouped;

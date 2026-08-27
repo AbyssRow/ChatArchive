@@ -32,7 +32,8 @@ public static class QqParser
 
     public static IEnumerable<ParsedMessage> IterateMessages(JsonDocument document, ParsedConversation conversation, string documentPath)
     {
-        var chat = GetTopObject(document, "chatInfo")!;
+        var chat = GetTopObject(document, "chatInfo")
+            ?? throw new ImportFormatException(documentPath, "缺少 chatInfo 节点");
         var selfUid = ImportText.Clean(GetNode(chat, "selfUid"));
         var selfUin = ImportText.Clean(GetNode(chat, "selfUin"));
 

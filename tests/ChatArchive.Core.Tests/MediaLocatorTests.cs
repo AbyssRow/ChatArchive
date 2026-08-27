@@ -52,6 +52,34 @@ public class MediaLocatorTests : IDisposable
         Assert.Null(new MediaLocator(_dir).Resolve(sha, managedPath: @"E:\x\y.we!rd"));
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("a")]
+    [InlineData("xyz!@#")]
+    [InlineData("../malicious")]
+    public void Invalid_sha256_returns_null_or_fallback(string invalidSha)
+    {
+        var locator = new MediaLocator(_dir);
+        Assert.Null(locator.Resolve(invalidSha));
+
+        var fallbackFile = Path.Combine(_dir, "fallback.jpg");
+        File.WriteAllText(fallbackFile, "fb");
+        Assert.Equal(fallbackFile, locator.Resolve(invalidSha, sourcePath: fallbackFile));
+    }
+
+    [Fact]
+    public void SafeResolveMedia_DoesNotLeakArbitraryParentFiles()
+    {
+        var exportRoot = Path.Combine(_dir, "session_export");
+        Directory.CreateDirectory(exportRoot);
+        var parentSecretFile = Path.Combine(_dir, "secret.png");
+        File.WriteAllText(parentSecretFile, "secret");
+
+        var resolved = ChatArchive.Core.Importing.ImportText.SafeResolveMedia(exportRoot, "secret.png");
+        Assert.Equal(Path.Combine(exportRoot, "secret.png"), resolved);
+        Assert.NotEqual(parentSecretFile, resolved);
+    }
+
     public void Dispose()
     {
         try

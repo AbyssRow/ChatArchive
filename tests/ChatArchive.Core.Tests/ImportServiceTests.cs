@@ -248,7 +248,7 @@ public class ImportServiceTests : IDisposable
     }
 
     [Fact]
-    public void Database_constraint_failure_terminates_the_run()
+    public void Database_constraint_failure_records_failed_file_result()
     {
         var root = ExportRoot();
         File.WriteAllText(Path.Combine(root, "invalid-database.json"), "{}");
@@ -257,12 +257,12 @@ public class ImportServiceTests : IDisposable
             _mediaDir,
             formats: new[] { new InvalidDatabaseExportFormat() });
 
-        var error = Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(
-            () => service.Run(new[] { root }));
-
-        Assert.Equal(19, error.SqliteErrorCode);
+        var result = service.Run(new[] { root });
+        Assert.Equal(1, result.FilesFailed);
+        var failed = Assert.Single(result.Files);
+        Assert.Equal("failed", failed.Status);
         using var connection = _archive.Open();
-        Assert.Equal("failed", Text(connection, "SELECT status FROM import_runs LIMIT 1"));
+        Assert.Equal("completed_with_errors", Text(connection, "SELECT status FROM import_runs LIMIT 1"));
     }
 
     [Fact]
@@ -888,6 +888,116 @@ public class ImportServiceTests : IDisposable
                 }
             }
         }
+    }
+
+    [Fact]
+    public void Cross_format_import_same_conversation_merges_without_duplication()
+    {
+        var testDir = Path.Combine(Path.GetTempPath(), $"chatarchive_merge_test_{Guid.NewGuid():N}");
+        var exportsDir1 = Path.Combine(testDir, "batch1");
+        var exportsDir2 = Path.Combine(testDir, "batch2");
+        var dbDir = Path.Combine(testDir, "db");
+        var mediaDir = Path.Combine(testDir, "media");
+        Directory.CreateDirectory(exportsDir1);
+        Directory.CreateDirectory(exportsDir2);
+        Directory.CreateDirectory(dbDir);
+        Directory.CreateDirectory(mediaDir);
+
+        try
+        {
+            // Batch 1: WeFlow export (account_id = wechat-default)
+            var weflowExport = """
+                {
+                  "weflow": { "version": "1.0.3", "generator": "WeFlow" },
+                  "session": { "wxid": "wxid_friend123", "displayName": "好友小明", "type": "私聊" },
+                  "messages": [
+                    { "localId": 1, "localType": 1, "createTime": 1700000000, "type": "文本消息", "content": "第一条消息来自WeFlow", "isSend": 0, "senderUsername": "wxid_friend123", "senderDisplayName": "好友小明", "platformMessageId": "msg_w1" },
+                    { "localId": 2, "localType": 1, "createTime": 1700000005, "type": "文本消息", "content": "第二条回复来自我", "isSend": 1, "senderUsername": "wxid_myaccount", "senderDisplayName": "我", "platformMessageId": "msg_w2" }
+                  ]
+                }
+                """;
+            File.WriteAllText(Path.Combine(exportsDir1, "weflow_chat.json"), weflowExport);
+
+            // Batch 2: ChatLab export for SAME conversation (ownerId = wxid_myaccount)
+            var chatlabExport = """
+                {
+                  "chatlab": { "version": "0.0.2", "generator": "CipherTalk" },
+                  "meta": { "name": "好友小明", "platform": "wechat", "type": "private", "ownerId": "wxid_myaccount", "chatId": "wxid_friend123" },
+                  "members": [
+                    { "platformId": "wxid_friend123", "accountName": "好友小明" },
+                    { "platformId": "wxid_myaccount", "accountName": "我" }
+                  ],
+                  "messages": [
+                    { "sender": "wxid_friend123", "accountName": "好友小明", "timestamp": 1700000000, "localType": 1, "type": 0, "content": "第一条消息来自WeFlow", "platformMessageId": "msg_w1" },
+                    { "sender": "wxid_friend123", "accountName": "好友小明", "timestamp": 1700000010, "localType": 1, "type": 0, "content": "第三条新消息来自ChatLab", "platformMessageId": "msg_c3" }
+                  ]
+                }
+                """;
+            File.WriteAllText(Path.Combine(exportsDir2, "chatlab_chat.json"), chatlabExport);
+
+            var dbPath = Path.Combine(dbDir, "merge_test.db");
+            var db = new ArchiveDatabase(dbPath);
+            db.EnsureSchema();
+            var service = new ImportService(db, mediaDir);
+
+            // Import batch 1
+            var res1 = service.Run(new[] { exportsDir1 });
+            Assert.Equal(1, res1.FilesImported);
+            Assert.Equal(2, res1.Added);
+
+            // Import batch 2
+            var res2 = service.Run(new[] { exportsDir2 });
+            Assert.Equal(1, res2.FilesImported);
+            Assert.Equal(1, res2.Added); // Only msg_c3 is added, msg_w1 is deduplicated
+            Assert.Equal(1, res2.Duplicates);
+
+            using (var connection = db.OpenConnection())
+            {
+                // MUST have exactly 1 conversation (NOT split into 2)
+                var convCount = Scalar(connection, "SELECT COUNT(*) FROM conversations");
+                Assert.Equal(1L, convCount);
+
+                // AccountId should be upgraded to wxid_myaccount
+                var accountId = ScalarText(connection, "SELECT account_id FROM conversations WHERE native_id = 'wxid_friend123'");
+                Assert.Equal("wxid_myaccount", accountId);
+
+                // Total messages in conversation must be 3
+                var msgCount = Scalar(connection, "SELECT COUNT(*) FROM messages");
+                Assert.Equal(3L, msgCount);
+
+                // Total senders must be 2 (wxid_friend123 and wxid_myaccount), NOT duplicated
+                var senderCount = Scalar(connection, "SELECT COUNT(*) FROM senders");
+                Assert.Equal(2L, senderCount);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(testDir))
+            {
+                try { Directory.Delete(testDir, recursive: true); } catch (IOException) { }
+            }
+        }
+    }
+
+    private static string? ScalarText(Microsoft.Data.Sqlite.SqliteConnection connection, string text)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = text;
+        return command.ExecuteScalar() as string;
+    }
+
+    [Fact]
+    public void ImportFile_ReturnsFailed_WhenPlatformHasNoMatchingFormat()
+    {
+        var dummyFile = Path.Combine(ExportRoot(), "unknown.xyz");
+        File.WriteAllText(dummyFile, "dummy");
+        var service = new ImportService(_archive.Db, _mediaDir);
+
+        var result = service.ImportFile(dummyFile, "non_existent_platform", 1L);
+        Assert.Equal("failed", result.Status);
+        Assert.NotNull(result.Error);
+        Assert.Contains("未找到支持的导出格式解析器", result.Error);
+        Assert.Contains("non_existent_platform", result.Error);
     }
 
     public void Dispose() => _archive.Dispose();

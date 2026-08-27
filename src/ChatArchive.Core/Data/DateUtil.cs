@@ -32,15 +32,11 @@ public static class DateUtil
             throw new FormatException($"日期格式无效: {value}");
         }
 
+        var targetDate = endOfDays ? parsed.AddDays(1) : parsed;
         var local = TimeZoneInfo.Local;
-        var unspecified = DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified);
+        var unspecified = DateTime.SpecifyKind(targetDate, DateTimeKind.Unspecified);
         var offset = local.GetUtcOffset(unspecified);
         var utc = new DateTimeOffset(unspecified, offset);
-        if (endOfDays)
-        {
-            utc = utc.AddDays(1);
-        }
-
         return utc.ToUnixTimeMilliseconds();
     }
 }

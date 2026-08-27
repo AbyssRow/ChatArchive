@@ -245,6 +245,140 @@ public class ArchiveDatabaseTests : IDisposable
         Assert.Equal(34, statements.Count);
     }
 
+    [Fact]
+    public void Split_handles_line_and_block_comments()
+    {
+        var sql = """
+            -- This is a comment with a semicolon;
+            SELECT 1;
+            /* Block comment with semicolon; and multiple
+               lines */
+            SELECT 2;
+            SELECT '-- not a comment; inside string' AS val;
+            """;
+        var statements = SqlScriptSplitter.Split(sql);
+        Assert.Equal(3, statements.Count);
+        Assert.StartsWith("-- This is a comment with a semicolon;\nSELECT 1", statements[0].Replace("\r\n", "\n"));
+        Assert.StartsWith("/* Block comment with semicolon;", statements[1]);
+        Assert.Equal("SELECT '-- not a comment; inside string' AS val", statements[2]);
+    }
+
+    [Fact]
+    public void RepairDuplicateConversationsAndSenders_MergesDuplicatesCleanly()
+    {
+        var db = new ArchiveDatabase(_databasePath);
+        db.EnsureSchema();
+
+        using (var connection = db.OpenConnection())
+        {
+            // Insert duplicate senders (one with wechat-default, one with wxid_rpz...)
+            Execute(connection, """
+                INSERT INTO senders(id, platform, account_id, native_id, current_name, is_self)
+                VALUES (1, 'wechat', 'wechat-default', 'wxid_user1', 'wxid_user1', 0),
+                       (2, 'wechat', 'wxid_myaccount', 'wxid_user1', '用户一', 0);
+                """);
+
+            // Insert duplicate conversations (one with wechat-default, one with wxid_myaccount)
+            Execute(connection, """
+                INSERT INTO conversations(id, platform, account_id, native_id, kind, title, message_count)
+                VALUES (10, 'wechat', 'wechat-default', 'wxid_user1', 'private', 'wxid_user1', 1),
+                       (20, 'wechat', 'wxid_myaccount', 'wxid_user1', 'private', '用户一', 2);
+                """);
+
+            // Messages: msg 100 in conv 10, msg 200 in conv 20 (distinct message), msg 201 in conv 20 (duplicate of 100)
+            Execute(connection, """
+                INSERT INTO messages(id, conversation_id, sender_id, platform, native_id, timestamp_ms,
+                    direction, message_type, content, search_text, sender_name_snapshot,
+                    conversation_title_snapshot, payload_hash, semantic_hash, raw_payload_json)
+                VALUES (100, 10, 1, 'wechat', 'm1', 1700000000000, 'incoming', 'text', '你好', '你好', '用户一', '用户一', 'ph1', 'sh1', '{}'),
+                       (200, 20, 2, 'wechat', 'm2', 1700000005000, 'incoming', 'text', '在吗', '在吗', '用户一', '用户一', 'ph2', 'sh2', '{}'),
+                       (201, 20, 2, 'wechat', 'm1', 1700000000000, 'incoming', 'text', '你好', '你好', '用户一', '用户一', 'ph1', 'sh1', '{}');
+                """);
+
+            // Contact binding to duplicate sender
+            Execute(connection, """
+                INSERT INTO contacts(id, display_name) VALUES (1, '好友联系人');
+                INSERT INTO contact_senders(contact_id, sender_id, account_label) VALUES (1, 2, '微信');
+                """);
+        }
+
+        var merged = db.RepairDuplicateConversationsAndSenders();
+        Assert.True(merged >= 2, $"merged: {merged}");
+
+        using (var connection = db.OpenConnection())
+        {
+            // Only 1 sender should remain
+            Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM senders"));
+            Assert.Equal("wxid_myaccount", ScalarText(connection, "SELECT account_id FROM senders WHERE native_id = 'wxid_user1'"));
+            Assert.Equal("用户一", ScalarText(connection, "SELECT current_name FROM senders WHERE native_id = 'wxid_user1'"));
+
+            // Only 1 conversation should remain
+            Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM conversations"));
+            Assert.Equal("wxid_myaccount", ScalarText(connection, "SELECT account_id FROM conversations WHERE native_id = 'wxid_user1'"));
+            Assert.Equal("用户一", ScalarText(connection, "SELECT title FROM conversations WHERE native_id = 'wxid_user1'"));
+            Assert.Equal(2L, Scalar(connection, "SELECT message_count FROM conversations WHERE native_id = 'wxid_user1'"));
+
+            // Messages: duplicate m1 was merged, m2 was preserved
+            Assert.Equal(2L, Scalar(connection, "SELECT COUNT(*) FROM messages"));
+            Assert.Equal(2L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE conversation_id = 20 OR conversation_id = 10"));
+
+            // Contact sender was cleanly updated
+            Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM contact_senders WHERE contact_id = 1"));
+        }
+    }
+
+    [Fact]
+    public void RepairDuplicateConversations_PreservesAttachmentsFromDuplicateMessages()
+    {
+        var db = new ArchiveDatabase(_databasePath);
+        db.EnsureSchema();
+
+        using (var connection = db.OpenConnection())
+        {
+            Execute(connection, """
+                INSERT INTO senders(id, platform, account_id, native_id, current_name, is_self)
+                VALUES (1, 'wechat', 'wechat-default', 'wxid_user1', 'wxid_user1', 0),
+                       (2, 'wechat', 'wxid_myaccount', 'wxid_user1', '用户一', 0);
+                """);
+
+            Execute(connection, """
+                INSERT INTO conversations(id, platform, account_id, native_id, kind, title, message_count)
+                VALUES (10, 'wechat', 'wechat-default', 'wxid_user1', 'private', 'wxid_user1', 1),
+                       (20, 'wechat', 'wxid_myaccount', 'wxid_user1', 'private', '用户一', 1);
+                """);
+
+            // Canonical will be conv 20 (has non-default account_id).
+            // Msg 100 is in dup conv 10. Msg 200 is in canonical conv 20.
+            // Msg 100 has an attachment. Msg 200 does not.
+            Execute(connection, """
+                INSERT INTO messages(id, conversation_id, sender_id, platform, native_id, timestamp_ms,
+                    direction, message_type, content, search_text, sender_name_snapshot,
+                    conversation_title_snapshot, payload_hash, semantic_hash, raw_payload_json)
+                VALUES (100, 10, 1, 'wechat', 'm1', 1700000000000, 'incoming', 'image', '[图片]', '[图片]', '用户一', '用户一', 'ph1', 'sh1', '{}'),
+                       (200, 20, 2, 'wechat', 'm1', 1700000000000, 'incoming', 'image', '[图片]', '[图片]', '用户一', '用户一', 'ph1', 'sh1', '{}');
+                """);
+
+            Execute(connection, """
+                INSERT INTO attachments(id, message_id, ordinal, kind, filename, is_available, metadata_json)
+                VALUES (1, 100, 0, 'image', 'photo.jpg', 1, '{}');
+                """);
+        }
+
+        var merged = db.RepairDuplicateConversationsAndSenders();
+        Assert.True(merged >= 1);
+
+        using (var connection = db.OpenConnection())
+        {
+            // The surviving message should be 200
+            Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE id = 200"));
+            Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE id = 100"));
+
+            // Attachment should now be attached to 200
+            Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM attachments"));
+            Assert.Equal(200L, Scalar(connection, "SELECT message_id FROM attachments WHERE id = 1"));
+        }
+    }
+
     private static void Execute(SqliteConnection connection, string text)
     {
         using var command = connection.CreateCommand();

@@ -61,7 +61,7 @@ public sealed class MessageEntry : TimelineEntry
 
     public string? AvatarPath => Message.CustomAvatarPath;
     public string? AccountBadge => string.IsNullOrWhiteSpace(Message.AccountLabel) ? null : Message.AccountLabel;
-    public string Initials => string.IsNullOrWhiteSpace(Message.SenderName) ? "?" : Message.SenderName.Trim().Substring(0, 1);
+    public string Initials => string.IsNullOrWhiteSpace(Message.SenderName) ? "?" : System.Globalization.StringInfo.GetNextTextElement(Message.SenderName.Trim());
     public string DisplaySenderName => string.IsNullOrWhiteSpace(AccountBadge) ? Message.SenderName : $"{Message.SenderName} · {AccountBadge}";
 }
 

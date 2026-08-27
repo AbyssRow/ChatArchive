@@ -78,9 +78,16 @@ public sealed class MsToDateTimeConverter : IValueConverter
 
     public object Convert(object value, Type targetType, object parameter, string language)
     {
-        if (value is long ms && ms > 0)
+        if (value is long ms and >= 0 and <= 253402300799000L)
         {
-            return DateTimeOffset.FromUnixTimeMilliseconds(ms).LocalDateTime.ToString(Format);
+            try
+            {
+                return DateTimeOffset.FromUnixTimeMilliseconds(ms).LocalDateTime.ToString(Format);
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         return string.Empty;
@@ -96,7 +103,12 @@ public sealed class CountTextConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, string language)
     {
-        return value is long count ? $"{count:N0} 条" : string.Empty;
+        return value switch
+        {
+            long l => $"{l:N0} 条",
+            int i => $"{i:N0} 条",
+            _ => string.Empty,
+        };
     }
 
     public object ConvertBack(object value, Type targetType, object parameter, string language)
@@ -116,7 +128,7 @@ public sealed class PlatformLabelConverter : IValueConverter
             "text" => "文本/MD",
             "html" => "网页",
             "sql" => "SQL",
-            _ => string.Empty,
+            _ => p,
         } : string.Empty;
     }
 

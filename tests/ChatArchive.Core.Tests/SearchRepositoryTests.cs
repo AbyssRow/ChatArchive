@@ -124,10 +124,35 @@ public class SearchRepositoryTests : IDisposable
     [InlineData("天气预报", true)]
     [InlineData("a b c", false)]
     [InlineData("ab", false)]
-    [InlineData("ab!", false)]
+    [InlineData("ab!", true)]
+    [InlineData("hi alice", false)]
+    [InlineData("好的 谢谢", false)]
+    [InlineData("好的 谢谢啊", false)]
+    [InlineData("hello world", true)]
+    [InlineData("   ", false)]
+    [InlineData("", false)]
     public void SupportsTrigram_rules(string query, bool expected)
     {
         Assert.Equal(expected, SearchRepository.SupportsTrigram(query));
+    }
+
+    [Fact]
+    public void MakeSnippet_is_case_insensitive()
+    {
+        var snippet = SearchRepository.MakeSnippet("Hello Alice World", "hello alice world", "alice");
+        Assert.Contains("Alice", snippet);
+    }
+
+    [Theory]
+    [InlineData("invalid_cursor")]
+    [InlineData("-1_abc")]
+    [InlineData("abc")]
+    [InlineData("_123")]
+    public void Search_WithInvalidCursor_FallsBackGracefully(string invalidCursor)
+    {
+        Seed();
+        var page = _repository.Search("下雨", cursor: invalidCursor);
+        Assert.NotEmpty(page.Items);
     }
 
     public void Dispose() => _archive.Dispose();

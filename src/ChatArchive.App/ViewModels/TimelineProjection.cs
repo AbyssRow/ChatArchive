@@ -163,8 +163,13 @@ public static class TimelineProjection
             || MediaMessageTypes.Contains(message.MessageType);
     }
 
-    private static bool IsTechnicalContent(string content, IReadOnlyList<AttachmentInfo> attachments)
+    private static bool IsTechnicalContent(string? content, IReadOnlyList<AttachmentInfo> attachments)
     {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return false;
+        }
+
         var trimmed = content.Trim();
         if (trimmed.Length == 0)
         {
@@ -198,13 +203,23 @@ public static class TimelineProjection
         return false;
     }
 
-    private static string NormalizePath(string value)
+    private static string NormalizePath(string? value)
     {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
         return value.Trim().Replace('\\', '/');
     }
 
-    private static string NormalizeKind(string value)
+    private static string NormalizeKind(string? value)
     {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "unknown";
+        }
+
         return value.Equals("voice", StringComparison.OrdinalIgnoreCase)
             ? "audio"
             : value.ToLowerInvariant();

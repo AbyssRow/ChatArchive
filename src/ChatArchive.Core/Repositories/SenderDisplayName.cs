@@ -9,19 +9,31 @@ internal static class SenderDisplayName
 
     public static IReadOnlyDictionary<(long SenderId, long? ConversationId), string> Resolve(
         SqliteConnection connection,
-        IEnumerable<(long SenderId, long? ConversationId)> keys)
+        IEnumerable<(long SenderId, long? ConversationId)>? keys)
     {
         var result = new Dictionary<(long SenderId, long? ConversationId), string>();
-        var senderIds = keys.Select(k => k.SenderId).Distinct().OrderBy(x => x).ToList();
+        if (keys == null)
+        {
+            return result;
+        }
+
+        var keyList = keys as IReadOnlyCollection<(long SenderId, long? ConversationId)> ?? keys.ToList();
+        if (keyList.Count == 0)
+        {
+            return result;
+        }
+
+        var senderIds = keyList.Select(k => k.SenderId).Distinct().OrderBy(x => x).ToList();
         if (senderIds.Count == 0)
         {
             return result;
         }
 
         var candidates = new Dictionary<long, List<Candidate>>();
-        var placeholders = string.Join(",", senderIds.Select((_, i) => $"@p{i}"));
-        using (var command = connection.CreateCommand())
+        foreach (var chunk in senderIds.Chunk(500))
         {
+            var placeholders = string.Join(",", chunk.Select((_, i) => $"@p{i}"));
+            using var command = connection.CreateCommand();
             command.CommandText = $$"""
                 SELECT sa.sender_id, sa.conversation_id, sa.alias, sa.last_seen_at,
                        c.kind, s.native_id, s.platform
@@ -30,9 +42,9 @@ internal static class SenderDisplayName
                 LEFT JOIN conversations c ON c.id = sa.conversation_id
                 WHERE sa.sender_id IN ({{placeholders}})
                 """;
-            for (var i = 0; i < senderIds.Count; i++)
+            for (var i = 0; i < chunk.Length; i++)
             {
-                command.Parameters.AddWithValue($"p{i}", senderIds[i]);
+                command.Parameters.AddWithValue($"p{i}", chunk[i]);
             }
 
             using var reader = command.ExecuteReader();
@@ -73,7 +85,7 @@ internal static class SenderDisplayName
             }
         }
 
-        foreach (var key in keys)
+        foreach (var key in keyList)
         {
             if (!candidates.TryGetValue(key.SenderId, out var available) || available.Count == 0)
             {

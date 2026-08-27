@@ -46,6 +46,30 @@ public sealed class ContactViewModelTests : IDisposable
         Assert.Equal("QQ 123456789", viewModel.IdentityLine);
     }
 
+    [Fact]
+    public async Task Wechat_and_text_identity_formats_properly()
+    {
+        Directory.CreateDirectory(_directory);
+        var database = new ArchiveDatabase(Path.Combine(_directory, "contact_wx.db"));
+        database.EnsureSchema();
+
+        long senderId;
+        using (var connection = database.OpenConnection())
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO senders(platform, account_id, native_id, current_name, is_self)
+                VALUES ('wechat', 'account', 'wxid_test', '微信用户', 0);
+                SELECT last_insert_rowid();
+                """;
+            senderId = Convert.ToInt64(command.ExecuteScalar());
+        }
+
+        var viewModel = new ContactViewModel(new SenderRepository(database));
+        Assert.True(await viewModel.LoadAsync(senderId));
+        Assert.Equal("微信 wxid_test", viewModel.IdentityLine);
+    }
+
     public void Dispose()
     {
         try

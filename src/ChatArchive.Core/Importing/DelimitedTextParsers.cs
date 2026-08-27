@@ -335,31 +335,7 @@ public static class WeCloneCsvParser
 
     public static long ParseTimestamp(string timeStr)
     {
-        if (string.IsNullOrWhiteSpace(timeStr))
-        {
-            return 0;
-        }
-
-        timeStr = timeStr.Trim();
-        if (long.TryParse(timeStr, out var rawLong))
-        {
-            return rawLong >= 10_000_000_000L ? rawLong : rawLong * 1000L;
-        }
-
-        if (DateTimeOffset.TryParse(timeStr, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var dto))
-        {
-            return dto.ToUnixTimeMilliseconds();
-        }
-
-        if (DateTime.TryParse(timeStr, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
-        {
-            var local = TimeZoneInfo.Local;
-            var unspecified = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
-            var offset = local.GetUtcOffset(unspecified);
-            return new DateTimeOffset(unspecified, offset).ToUnixTimeMilliseconds();
-        }
-
-        return 0;
+        return ImportText.ParseFlexibleTimestamp(timeStr);
     }
 }
 
@@ -373,7 +349,7 @@ public static class MarkdownChatParser
         RegexOptions.Compiled | RegexOptions.Multiline);
 
     private static readonly Regex MessageRegex = new(
-        @"^\[(?<time>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]\s*(?<sender>[^:：\n]+)[:：]\s*(?<content>.*)$",
+        @"^\[(?<time>\d{4}-\d{1,2}-\d{1,2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]\s*(?<sender>[^:：\n]+)[:：]\s*(?<content>.*)$",
         RegexOptions.Compiled);
 
     public static bool Matches(string filePath)
@@ -574,11 +550,11 @@ public static class MarkdownChatParser
 public static class TextChatParser
 {
     private static readonly Regex HeaderRegex1 = new(
-        @"^(?<time>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\s+(?<sender>[^\n:：]+)[:：]?\s*(?<content>.*)$",
+        @"^(?<time>\d{4}-\d{1,2}-\d{1,2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\s+(?<sender>[^\n:：]+)[:：]?\s*(?<content>.*)$",
         RegexOptions.Compiled);
 
     private static readonly Regex HeaderRegex2 = new(
-        @"^\[(?<time>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]\s*(?<sender>[^:：\n]+)[:：]?\s*(?<content>.*)$",
+        @"^\[(?<time>\d{4}-\d{1,2}-\d{1,2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]\s*(?<sender>[^:：\n]+)[:：]?\s*(?<content>.*)$",
         RegexOptions.Compiled);
 
     private static readonly Regex TitleRegex = new(

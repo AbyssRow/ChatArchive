@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using System.Diagnostics;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.System;
@@ -48,7 +49,7 @@ public sealed partial class MainWindow : Window
             var services = AppServices.Instance;
             var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
             _conversations = new ConversationListViewModel(services.Conversations, dispatcher);
-            _contacts = new ContactsViewModel(services.Contacts, services.AvatarStorage);
+            _contacts = new ContactsViewModel(services.Contacts, services.AvatarStorage, dispatcher);
             _timeline = new TimelineViewModel(services.Conversations, services.MediaLocator, dispatcher);
             _search = new SearchViewModel(services.Search, services.Conversations, dispatcher);
             _stats = new StatsViewModel(services.Stats, dispatcher);
@@ -129,6 +130,7 @@ public sealed partial class MainWindow : Window
             };
             _import.ImportFinished += () =>
             {
+                _statsLoaded = false;
                 _conversations.Reload();
                 _search.LoadOptions();
             };
@@ -166,7 +168,23 @@ public sealed partial class MainWindow : Window
 
     private void Nav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        if (args.SelectedItem is not NavigationViewItem item || TimelinePane is null)
+        if (TimelinePane is null)
+        {
+            return;
+        }
+
+        if (args.IsSettingsSelected)
+        {
+            TimelinePane.Visibility = Visibility.Collapsed;
+            ContactsRoot.Visibility = Visibility.Collapsed;
+            SearchPane.Visibility = Visibility.Collapsed;
+            StatsPane.Visibility = Visibility.Collapsed;
+            SettingsPane.Visibility = Visibility.Visible;
+            RefreshSettingsView();
+            return;
+        }
+
+        if (args.SelectedItem is not NavigationViewItem item)
         {
             return;
         }
@@ -176,6 +194,7 @@ public sealed partial class MainWindow : Window
         ContactsRoot.Visibility = tag == "contacts" ? Visibility.Visible : Visibility.Collapsed;
         SearchPane.Visibility = tag == "search" ? Visibility.Visible : Visibility.Collapsed;
         StatsPane.Visibility = tag == "stats" ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPane.Visibility = Visibility.Collapsed;
 
         if (tag == "contacts")
         {
@@ -222,123 +241,144 @@ public sealed partial class MainWindow : Window
 
     private async void OnImportClick(object sender, RoutedEventArgs e)
     {
-        var pathsPanel = new StackPanel { Spacing = 10 };
-        var list = new ListView { MaxHeight = 160, SelectionMode = ListViewSelectionMode.None };
-        list.ItemsSource = _import.Paths;
-        var progress = new ProgressBar { IsIndeterminate = true, Visibility = Visibility.Collapsed };
-        var status = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.85 };
-
-        var addFile = new Button { Content = "添加文件…" };
-        addFile.Click += async (_, _) =>
-        {
-            var picker = new FileOpenPicker
-            {
-                SuggestedStartLocation = PickerLocationId.ComputerFolder,
-                ViewMode = PickerViewMode.List,
-            };
-            picker.FileTypeFilter.Add(".json");
-            picker.FileTypeFilter.Add(".jsonl");
-            picker.FileTypeFilter.Add(".html");
-            picker.FileTypeFilter.Add(".htm");
-            picker.FileTypeFilter.Add(".csv");
-            picker.FileTypeFilter.Add(".md");
-            picker.FileTypeFilter.Add(".txt");
-            picker.FileTypeFilter.Add(".sql");
-            picker.FileTypeFilter.Add("*");
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-            var files = await picker.PickMultipleFilesAsync();
-            if (files is not null)
-            {
-                foreach (var file in files)
-                {
-                    _import.AddPath(file.Path);
-                }
-            }
-        };
-
-        var addFolder = new Button { Content = "添加文件夹…" };
-        addFolder.Click += async (_, _) =>
-        {
-            var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder };
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-            var folder = await picker.PickSingleFolderAsync();
-            if (folder is not null)
-            {
-                _import.AddPath(folder.Path);
-            }
-        };
-        var clear = new Button { Content = "清空列表" };
-        clear.Click += (_, _) => _import.ClearPathsCommand.Execute(null);
-        var start = new Button { Content = "开始导入", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
-        start.Click += (_, _) =>
-        {
-            _import.StartCommand.Execute(null);
-            RefreshButtons();
-        };
-
-        void RefreshButtons()
-        {
-            status.Text = _import.StatusText;
-            progress.IsIndeterminate = _import.IsRunning;
-            progress.Visibility = _import.IsRunning ? Visibility.Visible : Visibility.Collapsed;
-            addFile.IsEnabled = !_import.IsRunning;
-            addFolder.IsEnabled = !_import.IsRunning;
-            clear.IsEnabled = !_import.IsRunning;
-            start.IsEnabled = !_import.IsRunning && _import.Paths.Count > 0;
-        }
-
-        pathsPanel.Children.Add(new TextBlock
-        {
-            Text = "支持导入以下软件与格式的导出文件或文件夹（自动递归嗅探与深度解析）：\n• 微信：WeFlow (JSON / ArkMe)、CipherTalk (Detailed JSON)、WeClone (CSV)\n• QQ：QQ Chat Exporter (单文件 JSON / 分块 JSONL manifest)\n• 通用：ChatLab (JSON / JSONL)、内嵌 HTML、Markdown、TXT、SQL 脚本\n• 支持多次重叠导入，应用会按内容哈希与消息原生 ID 自动去重。",
-            TextWrapping = TextWrapping.Wrap,
-            Opacity = 0.85,
-            FontSize = 12,
-            LineHeight = 18,
-        });
-        pathsPanel.Children.Add(list);
-        var buttonsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        buttonsRow.Children.Add(addFile);
-        buttonsRow.Children.Add(addFolder);
-        buttonsRow.Children.Add(clear);
-        buttonsRow.Children.Add(start);
-        pathsPanel.Children.Add(buttonsRow);
-        pathsPanel.Children.Add(progress);
-        pathsPanel.Children.Add(status);
-
-        System.ComponentModel.PropertyChangedEventHandler importChanged = (_, e) =>
-        {
-            if (e.PropertyName is nameof(ImportViewModel.StatusText) or nameof(ImportViewModel.IsRunning))
-            {
-                DispatcherQueue.TryEnqueue(RefreshButtons);
-            }
-        };
-        System.Collections.Specialized.NotifyCollectionChangedEventHandler pathsChanged = (_, _) =>
-            DispatcherQueue.TryEnqueue(RefreshButtons);
-        _import.PropertyChanged += importChanged;
-        _import.Paths.CollectionChanged += pathsChanged;
-
-        var dialog = new ContentDialog
-        {
-            XamlRoot = Content.XamlRoot,
-            Title = "导入聊天记录",
-            PrimaryButtonText = "关闭",
-            DefaultButton = ContentDialogButton.Primary,
-            Content = pathsPanel,
-        };
         try
         {
-            RefreshButtons();
-            await dialog.ShowAsync();
-        }
-        finally
-        {
-            _import.PropertyChanged -= importChanged;
-            _import.Paths.CollectionChanged -= pathsChanged;
-        }
+            var pathsPanel = new StackPanel { Spacing = 10 };
+            var list = new ListView { MaxHeight = 160, SelectionMode = ListViewSelectionMode.None };
+            list.ItemsSource = _import.Paths;
+            var progress = new ProgressBar { IsIndeterminate = true, Visibility = Visibility.Collapsed };
+            var status = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.85 };
 
-        if (!_import.IsRunning)
+            var addFile = new Button { Content = "添加文件…" };
+            addFile.Click += async (_, _) =>
+            {
+                try
+                {
+                    var picker = new FileOpenPicker
+                    {
+                        SuggestedStartLocation = PickerLocationId.ComputerFolder,
+                        ViewMode = PickerViewMode.List,
+                    };
+                    picker.FileTypeFilter.Add(".json");
+                    picker.FileTypeFilter.Add(".jsonl");
+                    picker.FileTypeFilter.Add(".html");
+                    picker.FileTypeFilter.Add(".htm");
+                    picker.FileTypeFilter.Add(".csv");
+                    picker.FileTypeFilter.Add(".md");
+                    picker.FileTypeFilter.Add(".txt");
+                    picker.FileTypeFilter.Add(".sql");
+                    picker.FileTypeFilter.Add("*");
+                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+                    var files = await picker.PickMultipleFilesAsync();
+                    if (files is not null)
+                    {
+                        foreach (var file in files)
+                        {
+                            _import.AddPath(file.Path);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ShowError($"选择文件失败: {ex.Message}");
+                }
+            };
+
+            var addFolder = new Button { Content = "添加文件夹…" };
+            addFolder.Click += async (_, _) =>
+            {
+                try
+                {
+                    var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder };
+                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+                    var folder = await picker.PickSingleFolderAsync();
+                    if (folder is not null)
+                    {
+                        _import.AddPath(folder.Path);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ShowError($"选择文件夹失败: {ex.Message}");
+                }
+            };
+            var clear = new Button { Content = "清空列表" };
+            clear.Click += (_, _) => _import.ClearPathsCommand.Execute(null);
+            var start = new Button { Content = "开始导入", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+            start.Click += (_, _) =>
+            {
+                _import.StartCommand.Execute(null);
+                RefreshButtons();
+            };
+
+            void RefreshButtons()
+            {
+                status.Text = _import.StatusText;
+                progress.IsIndeterminate = _import.IsRunning;
+                progress.Visibility = _import.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+                addFile.IsEnabled = !_import.IsRunning;
+                addFolder.IsEnabled = !_import.IsRunning;
+                clear.IsEnabled = !_import.IsRunning;
+                start.IsEnabled = !_import.IsRunning && _import.Paths.Count > 0;
+            }
+
+            pathsPanel.Children.Add(new TextBlock
+            {
+                Text = "支持导入以下软件与格式的导出文件或文件夹（自动递归嗅探与深度解析）：\n• 微信：WeFlow (JSON / ArkMe)、CipherTalk (Detailed JSON)、WeClone (CSV)\n• QQ：QQ Chat Exporter (单文件 JSON / 分块 JSONL manifest)\n• 通用：ChatLab (JSON / JSONL)、内嵌 HTML、Markdown、TXT、SQL 脚本\n• 支持多次重叠导入，应用会按内容哈希与消息原生 ID 自动去重。",
+                TextWrapping = TextWrapping.Wrap,
+                Opacity = 0.85,
+                FontSize = 12,
+                LineHeight = 18,
+            });
+            pathsPanel.Children.Add(list);
+            var buttonsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            buttonsRow.Children.Add(addFile);
+            buttonsRow.Children.Add(addFolder);
+            buttonsRow.Children.Add(clear);
+            buttonsRow.Children.Add(start);
+            pathsPanel.Children.Add(buttonsRow);
+            pathsPanel.Children.Add(progress);
+            pathsPanel.Children.Add(status);
+
+            System.ComponentModel.PropertyChangedEventHandler importChanged = (_, e) =>
+            {
+                if (e.PropertyName is nameof(ImportViewModel.StatusText) or nameof(ImportViewModel.IsRunning))
+                {
+                    DispatcherQueue.TryEnqueue(RefreshButtons);
+                }
+            };
+            System.Collections.Specialized.NotifyCollectionChangedEventHandler pathsChanged = (_, _) =>
+                DispatcherQueue.TryEnqueue(RefreshButtons);
+            _import.PropertyChanged += importChanged;
+            _import.Paths.CollectionChanged += pathsChanged;
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = "导入聊天记录",
+                PrimaryButtonText = "关闭",
+                DefaultButton = ContentDialogButton.Primary,
+                Content = pathsPanel,
+            };
+            try
+            {
+                RefreshButtons();
+                await dialog.ShowSafeAsync();
+            }
+            finally
+            {
+                _import.PropertyChanged -= importChanged;
+                _import.Paths.CollectionChanged -= pathsChanged;
+            }
+
+            if (!_import.IsRunning)
+            {
+                _conversations.Reload();
+            }
+        }
+        catch (Exception ex)
         {
-            _conversations.Reload();
+            ShowError($"导入失败: {ex.Message}");
         }
     }
 
@@ -347,6 +387,7 @@ public sealed partial class MainWindow : Window
     private void ConversationQuery_TextChanged(object sender, TextChangedEventArgs e)
     {
         _queryDebounce?.Cancel();
+        _queryDebounce?.Dispose();
         _queryDebounce = new CancellationTokenSource();
         var token = _queryDebounce.Token;
         _ = System.Threading.Tasks.Task.Delay(300, token).ContinueWith(t =>
@@ -460,6 +501,7 @@ public sealed partial class MainWindow : Window
         _messagePagingReady = false;
         DispatcherQueue.TryEnqueue(() =>
         {
+            MessageListControl.UpdateLayout();
             var entry = _timeline.Entries
                 .OfType<MessageEntry>()
                 .FirstOrDefault(item => item.Message.Id == messageId);
@@ -476,7 +518,14 @@ public sealed partial class MainWindow : Window
     {
         if (sender is FrameworkElement { DataContext: MessageEntry entry } && entry.Message.SenderId is long senderId)
         {
-            await ShowSenderProfile(senderId);
+            try
+            {
+                await ShowSenderProfile(senderId);
+            }
+            catch (Exception ex)
+            {
+                ShowError($"查看发送者信息失败: {ex.Message}");
+            }
         }
     }
 
@@ -485,7 +534,14 @@ public sealed partial class MainWindow : Window
         if (sender is FrameworkElement { DataContext: AttachmentEntry entry }
             && entry.ResolvedPath is not null)
         {
-            await ShowImagePreview(entry.ResolvedPath, entry.Filename ?? "图片");
+            try
+            {
+                await ShowImagePreview(entry.ResolvedPath, entry.Filename ?? "图片");
+            }
+            catch (Exception ex)
+            {
+                ShowError($"查看图片预览失败: {ex.Message}");
+            }
         }
     }
 
@@ -523,6 +579,10 @@ public sealed partial class MainWindow : Window
             ContactsListView.SelectedItem = _contacts.SelectedContact;
             UpdateContactDetailView();
         }
+        catch (Exception ex)
+        {
+            ShowError($"刷新联系人列表失败: {ex.Message}");
+        }
         finally
         {
             _isRefreshingContacts = false;
@@ -532,6 +592,7 @@ public sealed partial class MainWindow : Window
     private void ContactsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _contactsQueryDebounce?.Cancel();
+        _contactsQueryDebounce?.Dispose();
         _contactsQueryDebounce = new CancellationTokenSource();
         var token = _contactsQueryDebounce.Token;
         _ = Task.Delay(300, token).ContinueWith(t =>
@@ -554,15 +615,22 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (ContactsListView.SelectedItem is ContactInfo contact)
+        try
         {
-            await _contacts.SelectContactAsync(contact);
-            UpdateContactDetailView();
+            if (ContactsListView.SelectedItem is ContactInfo contact)
+            {
+                await _contacts.SelectContactAsync(contact);
+                UpdateContactDetailView();
+            }
+            else
+            {
+                await _contacts.SelectContactAsync(null);
+                UpdateContactDetailView();
+            }
         }
-        else
+        catch (Exception ex)
         {
-            await _contacts.SelectContactAsync(null);
-            UpdateContactDetailView();
+            ShowError($"选择联系人失败: {ex.Message}");
         }
     }
 
@@ -584,7 +652,7 @@ public sealed partial class MainWindow : Window
         DetailTotalMessagesText.Text = $"总消息数: {detail.TotalMessageCount:N0} 条";
 
         DetailAvatarPicture.DisplayName = detail.DisplayName;
-        DetailAvatarPicture.Initials = string.IsNullOrWhiteSpace(detail.DisplayName) ? "?" : detail.DisplayName.Trim()[..1];
+        DetailAvatarPicture.Initials = string.IsNullOrWhiteSpace(detail.DisplayName) ? "?" : System.Globalization.StringInfo.GetNextTextElement(detail.DisplayName.Trim());
         if (!string.IsNullOrEmpty(detail.CustomAvatarPath))
         {
             var resolved = AppServices.Instance.AvatarStorage.ResolveAvatarFullPath(detail.CustomAvatarPath);
@@ -608,38 +676,38 @@ public sealed partial class MainWindow : Window
 
     private async void OnNewContactClick(object sender, RoutedEventArgs e)
     {
-        var nameBox = new TextBox { Header = "姓名", PlaceholderText = "输入联系人姓名" };
-        var noteBox = new TextBox { Header = "备注（可选）", PlaceholderText = "输入备注信息", AcceptsReturn = true };
-        var panel = new StackPanel { Spacing = 10, Children = { nameBox, noteBox } };
-
-        var dialog = new ContentDialog
+        try
         {
-            XamlRoot = Content.XamlRoot,
-            Title = "新建联系人",
-            PrimaryButtonText = "创建",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-            Content = panel,
-        };
+            var nameBox = new TextBox { Header = "姓名", PlaceholderText = "输入联系人姓名" };
+            var noteBox = new TextBox { Header = "备注（可选）", PlaceholderText = "输入备注信息", AcceptsReturn = true };
+            var panel = new StackPanel { Spacing = 10, Children = { nameBox, noteBox } };
 
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-        {
-            var name = nameBox.Text?.Trim();
-            if (string.IsNullOrEmpty(name))
+            var dialog = new ContentDialog
             {
-                ShowError("联系人姓名不能为空");
-                return;
-            }
+                XamlRoot = Content.XamlRoot,
+                Title = "新建联系人",
+                PrimaryButtonText = "创建",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+                Content = panel,
+            };
 
-            try
+            if (await dialog.ShowSafeAsync() == ContentDialogResult.Primary)
             {
+                var name = nameBox.Text?.Trim();
+                if (string.IsNullOrEmpty(name))
+                {
+                    ShowError("联系人姓名不能为空");
+                    return;
+                }
+
                 var newDetail = await _contacts.CreateNewContactAsync(name, noteBox.Text);
                 await ReloadContactsAsync(newDetail.ContactId);
             }
-            catch (Exception ex)
-            {
-                ShowError($"创建联系人失败: {ex.Message}");
-            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"创建联系人失败: {ex.Message}");
         }
     }
 
@@ -716,83 +784,86 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var confirmDialog = new ContentDialog
+        try
         {
-            XamlRoot = Content.XamlRoot,
-            Title = "删除联系人",
-            Content = $"确定要删除联系人【{detail.DisplayName}】吗？\n已绑定的账号不会被删除，仅解除关联关系。",
-            PrimaryButtonText = "删除",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Close,
-        };
+            var confirmDialog = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = "删除联系人",
+                Content = $"确定要删除联系人【{detail.DisplayName}】吗？\n已绑定的账号不会被删除，仅解除关联关系。",
+                PrimaryButtonText = "删除",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close,
+            };
 
-        if (await confirmDialog.ShowAsync() == ContentDialogResult.Primary)
-        {
-            try
+            if (await confirmDialog.ShowSafeAsync() == ContentDialogResult.Primary)
             {
                 await _contacts.DeleteContactAsync(detail.ContactId);
                 await ReloadContactsAsync(null);
             }
-            catch (Exception ex)
-            {
-                ShowError($"删除失败: {ex.Message}");
-            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"删除失败: {ex.Message}");
         }
     }
 
     private async void OnAccountLabelLostFocus(object sender, RoutedEventArgs e)
     {
-        var detail = _contacts.SelectedDetail;
-        if (sender is TextBox tb && tb.DataContext is BoundSenderInfo info && detail is not null)
+        try
         {
-            var newLabel = tb.Text?.Trim();
-            if (newLabel != info.AccountLabel)
+            var detail = _contacts.SelectedDetail;
+            if (sender is TextBox tb && tb.DataContext is BoundSenderInfo info && detail is not null)
             {
-                try
+                var newLabel = tb.Text?.Trim();
+                if (newLabel != info.AccountLabel)
                 {
                     await detail.UpdateAccountLabelAsync(info.SenderId, string.IsNullOrWhiteSpace(newLabel) ? null : newLabel);
-                    UpdateContactDetailView();
-                }
-                catch (Exception ex)
-                {
-                    ShowError($"更新身份标签失败: {ex.Message}");
+                    if (_contacts.SelectedDetail?.ContactId == detail.ContactId)
+                    {
+                        UpdateContactDetailView();
+                    }
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"更新身份标签失败: {ex.Message}");
         }
     }
 
     private async void OnSetPrimarySenderClick(object sender, RoutedEventArgs e)
     {
-        var detail = _contacts.SelectedDetail;
-        if (sender is Button { Tag: long senderId } && detail is not null)
+        try
         {
-            try
+            var detail = _contacts.SelectedDetail;
+            if (sender is Button { Tag: long senderId } && detail is not null)
             {
                 await detail.SetPrimarySenderAsync(senderId);
                 UpdateContactDetailView();
             }
-            catch (Exception ex)
-            {
-                ShowError($"设置主账号失败: {ex.Message}");
-            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"设置主账号失败: {ex.Message}");
         }
     }
 
     private async void OnUnbindSenderClick(object sender, RoutedEventArgs e)
     {
-        var detail = _contacts.SelectedDetail;
-        if (sender is Button { Tag: long senderId } && detail is not null)
+        try
         {
-            try
+            var detail = _contacts.SelectedDetail;
+            if (sender is Button { Tag: long senderId } && detail is not null)
             {
                 var currentId = detail.ContactId;
                 await detail.UnbindSenderAsync(senderId);
                 await ReloadContactsAsync(currentId);
             }
-            catch (Exception ex)
-            {
-                ShowError($"解绑失败: {ex.Message}");
-            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"解绑失败: {ex.Message}");
         }
     }
 
@@ -804,97 +875,123 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var searchBox = new TextBox { PlaceholderText = "搜索未绑定发送者 (姓名/平台ID/QQ号)..." };
-        var list = new ListView { MaxHeight = 220, SelectionMode = ListViewSelectionMode.Single };
-        var labelBox = new TextBox { Header = "身份标签（可选，如：工作号、大号）", PlaceholderText = "输入身份标签" };
-        var primaryCheck = new CheckBox { Content = "设为主账号", IsChecked = detail.BoundSenders.Count == 0 };
-
-        var availableSenders = new List<BoundSenderInfo>();
-        async Task RefreshAvailable(string? kw)
+        try
         {
-            try
-            {
-                var items = await detail.LoadAvailableSendersAsync(kw);
-                availableSenders.Clear();
-                availableSenders.AddRange(items);
-                list.Items.Clear();
-                foreach (var item in availableSenders)
-                {
-                    var plat = item.Platform == "qq" ? "QQ" : "微信";
-                    var idStr = item.Platform == "qq" ? (item.QQNumber ?? item.NativeId) : item.NativeId;
-                    var status = !string.IsNullOrEmpty(item.BoundContactName)
-                        ? $" [当前归属: {item.BoundContactName} (合并转移)]"
-                        : " [未绑定]";
-                    list.Items.Add(new ListViewItem
-                    {
-                        Content = $"{plat}: {item.OriginalName} ({idStr}) - {item.MessageCount:N0}条{status}",
-                        Tag = item,
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                ShowError($"加载发送者失败: {ex.Message}");
-            }
-        }
+            var searchBox = new TextBox { PlaceholderText = "搜索未绑定发送者 (姓名/平台ID/QQ号)..." };
+            var list = new ListView { MaxHeight = 220, SelectionMode = ListViewSelectionMode.Single };
+            var labelBox = new TextBox { Header = "身份标签（可选，如：工作号、大号）", PlaceholderText = "输入身份标签" };
+            var primaryCheck = new CheckBox { Content = "设为主账号", IsChecked = detail.BoundSenders.Count == 0 };
 
-        await RefreshAvailable(null);
-
-        searchBox.TextChanged += async (_, _) =>
-        {
-            await RefreshAvailable(searchBox.Text);
-        };
-
-        var panel = new StackPanel
-        {
-            Spacing = 10,
-            MinWidth = 460,
-            Children = { searchBox, list, labelBox, primaryCheck },
-        };
-
-        var dialog = new ContentDialog
-        {
-            XamlRoot = Content.XamlRoot,
-            Title = "绑定/合并账号",
-            PrimaryButtonText = "确认绑定",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-            Content = panel,
-        };
-
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-        {
-            if (list.SelectedItem is ListViewItem { Tag: BoundSenderInfo selectedSender })
+            var availableSenders = new List<BoundSenderInfo>();
+            async Task RefreshAvailable(string? kw)
             {
                 try
                 {
-                    var currentId = detail.ContactId;
-                    await detail.BindSenderAsync(
-                        selectedSender.SenderId,
-                        string.IsNullOrWhiteSpace(labelBox.Text) ? null : labelBox.Text.Trim(),
-                        primaryCheck.IsChecked == true,
-                        forceRebind: true);
-                    await ReloadContactsAsync(currentId);
+                    var items = await detail.LoadAvailableSendersAsync(kw);
+                    availableSenders.Clear();
+                    availableSenders.AddRange(items);
+                    list.Items.Clear();
+                    foreach (var item in availableSenders)
+                    {
+                        var plat = item.Platform == "qq" ? "QQ" : "微信";
+                        var idStr = item.Platform == "qq" ? (item.QQNumber ?? item.NativeId) : item.NativeId;
+                        var status = !string.IsNullOrEmpty(item.BoundContactName)
+                            ? $" [当前归属: {item.BoundContactName} (合并转移)]"
+                            : " [未绑定]";
+                        list.Items.Add(new ListViewItem
+                        {
+                            Content = $"{plat}: {item.OriginalName} ({idStr}) - {item.MessageCount:N0}条{status}",
+                            Tag = item,
+                        });
+                    }
                 }
                 catch (Exception ex)
                 {
-                    ShowError($"绑定账号失败: {ex.Message}");
+                    ShowError($"加载发送者失败: {ex.Message}");
                 }
             }
-            else
+
+            await RefreshAvailable(null);
+
+            CancellationTokenSource? searchCts = null;
+            searchBox.TextChanged += (_, _) =>
             {
-                ShowError("未选择要绑定的账号");
+                searchCts?.Cancel();
+                searchCts?.Dispose();
+                searchCts = new CancellationTokenSource();
+                var token = searchCts.Token;
+                var query = searchBox.Text;
+                _ = Task.Delay(250, token).ContinueWith(_ =>
+                {
+                    if (!token.IsCancellationRequested)
+                    {
+                        DispatcherQueue.TryEnqueue(async () =>
+                        {
+                            if (!token.IsCancellationRequested)
+                            {
+                                await RefreshAvailable(query);
+                            }
+                        });
+                    }
+                });
+            };
+
+            var panel = new StackPanel
+            {
+                Spacing = 10,
+                MinWidth = 460,
+                Children = { searchBox, list, labelBox, primaryCheck },
+            };
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = "绑定/合并账号",
+                PrimaryButtonText = "确认绑定",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+                Content = panel,
+            };
+
+            try
+            {
+                if (await dialog.ShowSafeAsync() == ContentDialogResult.Primary)
+                {
+                    if (list.SelectedItem is ListViewItem { Tag: BoundSenderInfo selectedSender })
+                    {
+                        var currentId = detail.ContactId;
+                        await detail.BindSenderAsync(
+                            selectedSender.SenderId,
+                            string.IsNullOrWhiteSpace(labelBox.Text) ? null : labelBox.Text.Trim(),
+                            primaryCheck.IsChecked == true,
+                            forceRebind: true);
+                        await ReloadContactsAsync(currentId);
+                    }
+                    else
+                    {
+                        ShowError("未选择要绑定的账号");
+                    }
+                }
             }
+            finally
+            {
+                searchCts?.Cancel();
+                searchCts?.Dispose();
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"绑定账号失败: {ex.Message}");
         }
     }
 
     private async void ContactConversation_Click(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is SenderConversationInfo conv)
+        try
         {
-            SelectNavItem("conversations");
-            try
+            if (e.ClickedItem is SenderConversationInfo conv)
             {
+                SelectNavItem("conversations");
                 var detail = await Task.Run(() => AppServices.Instance.Conversations.GetConversation(conv.ConversationId));
                 if (detail?.Conversation is { } info)
                 {
@@ -903,10 +1000,10 @@ public sealed partial class MainWindow : Window
                     _conversations.SelectedConversation = info;
                 }
             }
-            catch (Exception ex)
-            {
-                ShowError($"打开会话失败: {ex.Message}");
-            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"打开会话失败: {ex.Message}");
         }
     }
 
@@ -941,7 +1038,7 @@ public sealed partial class MainWindow : Window
             Width = 48,
             Height = 48,
             DisplayName = contact.DisplayName,
-            Initials = string.IsNullOrWhiteSpace(contact.DisplayName) ? "?" : contact.DisplayName.Trim()[..1],
+            Initials = string.IsNullOrWhiteSpace(contact.DisplayName) ? "?" : System.Globalization.StringInfo.GetNextTextElement(contact.DisplayName.Trim()),
         };
         if (!string.IsNullOrEmpty(contact.CustomAvatarPath))
         {
@@ -961,6 +1058,14 @@ public sealed partial class MainWindow : Window
         headerGrid.Children.Add(headerTextStack);
         panel.Children.Add(headerGrid);
 
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = contact.DisplayName,
+            CloseButtonText = "关闭",
+            Content = panel,
+        };
+
         // Bound status / actions
         if (contact.IsBound && contact.BoundContact is not null)
         {
@@ -974,6 +1079,7 @@ public sealed partial class MainWindow : Window
                 {
                     await contact.QuickUnbindContactAsync();
                     _conversations.Reload();
+                    dialog.Hide();
                 }
                 catch (Exception ex)
                 {
@@ -987,27 +1093,51 @@ public sealed partial class MainWindow : Window
         {
             var bindRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             var createContactBtn = new Button { Content = "新建并绑定联系人", FontSize = 12 };
-            createContactBtn.Click += async (_, _) =>
+
+            var inlineCreatePanel = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed };
+            var nameBox = new TextBox { Header = "联系人姓名", Text = contact.OriginalName };
+            var labelBox = new TextBox { Header = "身份标签(可选)", PlaceholderText = "如: 工作号" };
+            var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            var confirmBtn = new Button { Content = "确认创建", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+            var cancelBtn = new Button { Content = "取消" };
+            actionRow.Children.Add(confirmBtn);
+            actionRow.Children.Add(cancelBtn);
+            inlineCreatePanel.Children.Add(nameBox);
+            inlineCreatePanel.Children.Add(labelBox);
+            inlineCreatePanel.Children.Add(actionRow);
+
+            createContactBtn.Click += (_, _) =>
             {
-                var nameBox = new TextBox { Header = "联系人姓名", Text = contact.OriginalName };
-                var labelBox = new TextBox { Header = "身份标签(可选)", PlaceholderText = "如: 工作号" };
-                var dlg = new ContentDialog
+                bindRow.Visibility = Visibility.Collapsed;
+                inlineCreatePanel.Visibility = Visibility.Visible;
+            };
+
+            cancelBtn.Click += (_, _) =>
+            {
+                inlineCreatePanel.Visibility = Visibility.Collapsed;
+                bindRow.Visibility = Visibility.Visible;
+            };
+
+            confirmBtn.Click += async (_, _) =>
+            {
+                if (!string.IsNullOrWhiteSpace(nameBox.Text))
                 {
-                    XamlRoot = Content.XamlRoot,
-                    Title = "新建联系人并绑定",
-                    PrimaryButtonText = "创建",
-                    CloseButtonText = "取消",
-                    DefaultButton = ContentDialogButton.Primary,
-                    Content = new StackPanel { Spacing = 8, Children = { nameBox, labelBox } },
-                };
-                if (await dlg.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
-                {
-                    await contact.QuickCreateAndBindContactAsync(nameBox.Text.Trim(), labelBox.Text?.Trim());
-                    _conversations.Reload();
+                    try
+                    {
+                        await contact.QuickCreateAndBindContactAsync(nameBox.Text.Trim(), labelBox.Text?.Trim());
+                        _conversations.Reload();
+                        dialog.Hide();
+                    }
+                    catch (Exception ex)
+                    {
+                        ShowError($"创建联系人失败: {ex.Message}");
+                    }
                 }
             };
+
             bindRow.Children.Add(createContactBtn);
             panel.Children.Add(bindRow);
+            panel.Children.Add(inlineCreatePanel);
         }
 
         panel.Children.Add(new TextBlock { Text = "名称记录", FontSize = 12, Opacity = 0.6, Margin = new Thickness(0, 4, 0, 0) });
@@ -1061,13 +1191,6 @@ public sealed partial class MainWindow : Window
         };
 
         panel.Children.Add(conversationList);
-        var dialog = new ContentDialog
-        {
-            XamlRoot = Content.XamlRoot,
-            Title = contact.DisplayName,
-            CloseButtonText = "关闭",
-            Content = panel,
-        };
         contact.ConversationActivated += async id =>
         {
             dialog.Hide();
@@ -1087,7 +1210,7 @@ public sealed partial class MainWindow : Window
                 ShowError($"打开会话失败：{ex.Message}");
             }
         };
-        await dialog.ShowAsync();
+        await dialog.ShowSafeAsync();
     }
 
     private async System.Threading.Tasks.Task ShowImagePreview(string imagePath, string filename)
@@ -1137,7 +1260,7 @@ public sealed partial class MainWindow : Window
             }
         };
 
-        await dialog.ShowAsync();
+        await dialog.ShowSafeAsync();
     }
 
     // ---------- 搜索 ----------
@@ -1213,6 +1336,179 @@ public sealed partial class MainWindow : Window
     private static string ComboTag(ComboBox combo)
     {
         return (combo.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
+    }
+
+    // ---------- 设置页面 ----------
+
+    private async void RefreshSettingsView()
+    {
+        try
+        {
+            var currentDir = AppServices.Instance.Settings.GetValidDataDirectory();
+            SettingsDataPathText.Text = currentDir;
+            SettingsTotalSizeText.Text = "计算中…";
+            SettingsDbSizeText.Text = "计算中…";
+            SettingsMediaSizeText.Text = "计算中…";
+            SettingsAvatarSizeText.Text = "计算中…";
+
+            var usage = await Task.Run(() => AppSettings.GetStorageUsage(currentDir));
+            SettingsTotalSizeText.Text = usage.FormattedTotalSize;
+            SettingsDbSizeText.Text = usage.FormattedDatabaseSize;
+            SettingsMediaSizeText.Text = usage.FormattedMediaSize;
+            SettingsAvatarSizeText.Text = usage.FormattedAvatarSize;
+        }
+        catch (Exception ex)
+        {
+            ShowError($"读取设置信息失败: {ex.Message}");
+        }
+    }
+
+    private void OnSettingsOpenDirClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var currentDir = AppServices.Instance.Settings.GetValidDataDirectory();
+            if (Directory.Exists(currentDir))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = currentDir,
+                    UseShellExecute = true
+                });
+            }
+            else
+            {
+                ShowError($"目录不存在: {currentDir}");
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"无法打开目录: {ex.Message}");
+        }
+    }
+
+    private async void OnSettingsChangeDirClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder };
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is null)
+            {
+                return;
+            }
+
+            var targetPath = folder.Path;
+            var currentDir = AppServices.Instance.Settings.GetValidDataDirectory();
+            if (string.Equals(targetPath, currentDir, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = this.Content.XamlRoot,
+                Title = "更改数据存储目录",
+                PrimaryButtonText = "保存并迁移数据",
+                SecondaryButtonText = "仅保存新路径",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+                Content = new StackPanel
+                {
+                    Spacing = 12,
+                    Children =
+                    {
+                        new TextBlock { Text = $"您选择的新存储目录为：\n{targetPath}", TextWrapping = TextWrapping.Wrap },
+                        new TextBlock { Text = "提示：\n• 「保存并迁移数据」会将当前数据库、媒体附件与头像复制到新目录。\n• 「仅保存新路径」仅修改配置文件，在新目录创建全新空白数据库。\n• 保存后请重启应用以完全切换至新存储目录。", FontSize = 12, Opacity = 0.75, TextWrapping = TextWrapping.Wrap }
+                    }
+                }
+            };
+
+            var result = await dialog.ShowSafeAsync();
+            if (result == ContentDialogResult.None)
+            {
+                return;
+            }
+
+            if (result == ContentDialogResult.Primary)
+            {
+                await Task.Run(() => AppSettings.CopyDataDirectory(currentDir, targetPath, overwrite: false));
+            }
+
+            var settings = AppServices.Instance.Settings;
+            settings.DataDirectory = targetPath;
+            settings.Save();
+
+            RefreshSettingsView();
+
+            var successDlg = new ContentDialog
+            {
+                XamlRoot = this.Content.XamlRoot,
+                Title = "存储目录已更改",
+                Content = "数据存储目录已成功更改为新路径！\n请重启 ChatArchive 应用程序以加载新目录的数据。",
+                CloseButtonText = "知道了"
+            };
+            await successDlg.ShowSafeAsync();
+        }
+        catch (Exception ex)
+        {
+            ShowError($"更改存储目录失败: {ex.Message}");
+        }
+    }
+
+    private async void OnSettingsResetDirClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var defaultDir = AppSettings.DefaultDataDirectory;
+            var currentDir = AppServices.Instance.Settings.GetValidDataDirectory();
+            if (string.Equals(defaultDir, currentDir, StringComparison.OrdinalIgnoreCase))
+            {
+                ShowError("当前已经是默认存储目录。");
+                return;
+            }
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = this.Content.XamlRoot,
+                Title = "恢复默认存储目录",
+                Content = new StackPanel
+                {
+                    Spacing = 10,
+                    Children =
+                    {
+                        new TextBlock { Text = $"确定要将存储目录恢复为默认路径吗？\n{defaultDir}", TextWrapping = TextWrapping.Wrap },
+                        new TextBlock { Text = "保存后需重启应用以完全切换生效。", FontSize = 12, Opacity = 0.75 }
+                    }
+                },
+                PrimaryButtonText = "恢复默认并保存",
+                CloseButtonText = "取消"
+            };
+
+            var result = await dialog.ShowSafeAsync();
+            if (result == ContentDialogResult.Primary)
+            {
+                var settings = AppServices.Instance.Settings;
+                settings.DataDirectory = defaultDir;
+                settings.Save();
+
+                RefreshSettingsView();
+
+                var successDlg = new ContentDialog
+                {
+                    XamlRoot = this.Content.XamlRoot,
+                    Title = "已恢复默认目录",
+                    Content = "已成功恢复为默认数据目录，请重启应用生效。",
+                    CloseButtonText = "知道了"
+                };
+                await successDlg.ShowSafeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"恢复默认目录失败: {ex.Message}");
+        }
     }
 
     // ---------- 工具 ----------

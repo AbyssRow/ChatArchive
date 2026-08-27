@@ -80,6 +80,49 @@ public class SenderAndStatsTests : IDisposable
         Assert.Equal(1_700_000_200_000, stats.LastMessageAt);
     }
 
+    [Fact]
+    public void Stats_handles_text_html_sql_platforms_without_overwriting_wechat()
+    {
+        var textConv = TestArchive.AddConversation(_archive.Open(), "t1", "文本会话", kind: "private", platform: "text");
+        var htmlConv = TestArchive.AddConversation(_archive.Open(), "h1", "HTML会话", kind: "private", platform: "html");
+        var sqlConv = TestArchive.AddConversation(_archive.Open(), "s1", "SQL会话", kind: "private", platform: "sql");
+
+        _archive.AddMessage(textConv, null, 1_700_000_000_000, "文本消息", platform: "text");
+        _archive.AddMessage(htmlConv, null, 1_700_000_100_000, "网页消息", platform: "html");
+        _archive.AddMessage(sqlConv, null, 1_700_000_200_000, "数据库消息", platform: "sql");
+
+        var stats = new StatsRepository(_archive.Db).GetStats();
+        Assert.Equal(3, stats.TotalMessages);
+        Assert.Equal(0, stats.QQMessages);
+        Assert.Equal(0, stats.WeChatMessages);
+        Assert.Equal(3, stats.TotalConversations);
+        Assert.Equal(3, stats.PrivateConversations);
+        Assert.Equal(0, stats.GroupConversations);
+    }
+
+    [Fact]
+    public void BatchMethods_HandleMoreThan1000Items_WithoutSqliteVariableOverflow()
+    {
+        using var conn = _archive.Open();
+        var keys = Enumerable.Range(1, 1200)
+            .Select(i => (SenderId: (long)i, ConversationId: (long?)null))
+            .ToList();
+
+        // 1. SenderDisplayName.Resolve
+        var resolved = SenderDisplayName.Resolve(conn, keys);
+        Assert.NotNull(resolved);
+
+        // 2. ConversationRepository.LoadContacts
+        var senderIds = Enumerable.Range(1, 1200).Select(i => (long)i).ToList();
+        var contacts = ConversationRepository.LoadContacts(conn, senderIds);
+        Assert.NotNull(contacts);
+
+        // 3. ConversationRepository.LoadAttachments
+        var messageIds = Enumerable.Range(1, 1200).Select(i => (long)i).ToList();
+        var attachments = ConversationRepository.LoadAttachments(conn, messageIds);
+        Assert.NotNull(attachments);
+    }
+
     private static long mediaObjectId(long id) => id;
 
     public void Dispose() => _archive.Dispose();

@@ -219,6 +219,55 @@ public sealed class TimelineProjectionTests : IDisposable
         Assert.Equal("   ", entry.DisplaySenderName);
     }
 
+    [Fact]
+    public void Initials_handles_unicode_surrogate_pairs_and_emojis()
+    {
+        var emojiMsg = new MessageItem(
+            1, 1, null, "😀Alice", "incoming", "text", null,
+            "Hi", false, false, 1700000000000, Array.Empty<AttachmentInfo>());
+        var entry = new MessageEntry(emojiMsg, new MediaLocator(_directory));
+        Assert.Equal("😀", entry.Initials);
+
+        var cjkSurrogateMsg = new MessageItem(
+            2, 1, null, "𠮷野家", "incoming", "text", null,
+            "Hi", false, false, 1700000000000, Array.Empty<AttachmentInfo>());
+        var entry2 = new MessageEntry(cjkSurrogateMsg, new MediaLocator(_directory));
+        Assert.Equal("𠮷", entry2.Initials);
+    }
+
+    [Fact]
+    public void ProjectMessage_handles_null_or_empty_content_and_media_types()
+    {
+        var locator = new MediaLocator(_directory);
+        var msgWithNullContent = new MessageItem(
+            1, 1, 100, "Alice", "incoming", "custom_kind", null,
+            null!, false, false, 1700000000000, Array.Empty<AttachmentInfo>());
+
+        var projection = TimelineProjection.ProjectMessage(msgWithNullContent, locator);
+        Assert.Null(projection.DisplayContent);
+
+        var msgWithEmptyKind = new MessageItem(
+            2, 1, 100, "Alice", "incoming", "", "",
+            "", false, false, 1700000000000, Array.Empty<AttachmentInfo>());
+
+        var projection2 = TimelineProjection.ProjectMessage(msgWithEmptyKind, locator);
+        Assert.Equal("", projection2.DisplayContent);
+    }
+
+    [Fact]
+    public void ProjectMessage_handles_empty_or_whitespace_attachment_kind()
+    {
+        var locator = new MediaLocator(_directory);
+        var attachment = Attachment(
+            kind: "   ",
+            filename: "test.dat");
+        var msg = Message("file", "test", attachment);
+        var projection = TimelineProjection.ProjectMessage(msg, locator);
+        var item = Assert.Single(projection.Attachments);
+        Assert.Equal("unknown", item.Kind);
+    }
+
+
     private static MessageItem Message(string type, string content, params AttachmentInfo[] attachments)
     {
         return Message(1, 1_700_000_000_000, content, type, attachments);

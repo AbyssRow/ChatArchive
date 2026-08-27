@@ -26,11 +26,21 @@ public sealed class AppServices
     private AppServices(AppSettings settings)
     {
         Settings = settings;
-        var dataDir = settings.DataDirectory;
-        Directory.CreateDirectory(dataDir);
+        var dataDir = settings.GetValidDataDirectory();
+        try
+        {
+            Directory.CreateDirectory(dataDir);
+        }
+        catch
+        {
+            dataDir = AppSettings.DefaultDataDirectory;
+            Directory.CreateDirectory(dataDir);
+        }
+
         Database = new ArchiveDatabase(Path.Combine(dataDir, "chat_archive.db"));
         Database.EnsureSchema();
         Database.CleanEmptyConversations();
+        Database.RepairDuplicateConversationsAndSenders();
         MediaLocator = new MediaLocator(Path.Combine(dataDir, "media"));
         Conversations = new ConversationRepository(Database);
         Search = new SearchRepository(Database);

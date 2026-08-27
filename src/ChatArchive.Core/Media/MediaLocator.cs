@@ -14,20 +14,21 @@ public sealed class MediaLocator
 
     public string? Resolve(string? sha256, string? managedPath = null, string? sourcePath = null)
     {
-        if (!string.IsNullOrEmpty(sha256))
+        if (!string.IsNullOrEmpty(sha256) && sha256.Length >= 2 && IsValidHex(sha256))
         {
-            var prefixDir = Path.Combine(_mediaDir, sha256[..2]);
+            var hexLower = sha256.ToLowerInvariant();
+            var prefixDir = Path.Combine(_mediaDir, hexLower[..2]);
             var suffix = Path.GetExtension(managedPath ?? string.Empty);
             if (suffix.Length > 0 && suffix.Length <= 12 && IsPlainExtension(suffix))
             {
-                var exact = Path.Combine(prefixDir, sha256 + suffix);
+                var exact = Path.Combine(prefixDir, hexLower + suffix);
                 if (File.Exists(exact))
                 {
                     return exact;
                 }
             }
 
-            var bare = Path.Combine(prefixDir, sha256);
+            var bare = Path.Combine(prefixDir, hexLower);
             if (File.Exists(bare))
             {
                 return bare;
@@ -36,7 +37,7 @@ public sealed class MediaLocator
             if (Directory.Exists(prefixDir))
             {
                 var match = Directory
-                    .EnumerateFiles(prefixDir, sha256 + ".*")
+                    .EnumerateFiles(prefixDir, hexLower + ".*")
                     .OrderBy(f => f.Length)
                     .FirstOrDefault();
                 if (match is not null)
@@ -68,5 +69,10 @@ public sealed class MediaLocator
         }
 
         return true;
+    }
+
+    private static bool IsValidHex(string value)
+    {
+        return value.All(char.IsAsciiHexDigit);
     }
 }

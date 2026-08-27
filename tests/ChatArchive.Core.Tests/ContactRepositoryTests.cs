@@ -172,6 +172,29 @@ public sealed class ContactRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void UnbindSender_WhenPrimarySenderUnbound_PromotesFirstRemainingSenderToPrimary()
+    {
+        var sender1 = _archive.AddSender("41001", "Eva 1");
+        var sender2 = _archive.AddSender("41002", "Eva 2");
+        var sender3 = _archive.AddSender("41003", "Eva 3");
+        var contactId = _repository.CreateContact("Eva Multi", initialBindings: new[]
+        {
+            (sender1, (string?)"1号", true),
+            (sender2, (string?)"2号", false),
+            (sender3, (string?)"3号", false)
+        });
+
+        _repository.UnbindSender(contactId, sender1);
+
+        var detail = _repository.GetContactDetail(contactId);
+        Assert.NotNull(detail);
+        Assert.Equal(2, detail.Senders.Count);
+        var remainingPrimary = detail.Senders.FirstOrDefault(s => s.IsPrimary);
+        Assert.NotNull(remainingPrimary);
+        Assert.Equal(sender2, remainingPrimary.SenderId);
+    }
+
+    [Fact]
     public void UpdateAccountLabel_UpdatesLabelSuccessfully()
     {
         var sender = _archive.AddSender("50001", "Frank");
@@ -542,6 +565,47 @@ public sealed class ContactRepositoryTests : IDisposable
         var s3Entry = available.FirstOrDefault(s => s.SenderId == s3);
         Assert.NotNull(s3Entry);
         Assert.Null(s3Entry.BoundContactName);
+    }
+
+    [Fact]
+    public void SenderDisplayName_Resolve_Handles_Null_And_Empty_Keys_Safely()
+    {
+        using var connection = _archive.Open();
+        var emptyResult = SenderDisplayName.Resolve(connection, Array.Empty<(long, long?)>());
+        Assert.Empty(emptyResult);
+
+        var nullResult = SenderDisplayName.Resolve(connection, null);
+        Assert.Empty(nullResult);
+    }
+
+    [Fact]
+    public void ListUnboundSenders_HandlesMoreThan1000Senders_WithoutSqliteOverflow()
+    {
+        using (var connection = _archive.Open())
+        {
+            using var tx = connection.BeginTransaction();
+            for (var i = 1; i <= 1050; i++)
+            {
+                using var cmd = connection.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = "INSERT INTO senders(id, platform, account_id, native_id, current_name) VALUES (@id, 'wechat', 'acc', @native, @name)";
+                cmd.Parameters.AddWithValue("@id", i + 10000);
+                cmd.Parameters.AddWithValue("@native", $"wxid_{i}");
+                cmd.Parameters.AddWithValue("@name", $"User_{i}");
+                cmd.ExecuteNonQuery();
+
+                using var aliasCmd = connection.CreateCommand();
+                aliasCmd.Transaction = tx;
+                aliasCmd.CommandText = "INSERT INTO sender_aliases(sender_id, alias) VALUES (@id, @alias)";
+                aliasCmd.Parameters.AddWithValue("@id", i + 10000);
+                aliasCmd.Parameters.AddWithValue("@alias", $"Alias_{i}");
+                aliasCmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+
+        var unbound = _repository.ListUnboundSenders();
+        Assert.True(unbound.Count >= 1050);
     }
 }
 

@@ -57,11 +57,12 @@ public sealed class StatsRepository
             using var reader = command.ExecuteReader();
             while (reader.Read())
             {
-                if (reader.GetString(0) == "qq")
+                var platform = reader.GetString(0);
+                if (platform == "qq")
                 {
                     qqMessages = reader.GetInt64(1);
                 }
-                else
+                else if (platform == "wechat")
                 {
                     weChatMessages = reader.GetInt64(1);
                 }
@@ -76,11 +77,12 @@ public sealed class StatsRepository
             using var reader = command.ExecuteReader();
             while (reader.Read())
             {
-                if (reader.GetString(0) == "private")
+                var kind = reader.GetString(0);
+                if (kind == "private")
                 {
                     privateCount = reader.GetInt64(1);
                 }
-                else
+                else if (kind == "group")
                 {
                     groupCount = reader.GetInt64(1);
                 }

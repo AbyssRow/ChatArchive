@@ -10,6 +10,8 @@ public partial class ContactDetailViewModel : ObservableObject
 {
     private readonly ContactRepository _contactRepository;
     private readonly AvatarStorageService? _avatarStorageService;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher;
+    private long _loadGeneration;
 
     public long ContactId { get; private set; }
 
@@ -36,14 +38,17 @@ public partial class ContactDetailViewModel : ObservableObject
 
     public ContactDetailViewModel(
         ContactRepository contactRepository,
-        AvatarStorageService? avatarStorageService = null)
+        AvatarStorageService? avatarStorageService = null,
+        Microsoft.UI.Dispatching.DispatcherQueue? dispatcher = null)
     {
         _contactRepository = contactRepository;
         _avatarStorageService = avatarStorageService;
+        _dispatcher = dispatcher;
     }
 
     public async Task<bool> LoadAsync(long contactId)
     {
+        var generation = Interlocked.Increment(ref _loadGeneration);
         ContactId = contactId;
         IsLoading = true;
         ErrorMessage = string.Empty;
@@ -51,39 +56,87 @@ public partial class ContactDetailViewModel : ObservableObject
         try
         {
             var detail = await Task.Run(() => _contactRepository.GetContactDetail(contactId));
+            if (Volatile.Read(ref _loadGeneration) != generation)
+            {
+                return false;
+            }
+
             if (detail is null)
             {
                 ErrorMessage = $"未找到 ID 为 {contactId} 的联系人";
                 return false;
             }
 
-            DisplayName = detail.DisplayName;
-            CustomAvatarPath = detail.CustomAvatarPath;
-            Note = detail.Note;
-            TotalMessageCount = detail.TotalMessageCount;
-
-            BoundSenders.Clear();
-            foreach (var sender in detail.Senders)
+            void Apply()
             {
-                BoundSenders.Add(sender);
+                if (Volatile.Read(ref _loadGeneration) != generation)
+                {
+                    return;
+                }
+
+                DisplayName = detail.DisplayName;
+                CustomAvatarPath = detail.CustomAvatarPath;
+                Note = detail.Note;
+                TotalMessageCount = detail.TotalMessageCount;
+
+                BoundSenders.Clear();
+                foreach (var sender in detail.Senders)
+                {
+                    BoundSenders.Add(sender);
+                }
+
+                Conversations.Clear();
+                foreach (var conv in detail.Conversations)
+                {
+                    Conversations.Add(conv);
+                }
             }
 
-            Conversations.Clear();
-            foreach (var conv in detail.Conversations)
+            if (_dispatcher is not null && !_dispatcher.HasThreadAccess)
             {
-                Conversations.Add(conv);
+                var tcs = new TaskCompletionSource();
+                var enqueued = _dispatcher.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        Apply();
+                        tcs.SetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.SetException(ex);
+                    }
+                });
+                if (!enqueued)
+                {
+                    Apply();
+                }
+                else
+                {
+                    await tcs.Task;
+                }
+            }
+            else
+            {
+                Apply();
             }
 
             return true;
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"加载联系人详情失败：{ex.Message}";
+            if (Volatile.Read(ref _loadGeneration) == generation)
+            {
+                ErrorMessage = $"加载联系人详情失败：{ex.Message}";
+            }
             return false;
         }
         finally
         {
-            IsLoading = false;
+            if (Volatile.Read(ref _loadGeneration) == generation)
+            {
+                IsLoading = false;
+            }
         }
     }
 
