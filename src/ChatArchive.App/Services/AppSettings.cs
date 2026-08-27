@@ -1,4 +1,7 @@
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
+
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ChatArchive.App.Tests")]
 
 namespace ChatArchive.App.Services;
 
@@ -7,6 +10,8 @@ public sealed class AppSettings
 {
     public static string DefaultDataDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChatArchive");
+
+    internal static string? SettingsPathOverride { get; set; }
 
     public string DataDirectory { get; set; } = DefaultDataDirectory;
 
@@ -101,8 +106,33 @@ public sealed class AppSettings
 
         foreach (var filePath in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
         {
+            var fileName = Path.GetFileName(filePath);
+            if (fileName.EndsWith(".db-wal", StringComparison.OrdinalIgnoreCase)
+                || fileName.EndsWith(".db-shm", StringComparison.OrdinalIgnoreCase)
+                || fileName.StartsWith(".tmp_", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             var relative = Path.GetRelativePath(sourceDir, filePath);
             var destPath = Path.Combine(targetDir, relative);
+
+            if (string.Equals(Path.GetExtension(filePath), ".db", StringComparison.OrdinalIgnoreCase))
+            {
+                if (overwrite || !File.Exists(destPath))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                    using var sourceConn = new SqliteConnection(
+                        new SqliteConnectionStringBuilder { DataSource = filePath, Mode = SqliteOpenMode.ReadOnly }.ToString());
+                    using var destConn = new SqliteConnection(
+                        new SqliteConnectionStringBuilder { DataSource = destPath, Mode = SqliteOpenMode.ReadWriteCreate }.ToString());
+                    sourceConn.Open();
+                    destConn.Open();
+                    sourceConn.BackupDatabase(destConn);
+                }
+                continue;
+            }
+
             if (overwrite || !File.Exists(destPath))
             {
                 File.Copy(filePath, destPath, overwrite);
@@ -148,7 +178,7 @@ public sealed class AppSettings
 
     private static string SettingsPath()
     {
-        return Path.Combine(DefaultDataDirectory, "settings.json");
+        return SettingsPathOverride ?? Path.Combine(DefaultDataDirectory, "settings.json");
     }
 }
 

@@ -45,7 +45,15 @@ public sealed class MigrationRunner
         if (File.Exists(targetDb))
         {
             var backup = targetDb + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            File.Copy(targetDb, backup, overwrite: true);
+            using (var targetConn = new SqliteConnection(
+                       new SqliteConnectionStringBuilder { DataSource = targetDb, Mode = SqliteOpenMode.ReadOnly }.ToString()))
+            using (var backupConn = new SqliteConnection(
+                       new SqliteConnectionStringBuilder { DataSource = backup, Mode = SqliteOpenMode.ReadWriteCreate }.ToString()))
+            {
+                targetConn.Open();
+                backupConn.Open();
+                targetConn.BackupDatabase(backupConn);
+            }
             Say($"已备份现有目标库 → {backup}");
         }
 
@@ -83,7 +91,7 @@ public sealed class MigrationRunner
         long skipped = 0;
         if (!Directory.Exists(sourceMedia))
         {
-            throw new DirectoryNotFoundException($"源目录缺少 media: {sourceMedia}");
+            return (0, 0);
         }
 
         foreach (var file in Directory.EnumerateFiles(sourceMedia, "*", SearchOption.AllDirectories))

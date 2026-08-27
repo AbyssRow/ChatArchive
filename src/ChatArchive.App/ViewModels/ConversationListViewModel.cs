@@ -77,6 +77,23 @@ public partial class ConversationListViewModel : ObservableObject
         });
     }
 
+    public void Activate(ConversationInfo conversation)
+    {
+        if (conversation is null)
+        {
+            return;
+        }
+
+        if (Equals(SelectedConversation, conversation))
+        {
+            ConversationActivated?.Invoke(conversation);
+        }
+        else
+        {
+            SelectedConversation = conversation;
+        }
+    }
+
     partial void OnSelectedConversationChanged(ConversationInfo? value)
     {
         if (value is not null)

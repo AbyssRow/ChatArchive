@@ -66,18 +66,52 @@ public class AppSettingsTests
         try
         {
             Directory.CreateDirectory(Path.Combine(sourceDir, "media", "sub"));
-            File.WriteAllText(Path.Combine(sourceDir, "chat_archive.db"), "database content");
+
+            var dbPath = Path.Combine(sourceDir, "chat_archive.db");
+            using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+                       new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+                       {
+                           DataSource = dbPath,
+                           Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadWriteCreate
+                       }.ToString()))
+            {
+                connection.Open();
+                using var cmd = connection.CreateCommand();
+                cmd.CommandText = "CREATE TABLE test (id INTEGER PRIMARY KEY, content TEXT); INSERT INTO test VALUES (1, 'hello');";
+                cmd.ExecuteNonQuery();
+            }
+
+            File.WriteAllText(Path.Combine(sourceDir, "chat_archive.db-wal"), "wal content");
+            File.WriteAllText(Path.Combine(sourceDir, "chat_archive.db-shm"), "shm content");
+            File.WriteAllText(Path.Combine(sourceDir, ".tmp_tempfile"), "tmp content");
             File.WriteAllText(Path.Combine(sourceDir, "media", "sub", "test.jpg"), "media content");
 
             AppSettings.CopyDataDirectory(sourceDir, targetDir, overwrite: true);
 
             Assert.True(File.Exists(Path.Combine(targetDir, "chat_archive.db")));
-            Assert.Equal("database content", File.ReadAllText(Path.Combine(targetDir, "chat_archive.db")));
+            Assert.False(File.Exists(Path.Combine(targetDir, "chat_archive.db-wal")));
+            Assert.False(File.Exists(Path.Combine(targetDir, "chat_archive.db-shm")));
+            Assert.False(File.Exists(Path.Combine(targetDir, ".tmp_tempfile")));
+
+            using (var destConn = new Microsoft.Data.Sqlite.SqliteConnection(
+                       new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+                       {
+                           DataSource = Path.Combine(targetDir, "chat_archive.db"),
+                           Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly
+                       }.ToString()))
+            {
+                destConn.Open();
+                using var cmd = destConn.CreateCommand();
+                cmd.CommandText = "SELECT content FROM test WHERE id = 1";
+                Assert.Equal("hello", (string)cmd.ExecuteScalar()!);
+            }
+
             Assert.True(File.Exists(Path.Combine(targetDir, "media", "sub", "test.jpg")));
             Assert.Equal("media content", File.ReadAllText(Path.Combine(targetDir, "media", "sub", "test.jpg")));
         }
         finally
         {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             if (Directory.Exists(sourceDir)) try { Directory.Delete(sourceDir, true); } catch { }
             if (Directory.Exists(targetDir)) try { Directory.Delete(targetDir, true); } catch { }
         }
@@ -123,26 +157,27 @@ public class AppSettingsTests
     }
 
     [Fact]
-    public void Settings_SaveAndLoad_UsesLocalAppDataPath()
+    public void Settings_SaveAndLoad_UsesSettingsPathOverride()
     {
-        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var expectedDir = Path.Combine(localAppData, "ChatArchive");
-        var expectedFile = Path.Combine(expectedDir, "settings.json");
-
-        var settings = new AppSettings { DataDirectory = @"D:\MyChatData" };
-        settings.Save();
+        var tempDir = Path.Combine(Path.GetTempPath(), $"chatarchive_settings_test_{Guid.NewGuid():N}");
+        var tempFile = Path.Combine(tempDir, "settings.json");
+        AppSettings.SettingsPathOverride = tempFile;
 
         try
         {
-            Assert.True(File.Exists(expectedFile));
+            var settings = new AppSettings { DataDirectory = @"D:\MyChatData" };
+            settings.Save();
+
+            Assert.True(File.Exists(tempFile));
             var loaded = AppSettings.Load();
             Assert.Equal(@"D:\MyChatData", loaded.DataDirectory);
         }
         finally
         {
-            if (File.Exists(expectedFile))
+            AppSettings.SettingsPathOverride = null;
+            if (Directory.Exists(tempDir))
             {
-                try { File.Delete(expectedFile); } catch { }
+                try { Directory.Delete(tempDir, true); } catch { }
             }
         }
     }

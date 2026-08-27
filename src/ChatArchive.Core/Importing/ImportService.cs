@@ -191,7 +191,7 @@ public sealed class ImportService
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var digest = FileHashing.Sha256File(filePath, cancellationToken);
+            var digest = FileHashing.ComputeImportDigest(filePath, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             var fileInfo = new FileInfo(filePath);
             long? completedFileId = null;
@@ -304,7 +304,7 @@ public sealed class ImportService
                     counters.MissingMedia += missing;
                 }
 
-                var finalDigest = FileHashing.Sha256File(filePath, cancellationToken);
+                var finalDigest = FileHashing.ComputeImportDigest(filePath, cancellationToken);
                 if (!string.Equals(digest, finalDigest, StringComparison.Ordinal))
                 {
                     throw new ImportFormatException(filePath, "导入期间文件发生变化，请重试");

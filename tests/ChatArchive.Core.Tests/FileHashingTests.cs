@@ -58,6 +58,46 @@ public sealed class FileHashingTests : IDisposable
         Assert.False(File.Exists(destination));
     }
 
+    [Fact]
+    public void Copy_file_and_hash_when_destination_already_exists_does_not_delete_existing_file()
+    {
+        var source = Write("source-exist.bin", "new content");
+        var destination = Write("dest-exist.bin", "existing content");
+
+        Assert.Throws<IOException>(
+            () => FileHashing.CopyFileAndHash(source, destination));
+
+        Assert.True(File.Exists(destination));
+        Assert.Equal("existing content", File.ReadAllText(destination));
+    }
+
+    [Fact]
+    public void ComputeImportDigest_ForManifest_IncorporatesChunks()
+    {
+        var exportDir = Path.Combine(_directory, "qq-chunked");
+        var chunksDir = Path.Combine(exportDir, "chunks");
+        Directory.CreateDirectory(chunksDir);
+
+        var manifestPath = Path.Combine(exportDir, "manifest.json");
+        File.WriteAllText(manifestPath, "{\"chatInfo\":{}}");
+
+        var chunk0 = Path.Combine(chunksDir, "chunk_0.jsonl");
+        File.WriteAllText(chunk0, "{\"msg\":1}\n");
+
+        var digest1 = FileHashing.ComputeImportDigest(manifestPath);
+
+        // Modifying chunk changes digest
+        File.WriteAllText(chunk0, "{\"msg\":2}\n");
+        var digest2 = FileHashing.ComputeImportDigest(manifestPath);
+        Assert.NotEqual(digest1, digest2);
+
+        // Adding chunk changes digest
+        var chunk1 = Path.Combine(chunksDir, "chunk_1.jsonl");
+        File.WriteAllText(chunk1, "{\"msg\":3}\n");
+        var digest3 = FileHashing.ComputeImportDigest(manifestPath);
+        Assert.NotEqual(digest2, digest3);
+    }
+
     private string Write(string filename, string content)
     {
         Directory.CreateDirectory(_directory);

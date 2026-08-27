@@ -237,6 +237,27 @@ public sealed class AvatarStorageServiceTests : IDisposable
         Assert.Null(resolvedPath);
     }
 
+    [Fact]
+    public void CleanupOrphanedTempFiles_CleansTempFiles_OnConstructorAndCall()
+    {
+        var orphan1 = Path.Combine(_avatarDir, ".tmp_12345");
+        var orphan2 = Path.Combine(_avatarDir, ".tmp_abcdef");
+        var normalFile = Path.Combine(_avatarDir, "real_avatar.png");
+        File.WriteAllText(orphan1, "temp1");
+        File.WriteAllText(orphan2, "temp2");
+        File.WriteAllText(normalFile, "real");
+
+        var newService = new AvatarStorageService(_avatarDir);
+
+        Assert.False(File.Exists(orphan1));
+        Assert.False(File.Exists(orphan2));
+        Assert.True(File.Exists(normalFile));
+
+        File.WriteAllText(orphan1, "temp3");
+        newService.CleanupOrphanedTempFiles();
+        Assert.False(File.Exists(orphan1));
+    }
+
     public void Dispose()
     {
         try

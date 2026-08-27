@@ -7,7 +7,7 @@
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <UseMicrosoftTestingPlatform>true</UseMicrosoftTestingPlatform>
-    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+    <NoWarn>$(NoWarn);xUnit1051;CS0436</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

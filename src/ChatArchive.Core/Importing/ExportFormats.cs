@@ -757,9 +757,9 @@ public sealed class ChatSqlExportFormat : IChatExportFormat
 public static class ExportFormats
 {
     private static readonly object Gate = new();
-    private static List<IChatExportFormat>? _formats;
+    private static volatile IReadOnlyList<IChatExportFormat> _formats = CreateDefaultFormats();
 
-    private static List<IChatExportFormat> CreateDefaultFormats() => new()
+    private static IChatExportFormat[] CreateDefaultFormats() => new IChatExportFormat[]
     {
         new QqExportFormat(),
         new QqChunkedExportFormat(),
@@ -774,24 +774,20 @@ public static class ExportFormats
         new ChatSqlExportFormat(),
     };
 
-    public static IReadOnlyList<IChatExportFormat> Default
-    {
-        get
-        {
-            lock (Gate)
-            {
-                return _formats ??= CreateDefaultFormats();
-            }
-        }
-    }
+    public static IReadOnlyList<IChatExportFormat> Default => _formats;
 
     /// <summary>运行时注册新格式（供测试或未来插件使用）。</summary>
     public static void Register(IChatExportFormat format)
     {
+        if (format is null)
+        {
+            throw new ArgumentNullException(nameof(format));
+        }
+
         lock (Gate)
         {
-            _formats ??= CreateDefaultFormats();
-            _formats.Add(format);
+            var list = new List<IChatExportFormat>(_formats) { format };
+            _formats = list.ToArray();
         }
     }
 }

@@ -13,6 +13,38 @@ public sealed class AvatarStorageService
     {
         AvatarDirectory = Path.GetFullPath(avatarDirectory ?? throw new ArgumentNullException(nameof(avatarDirectory)));
         Directory.CreateDirectory(AvatarDirectory);
+        CleanupOrphanedTempFiles();
+    }
+
+    public void CleanupOrphanedTempFiles()
+    {
+        if (!Directory.Exists(AvatarDirectory))
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(AvatarDirectory, ".tmp_*", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     public string SaveAvatarFromStream(Stream stream, string extension)
@@ -53,7 +85,7 @@ public sealed class AvatarStorageService
                     ArrayPool<byte>.Shared.Return(buffer);
                 }
 
-                tempFs.Flush();
+                tempFs.Flush(flushToDisk: true);
                 digest = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
             }
 

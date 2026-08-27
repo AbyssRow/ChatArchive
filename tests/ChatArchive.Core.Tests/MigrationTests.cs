@@ -97,6 +97,45 @@ public class MigrationTests : IDisposable
         Assert.Throws<FileNotFoundException>(() => new MigrationRunner(_sourceDir, _targetDir).Run());
     }
 
+    [Fact]
+    public void Missing_source_media_directory_does_not_throw_and_returns_zero()
+    {
+        var textSource = Path.Combine(_baseDir, "text-src");
+        var textTarget = Path.Combine(_baseDir, "text-dst");
+        Directory.CreateDirectory(textSource);
+        var db = new ArchiveDatabase(Path.Combine(textSource, "chat_archive.db"));
+        db.EnsureSchema();
+        using var connection = db.OpenConnection();
+        Insert(connection, """
+            INSERT INTO conversations(id, platform, account_id, native_id, kind, title)
+            VALUES (1, 'text', 'acc', 'c1', 'private', '会话')
+            """);
+
+        var report = new MigrationRunner(textSource, textTarget).Run();
+        Assert.Equal(0L, report.MediaFilesCopied);
+        Assert.Equal(0L, report.MediaFilesSkipped);
+        Assert.Equal(1L, report.Conversations);
+        Assert.True(report.Verified);
+    }
+
+    [Fact]
+    public void Target_backup_uses_backup_api()
+    {
+        SeedSource();
+        var runner = new MigrationRunner(_sourceDir, _targetDir);
+        runner.Run();
+
+        // Target db now exists. Run again to trigger backup.
+        var second = runner.Run();
+        Assert.True(second.Verified);
+
+        var backups = Directory.GetFiles(_targetDir, "chat_archive.db.bak-*");
+        Assert.Single(backups);
+
+        using var backupConn = OpenReadOnly(backups[0]);
+        Assert.Equal(1L, (long)new SqliteCommand("SELECT COUNT(*) FROM conversations", backupConn).ExecuteScalar()!);
+    }
+
     private static SqliteConnection OpenReadOnly(string path)
     {
         var connection = new SqliteConnection(

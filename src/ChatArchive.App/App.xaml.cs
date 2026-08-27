@@ -32,5 +32,7 @@ public partial class App : Application
         {
             // 日志失败时忽略，避免二次异常。
         }
+
+        e.Handled = true;
     }
 }

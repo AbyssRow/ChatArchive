@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace ChatArchive.Core.IO;
 
@@ -7,6 +8,74 @@ public static class FileHashing
 {
     public static string Sha256File(string path, CancellationToken cancellationToken = default)
         => HashFile(path, cancellationToken).Digest;
+
+    public static string ComputeImportDigest(string filePath, CancellationToken cancellationToken = default)
+    {
+        if (string.Equals(Path.GetFileName(filePath), "manifest.json", StringComparison.OrdinalIgnoreCase))
+        {
+            return ComputeChunkedManifestDigest(filePath, cancellationToken);
+        }
+
+        return Sha256File(filePath, cancellationToken);
+    }
+
+    private static string ComputeChunkedManifestDigest(string manifestPath, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var manifestDir = Path.GetDirectoryName(Path.GetFullPath(manifestPath))!;
+        var chunkFiles = new List<string>();
+        var chunksSubdir = Path.Combine(manifestDir, "chunks");
+        if (Directory.Exists(chunksSubdir))
+        {
+            chunkFiles.AddRange(Directory.GetFiles(chunksSubdir, "*.jsonl"));
+        }
+        chunkFiles.AddRange(Directory.GetFiles(manifestDir, "*.jsonl"));
+
+        var sortedChunks = chunkFiles
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(p => Path.GetRelativePath(manifestDir, p).Replace('\\', '/'), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        using (var manifestStream = new FileStream(
+                   manifestPath,
+                   FileMode.Open,
+                   FileAccess.Read,
+                   FileShare.Read,
+                   bufferSize: 128 * 1024,
+                   FileOptions.SequentialScan))
+        {
+            var buffer = ArrayPool<byte>.Shared.Rent(128 * 1024);
+            try
+            {
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var read = manifestStream.Read(buffer);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+                    hash.AppendData(buffer, 0, read);
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
+        foreach (var chunkPath in sortedChunks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var relPath = Path.GetRelativePath(manifestDir, chunkPath).Replace('\\', '/');
+            var (chunkDigest, chunkSize) = HashFile(chunkPath, cancellationToken);
+            var entryHeader = Encoding.UTF8.GetBytes($"\nchunk:{relPath}:{chunkSize}:{chunkDigest}\n");
+            hash.AppendData(entryHeader);
+        }
+
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
 
     internal static (string Digest, long Size) HashFile(
         string path,
@@ -57,6 +126,7 @@ public static class FileHashing
         const int BufferSize = 128 * 1024;
         cancellationToken.ThrowIfCancellationRequested();
         var completed = false;
+        var destinationCreated = false;
         try
         {
             (string Digest, long Size) result;
@@ -76,6 +146,7 @@ public static class FileHashing
                        FileOptions.SequentialScan))
             using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
             {
+                destinationCreated = true;
                 var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
                 long size = 0;
                 try
@@ -95,7 +166,7 @@ public static class FileHashing
                         size += read;
                     }
 
-                    destination.Flush();
+                    destination.Flush(flushToDisk: true);
                     result = (
                         Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(),
                         size);
@@ -111,7 +182,7 @@ public static class FileHashing
         }
         finally
         {
-            if (!completed && File.Exists(destinationPath))
+            if (!completed && destinationCreated && File.Exists(destinationPath))
             {
                 try
                 {

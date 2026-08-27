@@ -475,5 +475,31 @@ public sealed class ContactsViewModelTests : IDisposable
         await vm.LoadAsync();
         Assert.Empty(vm.Contacts);
     }
+
+    [Fact]
+    public async Task SelectContactAsync_GenerationGuard_PreventsStaleDetailOverwrite()
+    {
+        var s1 = InsertSender("10001", "Contact 1 QQ");
+        var s2 = InsertSender("10002", "Contact 2 QQ");
+        var c1 = _contactRepository.CreateContact("Contact 1", initialBindings: [(s1, "号1", true)]);
+        var c2 = _contactRepository.CreateContact("Contact 2", initialBindings: [(s2, "号2", true)]);
+
+        var vm = new ContactsViewModel(_contactRepository, _avatarStorage);
+        await vm.LoadAsync();
+        Assert.Equal(2, vm.Contacts.Count);
+
+        var contact1 = vm.Contacts.First(c => c.Id == c1);
+        var contact2 = vm.Contacts.First(c => c.Id == c2);
+
+        // Start selecting contact1, then immediately select contact2
+        var t1 = vm.SelectContactAsync(contact1);
+        var t2 = vm.SelectContactAsync(contact2);
+
+        await Task.WhenAll(t1, t2);
+
+        Assert.Equal(c2, vm.SelectedContact?.Id);
+        Assert.NotNull(vm.SelectedDetail);
+        Assert.Equal("Contact 2", vm.SelectedDetail.DisplayName);
+    }
 }
 

@@ -12,6 +12,7 @@ public partial class ContactsViewModel : ObservableObject
     private readonly AvatarStorageService? _avatarStorageService;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher;
     private long _loadGeneration;
+    private long _selectGeneration;
 
     public ObservableCollection<ContactInfo> Contacts { get; } = new();
 
@@ -131,6 +132,7 @@ public partial class ContactsViewModel : ObservableObject
 
     public async Task SelectContactAsync(ContactInfo? contact)
     {
+        var generation = Interlocked.Increment(ref _selectGeneration);
         SelectedContact = contact;
 
         if (contact is null)
@@ -141,6 +143,11 @@ public partial class ContactsViewModel : ObservableObject
 
         var detailVm = new ContactDetailViewModel(_contactRepository, _avatarStorageService, _dispatcher);
         var loaded = await detailVm.LoadAsync(contact.Id);
+        if (Volatile.Read(ref _selectGeneration) != generation)
+        {
+            return;
+        }
+
         if (loaded)
         {
             SelectedDetail = detailVm;

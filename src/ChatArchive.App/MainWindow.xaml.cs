@@ -110,10 +110,22 @@ public sealed partial class MainWindow : Window
             };
             _timeline.InitialPageLoaded += PositionTimelineAtBottom;
             _timeline.FocusMessageLoaded += FocusTimelineMessage;
-            _search.ResultActivated += hit => DispatcherQueue.TryEnqueue(() =>
+            _search.ResultActivated += hit => DispatcherQueue.TryEnqueue(async () =>
             {
                 SelectNavItem("conversations");
                 _messagePagingReady = false;
+                try
+                {
+                    var detail = await Task.Run(() => AppServices.Instance.Conversations.GetConversation(hit.ConversationId));
+                    if (detail?.Conversation is { } info)
+                    {
+                        _conversations.Activate(info);
+                        ConversationListControl.SelectedItem = _conversations.Conversations.FirstOrDefault(c => c.Id == info.Id) ?? info;
+                    }
+                }
+                catch
+                {
+                }
                 _timeline.JumpToMessage(hit.MessageId);
             });
             _search.PropertyChanged += (_, e) =>
@@ -428,7 +440,7 @@ public sealed partial class MainWindow : Window
 
         if (ConversationListControl.SelectedItem is ConversationInfo conversation)
         {
-            _conversations.SelectedConversation = conversation;
+            _conversations.Activate(conversation);
         }
     }
 
@@ -993,7 +1005,8 @@ public sealed partial class MainWindow : Window
                 var detail = await Task.Run(() => AppServices.Instance.Conversations.GetConversation(conv.ConversationId));
                 if (detail?.Conversation is { } info)
                 {
-                    _conversations.SelectedConversation = info;
+                    _conversations.Activate(info);
+                    ConversationListControl.SelectedItem = _conversations.Conversations.FirstOrDefault(c => c.Id == info.Id) ?? info;
                 }
             }
         }
@@ -1196,7 +1209,8 @@ public sealed partial class MainWindow : Window
                 var detail = await Task.Run(() => AppServices.Instance.Conversations.GetConversation(id));
                 if (detail?.Conversation is { } info)
                 {
-                    _conversations.SelectedConversation = info;
+                    _conversations.Activate(info);
+                    ConversationListControl.SelectedItem = _conversations.Conversations.FirstOrDefault(c => c.Id == info.Id) ?? info;
                 }
             }
             catch (Exception ex)
