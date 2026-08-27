@@ -95,7 +95,7 @@ public partial class ContactsViewModel : ObservableObject
             if (_dispatcher is not null && !_dispatcher.HasThreadAccess)
             {
                 var tcs = new TaskCompletionSource();
-                _dispatcher.TryEnqueue(async () =>
+                var enqueued = _dispatcher.TryEnqueue(async () =>
                 {
                     try
                     {
@@ -107,6 +107,12 @@ public partial class ContactsViewModel : ObservableObject
                         tcs.SetException(ex);
                     }
                 });
+
+                if (!enqueued)
+                {
+                    return;
+                }
+
                 await tcs.Task;
             }
             else

@@ -109,12 +109,10 @@ public partial class ContactDetailViewModel : ObservableObject
                 });
                 if (!enqueued)
                 {
-                    Apply();
+                    return false;
                 }
-                else
-                {
-                    await tcs.Task;
-                }
+
+                await tcs.Task;
             }
             else
             {

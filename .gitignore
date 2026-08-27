@@ -26,9 +26,9 @@ AGENT.md
 *.sqlite
 *.sqlite3
 /input/
-data/
-archive/
-avatars/
+/data/
+/archive/
+/avatars/
 
 # Secrets & Local Configs
 .env

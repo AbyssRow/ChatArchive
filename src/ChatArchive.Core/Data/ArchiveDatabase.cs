@@ -291,8 +291,9 @@ public sealed class ArchiveDatabase
     private static void MigrateV2ToV3(SqliteConnection connection)
     {
         ExecuteScalar(connection, "PRAGMA foreign_keys = OFF;");
-        using (var transaction = connection.BeginTransaction())
+        try
         {
+            using var transaction = connection.BeginTransaction();
             foreach (var statement in SqlScriptSplitter.Split(MigrationV2ToV3Sql))
             {
                 using var command = connection.CreateCommand();
@@ -303,8 +304,10 @@ public sealed class ArchiveDatabase
 
             transaction.Commit();
         }
-
-        ExecuteScalar(connection, "PRAGMA foreign_keys = ON;");
+        finally
+        {
+            ExecuteScalar(connection, "PRAGMA foreign_keys = ON;");
+        }
     }
 
     public int CleanEmptyConversations()

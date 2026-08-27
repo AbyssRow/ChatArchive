@@ -1007,6 +1007,23 @@ public class ImportServiceTests : IDisposable
         Assert.Equal("1234567890123456789.12", CanonicalJson.Serialize(System.Text.Json.Nodes.JsonValue.Create(1234567890123456789.12m)));
     }
 
-    public void Dispose() => _archive.Dispose();
+    public void Dispose()
+    {
+        if (_exportRootField is not null && Directory.Exists(_exportRootField))
+        {
+            try
+            {
+                Directory.Delete(_exportRootField, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        _archive.Dispose();
+    }
 }
 
