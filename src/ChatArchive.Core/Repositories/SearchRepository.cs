@@ -1,3 +1,4 @@
+using System.Text;
 using ChatArchive.Core.Data;
 using ChatArchive.Core.Models;
 using Microsoft.Data.Sqlite;
@@ -60,7 +61,7 @@ public sealed class SearchRepository
 
         if (useFts)
         {
-            var escaped = query.Replace("\\", "\\\\").Replace("\"", "\"\"");
+            var escaped = query.Replace("\"", "\"\"");
             command.Parameters.AddWithValue("@match", $"search_text : \"{escaped}\"");
         }
         else
@@ -219,7 +220,7 @@ public sealed class SearchRepository
     internal static bool SupportsTrigram(string query)
     {
         var tokens = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        return tokens.Length > 0 && tokens.All(t => t.Length >= 3);
+        return tokens.Length > 0 && tokens.All(t => t.EnumerateRunes().Count() >= 3);
     }
 
     internal static string MakeSnippet(string content, string searchText, string query)

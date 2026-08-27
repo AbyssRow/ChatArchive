@@ -132,6 +132,8 @@ public class SearchRepositoryTests : IDisposable
     [InlineData("hello world", true)]
     [InlineData("   ", false)]
     [InlineData("", false)]
+    [InlineData("😀😀", false)]
+    [InlineData("😀😀😀", true)]
     public void SupportsTrigram_rules(string query, bool expected)
     {
         Assert.Equal(expected, SearchRepository.SupportsTrigram(query));
@@ -148,9 +150,13 @@ public class SearchRepositoryTests : IDisposable
     public void Search_WithTrailingBackslash_DoesNotThrow()
     {
         using var archive = new TestArchive();
+        var qq = TestArchive.AddConversation(archive.Open(), "qq_bs", "Backslash Test");
+        archive.AddMessage(qq, null, 1_700_000_400_000, @"test\file");
         var repo = new SearchRepository(archive.Db);
-        var result = repo.Search("test\\");
+        var result = repo.Search(@"test\");
         Assert.NotNull(result);
+        var hit = Assert.Single(result.Items);
+        Assert.Contains(@"test\file", hit.Snippet);
     }
 
     [Fact]
@@ -160,6 +166,41 @@ public class SearchRepositoryTests : IDisposable
         _archive.AddMessage(qq, null, 1_700_000_500_000, "hello \"world\" test\\path");
         var result = _repository.Search("\"world\" test\\");
         Assert.NotNull(result);
+        var hit = Assert.Single(result.Items);
+        Assert.Contains("test\\path", hit.Snippet);
+    }
+
+    [Fact]
+    public void Search_WithBackslashInPath_ReturnsExpectedHit()
+    {
+        var (qq, _) = Seed();
+        _archive.AddMessage(qq, null, 1_700_000_550_000, @"C:\Users\bob\photo.jpg");
+        var result = _repository.Search(@"Users\bob");
+        Assert.Equal(SearchMode.Fts, result.Mode);
+        var hit = Assert.Single(result.Items);
+        Assert.Contains(@"Users\bob", hit.Snippet);
+    }
+
+    [Fact]
+    public void Search_WithTwoEmojis_FallsBackToLikeAndMatches()
+    {
+        var (qq, _) = Seed();
+        _archive.AddMessage(qq, null, 1_700_000_560_000, "开心 😀😀 好啊");
+        var result = _repository.Search("😀😀");
+        Assert.Equal(SearchMode.Substring, result.Mode);
+        var hit = Assert.Single(result.Items);
+        Assert.Contains("😀😀", hit.Snippet);
+    }
+
+    [Fact]
+    public void Search_WithThreeEmojis_UsesFtsAndMatches()
+    {
+        var (qq, _) = Seed();
+        _archive.AddMessage(qq, null, 1_700_000_570_000, "开心 😀😀😀 好啊");
+        var result = _repository.Search("😀😀😀");
+        Assert.Equal(SearchMode.Fts, result.Mode);
+        var hit = Assert.Single(result.Items);
+        Assert.Contains("😀😀😀", hit.Snippet);
     }
 
     [Fact]

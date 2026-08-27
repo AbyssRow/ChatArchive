@@ -11,7 +11,7 @@ public partial class SearchViewModel : ObservableObject
 {
     private readonly SearchRepository _repository;
     private readonly ConversationRepository _conversations;
-    private readonly DispatcherQueue _dispatcher;
+    private readonly DispatcherQueue? _dispatcher;
     private readonly SearchRequestState _requestState = new();
 
     public ObservableCollection<SearchHitProxy> Results { get; } = new();
@@ -62,7 +62,7 @@ public partial class SearchViewModel : ObservableObject
     public SearchViewModel(
         SearchRepository repository,
         ConversationRepository conversations,
-        DispatcherQueue dispatcher)
+        DispatcherQueue? dispatcher = null)
     {
         _repository = repository;
         _conversations = conversations;
@@ -78,7 +78,7 @@ public partial class SearchViewModel : ObservableObject
             Conversations: _conversations.ListConversations(limit: 1000),
             Filters: _repository.GetFilterOptions())).ContinueWith(task =>
         {
-            _dispatcher.TryEnqueue(() =>
+            void Apply()
             {
                 if (!task.IsCompletedSuccessfully)
                 {
@@ -113,7 +113,16 @@ public partial class SearchViewModel : ObservableObject
                         option.Value,
                         MessageTypeLabel(option.Value, option.Amount)));
                 }
-            });
+            }
+
+            if (_dispatcher is not null)
+            {
+                _dispatcher.TryEnqueue(Apply);
+            }
+            else
+            {
+                Apply();
+            }
         });
     }
 
@@ -153,8 +162,9 @@ public partial class SearchViewModel : ObservableObject
 
     partial void OnQueryChanged(string value)
     {
-        if (value.Length == 0 && HasSearched)
+        if (value.Length == 0)
         {
+            IsLoading = false;
             HasSearched = false;
             Results.Clear();
             ModeLabel = string.Empty;
@@ -177,18 +187,27 @@ public partial class SearchViewModel : ObservableObject
             }
             catch (Exception ex)
             {
-                _dispatcher.TryEnqueue(() =>
+                void OnError()
                 {
                     if (_requestState.IsCurrent(request))
                     {
                         ErrorMessage = $"搜索失败：{ex.Message}";
                         IsLoading = false;
                     }
-                });
+                }
+
+                if (_dispatcher is not null)
+                {
+                    _dispatcher.TryEnqueue(OnError);
+                }
+                else
+                {
+                    OnError();
+                }
                 return;
             }
 
-            _dispatcher.TryEnqueue(() =>
+            void OnSuccess()
             {
                 if (!_requestState.ApplyPage(request, page.NextCursor))
                 {
@@ -209,7 +228,16 @@ public partial class SearchViewModel : ObservableObject
                 HasSearched = true;
                 HasMore = _requestState.HasMore;
                 IsLoading = false;
-            });
+            }
+
+            if (_dispatcher is not null)
+            {
+                _dispatcher.TryEnqueue(OnSuccess);
+            }
+            else
+            {
+                OnSuccess();
+            }
         });
     }
 

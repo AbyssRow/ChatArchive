@@ -1,4 +1,7 @@
 using ChatArchive.App.ViewModels;
+using ChatArchive.Core.Data;
+using ChatArchive.Core.Models;
+using ChatArchive.Core.Repositories;
 using Xunit;
 
 namespace ChatArchive.App.Tests;
@@ -40,5 +43,94 @@ public sealed class UiInputTests
 
         Assert.False(gate.IsCurrent(first));
         Assert.True(gate.IsCurrent(second));
+    }
+
+    [Fact]
+    public void SearchViewModel_QueryCleared_ResetsIsLoadingAndState()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"chatarchive-searchvm-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var db = new ArchiveDatabase(Path.Combine(tempDir, "test.db"));
+            db.EnsureSchema();
+            var searchRepo = new SearchRepository(db);
+            var convRepo = new ConversationRepository(db);
+
+            var vm = new SearchViewModel(searchRepo, convRepo)
+            {
+                Query = "initial query",
+                IsLoading = true,
+                HasSearched = true,
+                HasMore = true,
+                ErrorMessage = "Previous error",
+                ModeLabel = "全文索引"
+            };
+            vm.Results.Add(new SearchHitProxy(new SearchHit(1, 1, "t", "qq", "private", null, "s", "snip", "text", "incoming", 1700000000000)));
+
+            // Clearing query resets IsLoading and state
+            vm.Query = string.Empty;
+
+            Assert.False(vm.IsLoading);
+            Assert.False(vm.HasSearched);
+            Assert.False(vm.HasMore);
+            Assert.Empty(vm.ErrorMessage);
+            Assert.Empty(vm.ModeLabel);
+            Assert.Empty(vm.Results);
+        }
+        finally
+        {
+            try
+            {
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    [Fact]
+    public void SearchViewModel_QueryClearedWhileInFlight_ResetsIsLoading()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"chatarchive-searchvm-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var db = new ArchiveDatabase(Path.Combine(tempDir, "test.db"));
+            db.EnsureSchema();
+            var searchRepo = new SearchRepository(db);
+            var convRepo = new ConversationRepository(db);
+
+            var vm = new SearchViewModel(searchRepo, convRepo)
+            {
+                Query = "some query",
+                IsLoading = true,
+                HasSearched = false
+            };
+
+            vm.Query = "";
+
+            Assert.False(vm.IsLoading);
+            Assert.False(vm.HasSearched);
+        }
+        finally
+        {
+            try
+            {
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+            }
+            catch (IOException)
+            {
+            }
+        }
     }
 }
