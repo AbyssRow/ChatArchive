@@ -49,5 +49,15 @@ public class DateUtilTests
         var ts = ChatArchive.Core.Importing.ImportText.ParseFlexibleTimestamp(input);
         Assert.True(ts > 0);
     }
+
+    [Fact]
+    public void ParseFlexibleTimestamp_ParsesEightDigitDateCorrectly()
+    {
+        var ts = ChatArchive.Core.Importing.ImportText.ParseFlexibleTimestamp("20240101");
+        var dto = DateTimeOffset.FromUnixTimeMilliseconds(ts).ToLocalTime();
+        Assert.Equal(2024, dto.Year);
+        Assert.Equal(1, dto.Month);
+        Assert.Equal(1, dto.Day);
+    }
 }
 

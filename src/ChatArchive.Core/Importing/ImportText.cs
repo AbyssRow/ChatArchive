@@ -200,6 +200,12 @@ public static class ImportText
         timeStr = timeStr.Trim();
         if (long.TryParse(timeStr, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var rawLong))
         {
+            if (timeStr.Length == 8 && rawLong is >= 19700101 and <= 20991231
+                && DateTimeOffset.TryParseExact(timeStr, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out var dto8))
+            {
+                return dto8.ToUnixTimeMilliseconds();
+            }
+
             return rawLong >= 10_000_000_000L ? rawLong : rawLong * 1000L;
         }
 

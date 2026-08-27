@@ -52,6 +52,13 @@ public class MediaLocatorTests : IDisposable
         Assert.Null(new MediaLocator(_dir).Resolve(sha, managedPath: @"E:\x\y.we!rd"));
     }
 
+    [Fact]
+    public void SingleDot_suffix_skips_derivation()
+    {
+        var sha = new string('d', 64);
+        Assert.Null(new MediaLocator(_dir).Resolve(sha, managedPath: @"E:\x\y."));
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("a")]

@@ -12,7 +12,7 @@ namespace ChatArchive.Core.Importing;
 public static class SqlScriptParser
 {
     private static readonly Regex InsertHeaderRegex = new(
-        @"INSERT\s+INTO\s+(?:[`""'\[]?)(?<table>\w+)(?:[`""'\]]?)\s*(?:\((?<columns>[^)]+)\))?\s*VALUES",
+        @"INSERT\s+(?:(?:OR\s+REPLACE|OR\s+IGNORE|IGNORE|LOW_PRIORITY|DELAYED)\s+)?INTO\s+(?:(?:[`""'\[]?\w+[`""'\]]?\.)?)(?:[`""'\[]?)(?<table>[\w\-]+)(?:[`""'\]]?)\s*(?:\((?<columns>[^)]+)\))?\s*VALUES",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     public static bool Matches(string filePath)
@@ -192,21 +192,29 @@ public static class SqlScriptParser
         }
     }
 
-    private static IEnumerable<Dictionary<string, string?>> EnumerateRows(string filePath, CancellationToken cancellationToken)
+    public static IEnumerable<Dictionary<string, string?>> EnumerateRows(string filePath, CancellationToken cancellationToken = default)
     {
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 64 * 1024, FileOptions.SequentialScan);
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        foreach (var row in EnumerateRows(reader, cancellationToken))
+        {
+            yield return row;
+        }
+    }
 
+    internal static IEnumerable<Dictionary<string, string?>> EnumerateRows(TextReader reader, CancellationToken cancellationToken = default)
+    {
         var statementBuilder = new StringBuilder();
         var inString = false;
         var stringChar = '\0';
+        var inBlockComment = false;
         string? line;
 
         while ((line = reader.ReadLine()) != null)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var trimmed = line.Trim();
-            if (!inString && (trimmed.StartsWith("--", StringComparison.Ordinal) || trimmed.StartsWith("/*", StringComparison.Ordinal)))
+            if (!inString && !inBlockComment && (trimmed.StartsWith("--", StringComparison.Ordinal) || trimmed.StartsWith("#", StringComparison.Ordinal)))
             {
                 continue;
             }
@@ -216,7 +224,15 @@ public static class SqlScriptParser
             for (var i = 0; i < line.Length; i++)
             {
                 var c = line[i];
-                if (inString)
+                if (inBlockComment)
+                {
+                    if (c == '*' && i + 1 < line.Length && line[i + 1] == '/')
+                    {
+                        inBlockComment = false;
+                        i++;
+                    }
+                }
+                else if (inString)
                 {
                     if (c == stringChar)
                     {
@@ -236,7 +252,17 @@ public static class SqlScriptParser
                 }
                 else
                 {
-                    if (c == '\'' || c == '"' || c == '`')
+                    if (c == '/' && i + 1 < line.Length && line[i + 1] == '*')
+                    {
+                        inBlockComment = true;
+                        i++;
+                    }
+                    else if (c == '-' && i + 1 < line.Length && line[i + 1] == '-')
+                    {
+                        // Line comment rest of line
+                        break;
+                    }
+                    else if (c == '\'' || c == '"' || c == '`')
                     {
                         inString = true;
                         stringChar = c;

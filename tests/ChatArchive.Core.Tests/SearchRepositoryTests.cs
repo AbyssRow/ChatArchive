@@ -1,3 +1,4 @@
+using ChatArchive.Core.Data;
 using ChatArchive.Core.Models;
 using ChatArchive.Core.Repositories;
 using Xunit;
@@ -141,6 +142,73 @@ public class SearchRepositoryTests : IDisposable
     {
         var snippet = SearchRepository.MakeSnippet("Hello Alice World", "hello alice world", "alice");
         Assert.Contains("Alice", snippet);
+    }
+
+    [Fact]
+    public void Search_WithTrailingBackslash_DoesNotThrow()
+    {
+        using var archive = new TestArchive();
+        var repo = new SearchRepository(archive.Db);
+        var result = repo.Search("test\\");
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public void Search_WithBackslashAndQuotes_DoesNotThrow()
+    {
+        var (qq, _) = Seed();
+        _archive.AddMessage(qq, null, 1_700_000_500_000, "hello \"world\" test\\path");
+        var result = _repository.Search("\"world\" test\\");
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public void MakeSnippet_WhenQueryNotInContentOrSearchText_DoesNotWipeContent()
+    {
+        var snippet = SearchRepository.MakeSnippet("正文消息内容在此", "搜索元数据", "未匹配词");
+        Assert.Equal("正文消息内容在此", snippet);
+    }
+
+    [Fact]
+    public void MakeSnippet_WhenQueryInSearchTextOnly_UsesSearchText()
+    {
+        var snippet = SearchRepository.MakeSnippet("[图片]", "文件名 screenshot_2024.png", "screenshot");
+        Assert.Contains("screenshot_2024.png", snippet);
+    }
+
+    [Fact]
+    public void MakeSnippet_WhenBothEmpty_ReturnsEmpty()
+    {
+        var snippet = SearchRepository.MakeSnippet("", "", "test");
+        Assert.Equal(string.Empty, snippet);
+    }
+
+    [Fact]
+    public void SqliteLikeHelper_EscapesSpecialCharacters()
+    {
+        Assert.Equal("//100/%/_", SqliteLikeHelper.EscapeLikePattern("/100%_"));
+        Assert.Equal("", SqliteLikeHelper.EscapeLikePattern(null));
+        Assert.Equal("", SqliteLikeHelper.EscapeLikePattern(""));
+    }
+
+    [Fact]
+    public void Search_WithPercentAndUnderscore_MatchesLiterally()
+    {
+        var (qq, _) = Seed();
+        _archive.AddMessage(qq, null, 1_700_000_600_000, "达成 100% 目标");
+        _archive.AddMessage(qq, null, 1_700_000_700_000, "达成 1000 目标");
+        _archive.AddMessage(qq, null, 1_700_000_800_000, "user_name_test");
+        _archive.AddMessage(qq, null, 1_700_000_900_000, "username-test");
+
+        // 2-char query "0%" falls back to LIKE search
+        var percentPage = _repository.Search("0%");
+        var percentHit = Assert.Single(percentPage.Items);
+        Assert.Contains("100%", percentHit.Snippet);
+
+        // 2-char query "r_" falls back to LIKE search
+        var underscorePage = _repository.Search("r_");
+        var underscoreHit = Assert.Single(underscorePage.Items);
+        Assert.Contains("user_name_test", underscoreHit.Snippet);
     }
 
     [Theory]

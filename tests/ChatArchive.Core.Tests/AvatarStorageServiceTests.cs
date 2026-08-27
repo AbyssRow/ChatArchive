@@ -27,7 +27,26 @@ public sealed class AvatarStorageServiceTests : IDisposable
         var service = new AvatarStorageService(newDir);
 
         Assert.True(Directory.Exists(newDir));
-        Assert.Equal(Path.GetFullPath(newDir), Path.GetFullPath(service.AvatarDirectory));
+        Assert.Equal(Path.GetFullPath(newDir), service.AvatarDirectory);
+    }
+
+    [Fact]
+    public void Constructor_NormalizesRelativePathToAbsolutePath()
+    {
+        var relativeDir = Path.Combine("temp_test_avatars_" + Guid.NewGuid().ToString("N")[..8]);
+        var service = new AvatarStorageService(relativeDir);
+        try
+        {
+            Assert.True(Path.IsPathRooted(service.AvatarDirectory));
+            Assert.Equal(Path.GetFullPath(relativeDir), service.AvatarDirectory);
+        }
+        finally
+        {
+            if (Directory.Exists(service.AvatarDirectory))
+            {
+                Directory.Delete(service.AvatarDirectory, recursive: true);
+            }
+        }
     }
 
     [Fact]

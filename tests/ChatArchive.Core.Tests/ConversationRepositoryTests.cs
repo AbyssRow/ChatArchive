@@ -38,6 +38,23 @@ public class ConversationRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void ListConversations_with_special_like_characters_matches_literally()
+    {
+        var c1 = TestArchive.AddConversation(_archive.Open(), "c_percent", "工作群 100%");
+        var c2 = TestArchive.AddConversation(_archive.Open(), "c_other", "工作群 1000");
+        var c3 = TestArchive.AddConversation(_archive.Open(), "c_under", "team_a");
+        var c4 = TestArchive.AddConversation(_archive.Open(), "c_hyphen", "team-a");
+
+        var percentList = _repository.ListConversations(query: "100%");
+        Assert.Single(percentList);
+        Assert.Equal(c1, percentList[0].Id);
+
+        var underList = _repository.ListConversations(query: "m_a");
+        Assert.Single(underList);
+        Assert.Equal(c3, underList[0].Id);
+    }
+
+    [Fact]
     public void GetConversation_returns_aliases()
     {
         var id = TestArchive.AddConversation(_archive.Open(), "c1", "老张");

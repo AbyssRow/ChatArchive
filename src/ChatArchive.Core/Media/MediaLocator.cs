@@ -19,7 +19,7 @@ public sealed class MediaLocator
             var hexLower = sha256.ToLowerInvariant();
             var prefixDir = Path.Combine(_mediaDir, hexLower[..2]);
             var suffix = Path.GetExtension(managedPath ?? string.Empty);
-            if (suffix.Length > 0 && suffix.Length <= 12 && IsPlainExtension(suffix))
+            if (suffix.Length > 1 && suffix.Length <= 12 && IsPlainExtension(suffix))
             {
                 var exact = Path.Combine(prefixDir, hexLower + suffix);
                 if (File.Exists(exact))

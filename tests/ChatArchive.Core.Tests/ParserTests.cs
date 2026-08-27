@@ -52,6 +52,13 @@ public class ParserTests : IDisposable
         Assert.Equal(CanonicalJson.HashHex(a), CanonicalJson.HashHex(b));
     }
 
+    [Fact]
+    public void CanonicalJson_FormatsNegativeZeroAndDecimalCorrectly()
+    {
+        Assert.Equal("-0.0", CanonicalJson.FormatDouble(-0.0));
+        Assert.Equal("1234567890123456789.12", CanonicalJson.Serialize(System.Text.Json.Nodes.JsonValue.Create(1234567890123456789.12m)));
+    }
+
     // ---------- QQ ----------
 
     private const string QqFixture = """
@@ -1597,6 +1604,72 @@ public class ParserTests : IDisposable
         var dummyFormat = new ChatSqlExportFormat();
         ExportFormats.Register(dummyFormat);
         Assert.True(ExportFormats.Default.Count >= 11);
+    }
+
+    [Fact]
+    public void SqlScriptParser_HandlesMultiLineCommentsAndDialects()
+    {
+        var sql = """
+            /*
+             * MySQL Dump Header
+             * Host: localhost; Database: test;
+             */
+            INSERT IGNORE INTO `db`.`messages` (`id`, `content`) VALUES (1, 'hello; world');
+            """;
+        using var reader = new StringReader(sql);
+        var rows = SqlScriptParser.EnumerateRows(reader).ToList();
+        Assert.Single(rows);
+        Assert.Equal("1", rows[0]["id"]);
+        Assert.Equal("hello; world", rows[0]["content"]);
+    }
+
+    [Fact]
+    public void MarkdownParser_PreservesHashtagsAndCodeInMessages()
+    {
+        var md = """
+            # 会话记录
+            [2024-01-01 10:00:00] Alice:
+            #include <stdio.h>
+            #urgent tag
+            """;
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(tempFile, md);
+            var conv = new ParsedConversation("text", "text-default", "test", "private", "test");
+            var msgs = MarkdownChatParser.IterateMessages(tempFile, conv, CancellationToken.None).ToList();
+            Assert.Single(msgs);
+            Assert.Contains("#include <stdio.h>", msgs[0].Content);
+            Assert.Contains("#urgent tag", msgs[0].Content);
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void TextParser_PreservesParagraphBlankLines()
+    {
+        var txt = """
+            2024-01-01 10:00:00 Alice:
+            Line 1
+
+            Line 2
+            """;
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(tempFile, txt);
+            var conv = new ParsedConversation("text", "text-default", "test", "private", "test");
+            var msgs = TextChatParser.IterateMessages(tempFile, conv, CancellationToken.None).ToList();
+            Assert.Single(msgs);
+            Assert.Equal("Line 1\n\nLine 2", msgs[0].Content.Replace("\r\n", "\n").Trim());
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
     }
 
     public void Dispose()

@@ -35,9 +35,9 @@ public sealed class ConversationRepository
 
         if (!string.IsNullOrEmpty(query))
         {
-            where.Add("(c.title LIKE @query OR EXISTS(SELECT 1 FROM conversation_aliases ca "
-                      + "WHERE ca.conversation_id = c.id AND ca.alias LIKE @query))");
-            parameters.Add(new SqliteParameter("@query", $"%{query}%"));
+            where.Add("(c.title LIKE @query ESCAPE '/' OR EXISTS(SELECT 1 FROM conversation_aliases ca "
+                      + "WHERE ca.conversation_id = c.id AND ca.alias LIKE @query ESCAPE '/'))");
+            parameters.Add(new SqliteParameter("@query", $"%{SqliteLikeHelper.EscapeLikePattern(query)}%"));
         }
 
         parameters.Add(new SqliteParameter("@limit", Math.Clamp(limit, 1, 1000)));

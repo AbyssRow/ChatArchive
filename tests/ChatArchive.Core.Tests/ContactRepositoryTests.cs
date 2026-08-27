@@ -435,6 +435,13 @@ public sealed class ContactRepositoryTests : IDisposable
         // Search non-matching
         var empty = _repository.ListContacts("NonexistentString");
         Assert.Empty(empty);
+
+        // Search literal % and _
+        var c3 = _repository.CreateContact("Percent 100% User", note: "100%");
+        var c4 = _repository.CreateContact("Percent 1000 User", note: "1000");
+        var byPercent = _repository.ListContacts("100%");
+        Assert.Single(byPercent);
+        Assert.Equal(c3, byPercent[0].Id);
     }
 
     [Fact]

@@ -54,6 +54,36 @@ public sealed class SearchStateTests
         Assert.Equal(DateUtil.DateToExclusiveEndMs("2026-08-20"), filter.DateToExclusiveMs);
     }
 
+    [Theory]
+    [InlineData("qq", "QQ")]
+    [InlineData("wechat", "微信")]
+    [InlineData("text", "文本")]
+    [InlineData("html", "网页")]
+    [InlineData("sql", "SQL")]
+    [InlineData("telegram", "telegram")]
+    [InlineData(null, "")]
+    public void SearchHitProxy_MapsPlatformLabelCorrectly(string? platform, string expectedLabel)
+    {
+        var hit = new SearchHit(
+            1, 10, "Test Title", platform ?? string.Empty, "group", 100L,
+            "Alice", "Hello snippet", "text", "incoming", 1700000000000L);
+        var proxy = new SearchHitProxy(hit);
+        Assert.Equal(expectedLabel, proxy.PlatformLabel);
+    }
+
+    [Theory]
+    [InlineData(-1000L)]
+    [InlineData(999999999999999L)]
+    public void SearchHitProxy_ClampsOutOfRangeTimestamp(long timestampMs)
+    {
+        var hit = new SearchHit(
+            1, 10, "Test Title", "qq", "group", 100L,
+            "Alice", "Hello snippet", "text", "incoming", timestampMs);
+        var proxy = new SearchHitProxy(hit);
+        Assert.NotNull(proxy.TimeText);
+        Assert.NotEmpty(proxy.TimeText);
+    }
+
     private static DateTimeOffset LocalDate(int year, int month, int day)
     {
         var value = new DateTime(year, month, day, 0, 0, 0, DateTimeKind.Unspecified);

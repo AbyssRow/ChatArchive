@@ -267,6 +267,24 @@ public sealed class TimelineProjectionTests : IDisposable
         Assert.Equal("unknown", item.Kind);
     }
 
+    [Fact]
+    public void BuildEntries_ClampsOutOfRangeTimestamps()
+    {
+        var locator = new MediaLocator(_directory);
+        var messages = new[]
+        {
+            Message(1, -50000L, "Negative timestamp"),
+            Message(2, 999999999999999999L, "Future timestamp"),
+        };
+
+        var entries = TimelineProjection.BuildEntries(messages, locator);
+        Assert.NotEmpty(entries);
+        var msgEntries = entries.OfType<MessageEntry>().ToList();
+        Assert.Equal(2, msgEntries.Count);
+        Assert.NotNull(msgEntries[0].TimeText);
+        Assert.NotNull(msgEntries[1].TimeText);
+    }
+
 
     private static MessageItem Message(string type, string content, params AttachmentInfo[] attachments)
     {

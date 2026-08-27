@@ -443,7 +443,7 @@ public static class MarkdownChatParser
             cancellationToken.ThrowIfCancellationRequested();
 
             var trimmed = line.Trim();
-            if (trimmed.StartsWith("#", StringComparison.Ordinal))
+            if (currentSender == null && trimmed.StartsWith("#", StringComparison.Ordinal))
             {
                 continue;
             }
@@ -652,6 +652,10 @@ public static class TextChatParser
             var trimmed = line.Trim();
             if (trimmed.Length == 0)
             {
+                if (currentSender != null)
+                {
+                    contentBuilder.AppendLine();
+                }
                 continue;
             }
 

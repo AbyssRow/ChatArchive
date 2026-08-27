@@ -1000,6 +1000,13 @@ public class ImportServiceTests : IDisposable
         Assert.Contains("non_existent_platform", result.Error);
     }
 
+    [Fact]
+    public void CanonicalJson_FormatsNegativeZeroAndDecimalCorrectly()
+    {
+        Assert.Equal("-0.0", CanonicalJson.FormatDouble(-0.0));
+        Assert.Equal("1234567890123456789.12", CanonicalJson.Serialize(System.Text.Json.Nodes.JsonValue.Create(1234567890123456789.12m)));
+    }
+
     public void Dispose() => _archive.Dispose();
 }
 

@@ -29,7 +29,7 @@ public sealed class MessageEntry : TimelineEntry
     {
         Message = message;
         TimeText = DateTimeOffset
-            .FromUnixTimeMilliseconds(message.TimestampMs)
+            .FromUnixTimeMilliseconds(Math.Clamp(message.TimestampMs, 0, 253402300799000L))
             .LocalDateTime.ToString("HH:mm:ss");
         IsIncoming = message.Direction == "incoming";
         IsOutgoing = message.Direction == "outgoing";

@@ -77,6 +77,20 @@ public sealed class AppSettings
     public static void CopyDataDirectory(string sourceDir, string targetDir, bool overwrite = false)
     {
         if (!Directory.Exists(sourceDir)) return;
+
+        var fullSource = Path.GetFullPath(sourceDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var fullTarget = Path.GetFullPath(targetDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+        if (string.Equals(fullSource, fullTarget, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("目标目录不能与源目录相同。");
+        }
+
+        if (fullTarget.StartsWith(fullSource, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("目标目录不能是源目录的子目录。");
+        }
+
         Directory.CreateDirectory(targetDir);
 
         foreach (var dirPath in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
@@ -121,13 +135,20 @@ public sealed class AppSettings
 
     public void Save()
     {
+        var path = SettingsPath();
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+
         var options = new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
-        File.WriteAllText(SettingsPath(), JsonSerializer.Serialize(this, options));
+        File.WriteAllText(path, JsonSerializer.Serialize(this, options));
     }
 
     private static string SettingsPath()
     {
-        return Path.Combine(AppContext.BaseDirectory, "settings.json");
+        return Path.Combine(DefaultDataDirectory, "settings.json");
     }
 }
 

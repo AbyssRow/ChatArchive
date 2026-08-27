@@ -41,7 +41,7 @@ public sealed class SearchRepository
         const string plainFrom = "messages m JOIN conversations c ON c.id = m.conversation_id";
         const string ftsFrom = "messages_fts JOIN messages m ON m.id = messages_fts.rowid "
             + "JOIN conversations c ON c.id = m.conversation_id";
-        var matchClause = useFts ? "messages_fts MATCH @match" : "m.search_text LIKE @pattern";
+        var matchClause = useFts ? "messages_fts MATCH @match" : "m.search_text LIKE @pattern ESCAPE '/'";
         command.CommandText = $$"""
             SELECT m.id, m.conversation_id, c.title, c.platform, c.kind,
                    m.sender_id, m.sender_name_snapshot, m.timestamp_ms,
@@ -60,11 +60,12 @@ public sealed class SearchRepository
 
         if (useFts)
         {
-            command.Parameters.AddWithValue("@match", $"search_text : \"{query.Replace("\"", "\"\"")}\"");
+            var escaped = query.Replace("\\", "\\\\").Replace("\"", "\"\"");
+            command.Parameters.AddWithValue("@match", $"search_text : \"{escaped}\"");
         }
         else
         {
-            command.Parameters.AddWithValue("@pattern", $"%{query}%");
+            command.Parameters.AddWithValue("@pattern", $"%{SqliteLikeHelper.EscapeLikePattern(query)}%");
         }
 
         BindFilter(command, filter);
@@ -174,8 +175,8 @@ public sealed class SearchRepository
 
         if (!string.IsNullOrEmpty(filter.Sender))
         {
-            sql += " AND (m.sender_name_snapshot LIKE @sender OR EXISTS("
-                + "SELECT 1 FROM sender_aliases sa WHERE sa.sender_id = m.sender_id AND sa.alias LIKE @sender))";
+            sql += " AND (m.sender_name_snapshot LIKE @sender ESCAPE '/' OR EXISTS("
+                + "SELECT 1 FROM sender_aliases sa WHERE sa.sender_id = m.sender_id AND sa.alias LIKE @sender ESCAPE '/'))";
         }
 
         if (!string.IsNullOrEmpty(filter.MessageType))
@@ -206,7 +207,7 @@ public sealed class SearchRepository
         Add("@platform", filter.Platform);
         Add("@kind", filter.Kind);
         Add("@conversation", filter.ConversationId);
-        Add("@sender", string.IsNullOrEmpty(filter.Sender) ? null : $"%{filter.Sender}%");
+        Add("@sender", string.IsNullOrEmpty(filter.Sender) ? null : $"%{SqliteLikeHelper.EscapeLikePattern(filter.Sender)}%");
         Add("@type", filter.MessageType);
         Add("@dateFrom", filter.DateFromMs);
         Add("@dateTo", filter.DateToExclusiveMs);
@@ -223,16 +224,26 @@ public sealed class SearchRepository
 
     internal static string MakeSnippet(string content, string searchText, string query)
     {
-        var source = content.Length > 0 ? content : searchText;
-        var index = source.IndexOf(query, StringComparison.OrdinalIgnoreCase);
-        if (index < 0)
+        string source;
+        int index;
+
+        if (!string.IsNullOrEmpty(content) && (index = content.IndexOf(query, StringComparison.OrdinalIgnoreCase)) >= 0)
         {
-            index = searchText.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+            source = content;
+        }
+        else if (!string.IsNullOrEmpty(searchText) && (index = searchText.IndexOf(query, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
             source = searchText;
-            if (index < 0)
-            {
-                index = 0;
-            }
+        }
+        else
+        {
+            source = !string.IsNullOrEmpty(content) ? content : searchText;
+            index = 0;
+        }
+
+        if (string.IsNullOrEmpty(source))
+        {
+            return string.Empty;
         }
 
         const int window = 40;

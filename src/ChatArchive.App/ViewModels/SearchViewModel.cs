@@ -91,7 +91,15 @@ public partial class SearchViewModel : ObservableObject
                 ConversationOptions.Add(new SearchConversationOption(null, "全部会话"));
                 foreach (var conversation in task.Result.Conversations)
                 {
-                    var platform = conversation.Platform == "wechat" ? "微信" : "QQ";
+                    var platform = conversation.Platform?.ToLowerInvariant() switch
+                    {
+                        "qq" => "QQ",
+                        "wechat" => "微信",
+                        "text" => "文本",
+                        "html" => "网页",
+                        "sql" => "SQL",
+                        _ => conversation.Platform ?? string.Empty,
+                    };
                     ConversationOptions.Add(new SearchConversationOption(
                         conversation.Id,
                         $"{platform} · {conversation.Title}"));

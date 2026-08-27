@@ -78,7 +78,7 @@
                     <ItemsControl ItemsSource="{Binding Images}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Image Source="{Binding ResolvedPath}" MaxHeight="220" Stretch="Uniform"
+                                <Image Source="{Binding ResolvedPath, Converter={StaticResource PathToImageSource}}" MaxHeight="220" Stretch="Uniform"
                                        Tapped="OnImageAttachmentTapped" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

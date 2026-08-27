@@ -87,6 +87,12 @@ public static class CanonicalJson
             return;
         }
 
+        if (value.GetValue<object>() is decimal decVal)
+        {
+            builder.Append(decVal.ToString(CultureInfo.InvariantCulture));
+            return;
+        }
+
         if (value.TryGetValue<long>(out var l))
         {
             builder.Append(l.ToString(CultureInfo.InvariantCulture));
@@ -119,7 +125,7 @@ public static class CanonicalJson
 
         if (value.TryGetValue<decimal>(out var dec))
         {
-            builder.Append(FormatDouble((double)dec));
+            builder.Append(dec.ToString(CultureInfo.InvariantCulture));
             return;
         }
 
@@ -146,6 +152,11 @@ public static class CanonicalJson
         if (double.IsNaN(value) || double.IsInfinity(value))
         {
             return value.Equals(double.NaN) ? "NaN" : value > 0 ? "Infinity" : "-Infinity";
+        }
+
+        if (double.IsNegative(value) && value == 0.0)
+        {
+            return "-0.0";
         }
 
         if (value == Math.Floor(value) && Math.Abs(value) < 1e16)

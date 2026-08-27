@@ -82,4 +82,68 @@ public class AppSettingsTests
             if (Directory.Exists(targetDir)) try { Directory.Delete(targetDir, true); } catch { }
         }
     }
+
+    [Fact]
+    public void CopyDataDirectory_ThrowsWhenTargetIsSubDirectoryOfSource()
+    {
+        var sourceDir = Path.Combine(Path.GetTempPath(), $"chatarchive_sub_test_{Guid.NewGuid():N}");
+        var targetDir = Path.Combine(sourceDir, "backup");
+        try
+        {
+            Directory.CreateDirectory(sourceDir);
+            File.WriteAllText(Path.Combine(sourceDir, "test.txt"), "hello");
+
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                AppSettings.CopyDataDirectory(sourceDir, targetDir));
+            Assert.Contains("子目录", ex.Message);
+        }
+        finally
+        {
+            if (Directory.Exists(sourceDir)) try { Directory.Delete(sourceDir, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void CopyDataDirectory_ThrowsWhenTargetIsSameAsSource()
+    {
+        var sourceDir = Path.Combine(Path.GetTempPath(), $"chatarchive_same_test_{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(sourceDir);
+            File.WriteAllText(Path.Combine(sourceDir, "test.txt"), "hello");
+
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                AppSettings.CopyDataDirectory(sourceDir, sourceDir));
+            Assert.Contains("相同", ex.Message);
+        }
+        finally
+        {
+            if (Directory.Exists(sourceDir)) try { Directory.Delete(sourceDir, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void Settings_SaveAndLoad_UsesLocalAppDataPath()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var expectedDir = Path.Combine(localAppData, "ChatArchive");
+        var expectedFile = Path.Combine(expectedDir, "settings.json");
+
+        var settings = new AppSettings { DataDirectory = @"D:\MyChatData" };
+        settings.Save();
+
+        try
+        {
+            Assert.True(File.Exists(expectedFile));
+            var loaded = AppSettings.Load();
+            Assert.Equal(@"D:\MyChatData", loaded.DataDirectory);
+        }
+        finally
+        {
+            if (File.Exists(expectedFile))
+            {
+                try { File.Delete(expectedFile); } catch { }
+            }
+        }
+    }
 }

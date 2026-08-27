@@ -22,8 +22,10 @@ public partial class App : Application
     {
         try
         {
+            var logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChatArchive");
+            Directory.CreateDirectory(logDir);
             File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "crash.log"),
+                Path.Combine(logDir, "crash.log"),
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {e.Message}\n{e.Exception}\n\n");
         }
         catch

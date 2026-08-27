@@ -44,7 +44,7 @@ internal static class SenderDisplayName
                 """;
             for (var i = 0; i < chunk.Length; i++)
             {
-                command.Parameters.AddWithValue($"p{i}", chunk[i]);
+                command.Parameters.AddWithValue($"@p{i}", chunk[i]);
             }
 
             using var reader = command.ExecuteReader();

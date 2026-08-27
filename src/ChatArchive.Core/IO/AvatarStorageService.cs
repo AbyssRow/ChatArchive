@@ -11,7 +11,7 @@ public sealed class AvatarStorageService
 
     public AvatarStorageService(string avatarDirectory)
     {
-        AvatarDirectory = avatarDirectory ?? throw new ArgumentNullException(nameof(avatarDirectory));
+        AvatarDirectory = Path.GetFullPath(avatarDirectory ?? throw new ArgumentNullException(nameof(avatarDirectory)));
         Directory.CreateDirectory(AvatarDirectory);
     }
 

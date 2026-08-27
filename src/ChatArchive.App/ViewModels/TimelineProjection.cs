@@ -92,8 +92,9 @@ public static class TimelineProjection
                 continue;
             }
 
+            var safeTimestamp = Math.Clamp(message.TimestampMs, 0, 253402300799000L);
             var local = DateTimeOffset
-                .FromUnixTimeMilliseconds(message.TimestampMs)
+                .FromUnixTimeMilliseconds(safeTimestamp)
                 .LocalDateTime;
             var date = DateOnly.FromDateTime(local);
             if (date != previousDate)

@@ -384,25 +384,25 @@ public sealed class ContactRepository
             var trimmed = keyword.Trim();
             where.Add("""
                 (
-                    c.display_name LIKE @query
-                    OR c.note LIKE @query
+                    c.display_name LIKE @query ESCAPE '/'
+                    OR c.note LIKE @query ESCAPE '/'
                     OR EXISTS (
                         SELECT 1 FROM contact_senders cs
                         JOIN senders s ON s.id = cs.sender_id
                         WHERE cs.contact_id = c.id
                           AND (
-                              s.current_name LIKE @query
-                              OR s.native_id LIKE @query
-                              OR cs.account_label LIKE @query
+                              s.current_name LIKE @query ESCAPE '/'
+                              OR s.native_id LIKE @query ESCAPE '/'
+                              OR cs.account_label LIKE @query ESCAPE '/'
                               OR EXISTS (
                                   SELECT 1 FROM sender_aliases sa
-                                  WHERE sa.sender_id = s.id AND sa.alias LIKE @query
+                                  WHERE sa.sender_id = s.id AND sa.alias LIKE @query ESCAPE '/'
                               )
                           )
                     )
                 )
                 """);
-            cmd.Parameters.AddWithValue("@query", $"%{trimmed}%");
+            cmd.Parameters.AddWithValue("@query", $"%{SqliteLikeHelper.EscapeLikePattern(trimmed)}%");
         }
 
         var whereClause = "WHERE " + string.Join(" AND ", where);
@@ -453,17 +453,17 @@ public sealed class ContactRepository
             var trimmed = keyword.Trim();
             where.Add("""
                 (
-                    s.current_name LIKE @query
-                    OR s.native_id LIKE @query
-                    OR c.display_name LIKE @query
-                    OR cs.account_label LIKE @query
+                    s.current_name LIKE @query ESCAPE '/'
+                    OR s.native_id LIKE @query ESCAPE '/'
+                    OR c.display_name LIKE @query ESCAPE '/'
+                    OR cs.account_label LIKE @query ESCAPE '/'
                     OR EXISTS (
                         SELECT 1 FROM sender_aliases sa
-                        WHERE sa.sender_id = s.id AND sa.alias LIKE @query
+                        WHERE sa.sender_id = s.id AND sa.alias LIKE @query ESCAPE '/'
                     )
                 )
                 """);
-            cmd.Parameters.AddWithValue("@query", $"%{trimmed}%");
+            cmd.Parameters.AddWithValue("@query", $"%{SqliteLikeHelper.EscapeLikePattern(trimmed)}%");
         }
 
         var whereClause = "WHERE " + string.Join(" AND ", where);
@@ -545,15 +545,15 @@ public sealed class ContactRepository
             var trimmed = keyword.Trim();
             where.Add("""
                 (
-                    s.current_name LIKE @query
-                    OR s.native_id LIKE @query
+                    s.current_name LIKE @query ESCAPE '/'
+                    OR s.native_id LIKE @query ESCAPE '/'
                     OR EXISTS (
                         SELECT 1 FROM sender_aliases sa
-                        WHERE sa.sender_id = s.id AND sa.alias LIKE @query
+                        WHERE sa.sender_id = s.id AND sa.alias LIKE @query ESCAPE '/'
                     )
                 )
                 """);
-            cmd.Parameters.AddWithValue("@query", $"%{trimmed}%");
+            cmd.Parameters.AddWithValue("@query", $"%{SqliteLikeHelper.EscapeLikePattern(trimmed)}%");
         }
 
         var whereClause = "WHERE " + string.Join(" AND ", where);

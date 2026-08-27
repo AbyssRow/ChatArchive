@@ -53,6 +53,18 @@ public sealed partial class MainWindow : Window
             _timeline = new TimelineViewModel(services.Conversations, services.MediaLocator, dispatcher);
             _search = new SearchViewModel(services.Search, services.Conversations, dispatcher);
             _stats = new StatsViewModel(services.Stats, dispatcher);
+            _stats.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(StatsViewModel.SummaryLines))
+                {
+                    StatsText.Text = _stats.SummaryLines;
+                }
+                else if (e.PropertyName == nameof(StatsViewModel.ErrorMessage)
+                         && _stats.ErrorMessage.Length > 0)
+                {
+                    ShowError(_stats.ErrorMessage);
+                }
+            };
             _import = new ImportViewModel(services.Database, dispatcher);
 
             _conversations.ConversationActivated += conversation =>
@@ -203,18 +215,6 @@ public sealed partial class MainWindow : Window
         if (tag == "stats" && !_statsLoaded)
         {
             _statsLoaded = true;
-            _stats.PropertyChanged += (_, e) =>
-            {
-                if (e.PropertyName == nameof(StatsViewModel.SummaryLines))
-                {
-                    StatsText.Text = _stats.SummaryLines;
-                }
-                else if (e.PropertyName == nameof(StatsViewModel.ErrorMessage)
-                         && _stats.ErrorMessage.Length > 0)
-                {
-                    ShowError(_stats.ErrorMessage);
-                }
-            };
             _stats.Load();
             StatsText.Text = _stats.SummaryLines;
         }
@@ -290,6 +290,7 @@ public sealed partial class MainWindow : Window
                 try
                 {
                     var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder };
+                    picker.FileTypeFilter.Add("*");
                     WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
                     var folder = await picker.PickSingleFolderAsync();
                     if (folder is not null)
@@ -387,7 +388,6 @@ public sealed partial class MainWindow : Window
     private void ConversationQuery_TextChanged(object sender, TextChangedEventArgs e)
     {
         _queryDebounce?.Cancel();
-        _queryDebounce?.Dispose();
         _queryDebounce = new CancellationTokenSource();
         var token = _queryDebounce.Token;
         _ = System.Threading.Tasks.Task.Delay(300, token).ContinueWith(t =>
@@ -592,7 +592,6 @@ public sealed partial class MainWindow : Window
     private void ContactsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _contactsQueryDebounce?.Cancel();
-        _contactsQueryDebounce?.Dispose();
         _contactsQueryDebounce = new CancellationTokenSource();
         var token = _contactsQueryDebounce.Token;
         _ = Task.Delay(300, token).ContinueWith(t =>
@@ -917,7 +916,6 @@ public sealed partial class MainWindow : Window
             searchBox.TextChanged += (_, _) =>
             {
                 searchCts?.Cancel();
-                searchCts?.Dispose();
                 searchCts = new CancellationTokenSource();
                 var token = searchCts.Token;
                 var query = searchBox.Text;
@@ -995,8 +993,6 @@ public sealed partial class MainWindow : Window
                 var detail = await Task.Run(() => AppServices.Instance.Conversations.GetConversation(conv.ConversationId));
                 if (detail?.Conversation is { } info)
                 {
-                    _messagePagingReady = false;
-                    _timeline.Load(info);
                     _conversations.SelectedConversation = info;
                 }
             }
@@ -1146,7 +1142,7 @@ public sealed partial class MainWindow : Window
         foreach (var alias in contact.Aliases.Take(30))
         {
             var seen = alias.LastSeenAt is long ts
-                ? DateTimeOffset.FromUnixTimeMilliseconds(ts).LocalDateTime.ToString("yyyy-MM-dd")
+                ? DateTimeOffset.FromUnixTimeMilliseconds(Math.Clamp(ts, 0, 253402300799000L)).LocalDateTime.ToString("yyyy-MM-dd")
                 : string.Empty;
             aliasList.Items.Add(new StackPanel
             {
@@ -1200,8 +1196,6 @@ public sealed partial class MainWindow : Window
                 var detail = await Task.Run(() => AppServices.Instance.Conversations.GetConversation(id));
                 if (detail?.Conversation is { } info)
                 {
-                    _messagePagingReady = false;
-                    _timeline.Load(info);
                     _conversations.SelectedConversation = info;
                 }
             }
@@ -1392,6 +1386,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder };
+            picker.FileTypeFilter.Add("*");
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
             var folder = await picker.PickSingleFolderAsync();
             if (folder is null)
@@ -1542,8 +1537,10 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            var logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChatArchive");
+            Directory.CreateDirectory(logDir);
             File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "crash.log"),
+                Path.Combine(logDir, "crash.log"),
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {where}: {ex}\n\n");
         }
         catch
