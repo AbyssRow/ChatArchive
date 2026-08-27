@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS app_metadata (
     value TEXT NOT NULL
 );
 
-INSERT INTO app_metadata(key, value) VALUES ('schema_version', '2')
+INSERT INTO app_metadata(key, value) VALUES ('schema_version', '3')
 ON CONFLICT(key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS import_runs (

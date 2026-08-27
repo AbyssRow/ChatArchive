@@ -83,7 +83,7 @@ public static class SqlScriptSplitter
                 continue;
             }
 
-            if (!inTrigger && current.ToString().TrimStart().StartsWith("create trigger", StringComparison.OrdinalIgnoreCase))
+            if (!inTrigger && IsCreateTriggerStatement(current))
             {
                 inTrigger = true;
             }
@@ -119,6 +119,87 @@ public static class SqlScriptSplitter
 
         Flush();
         return statements;
+    }
+
+    private static bool IsCreateTriggerStatement(StringBuilder sb)
+    {
+        var idx = 0;
+        var len = sb.Length;
+
+        void SkipWhitespaceAndComments()
+        {
+            while (idx < len)
+            {
+                if (char.IsWhiteSpace(sb[idx]))
+                {
+                    idx++;
+                    continue;
+                }
+                if (sb[idx] == '-' && idx + 1 < len && sb[idx + 1] == '-')
+                {
+                    idx += 2;
+                    while (idx < len && sb[idx] != '\n')
+                    {
+                        idx++;
+                    }
+                    if (idx < len && sb[idx] == '\n')
+                    {
+                        idx++;
+                    }
+                    continue;
+                }
+                if (sb[idx] == '/' && idx + 1 < len && sb[idx + 1] == '*')
+                {
+                    idx += 2;
+                    while (idx + 1 < len && !(sb[idx] == '*' && sb[idx + 1] == '/'))
+                    {
+                        idx++;
+                    }
+                    if (idx + 1 < len)
+                    {
+                        idx += 2;
+                    }
+                    else
+                    {
+                        idx = len;
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
+
+        bool MatchWord(string word)
+        {
+            if (idx + word.Length > len) return false;
+            for (var k = 0; k < word.Length; k++)
+            {
+                if (char.ToUpperInvariant(sb[idx + k]) != char.ToUpperInvariant(word[k]))
+                {
+                    return false;
+                }
+            }
+            var after = idx + word.Length;
+            if (after < len && (char.IsLetterOrDigit(sb[after]) || sb[after] == '_'))
+            {
+                return false;
+            }
+            idx = after;
+            return true;
+        }
+
+        SkipWhitespaceAndComments();
+        if (!MatchWord("CREATE")) return false;
+
+        SkipWhitespaceAndComments();
+        if (MatchWord("TEMP") || MatchWord("TEMPORARY"))
+        {
+            SkipWhitespaceAndComments();
+        }
+
+        if (!MatchWord("TRIGGER")) return false;
+
+        return true;
     }
 
     private static bool IsWord(string script, int index, string word)
