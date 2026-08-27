@@ -81,7 +81,7 @@ internal static class ChunkedJsonReader
         var token = ReadRequired(source, path);
         if (token.Type != JsonTokenType.StartObject)
         {
-            throw new ImportFormatException(path, "JSON 根节点必须是对象");
+            return false;
         }
 
         while (true)

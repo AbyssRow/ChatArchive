@@ -105,6 +105,14 @@ public sealed class ChunkedJsonReaderTests : IDisposable
     }
 
     [Fact]
+    public void ContainsRootProperties_ReturnsFalse_ForJsonArray_WithoutThrowing()
+    {
+        var path = Write("root_array.json", """[{"id": 1}, {"id": 2}]""");
+        var result = ChunkedJsonReader.ContainsRootProperties(path, new[] { "metadata", "chatInfo" }, bufferSize: 7);
+        Assert.False(result);
+    }
+
+    [Fact]
     public void Array_enumeration_observes_cancellation_between_items()
     {
         var path = Write("cancel.json", """{"messages":[{"id":1},{"id":2}]}""");

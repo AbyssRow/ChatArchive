@@ -460,13 +460,16 @@ public static class CipherTalkParser
             }
         }
 
-        foreach (var text in new[] { content, rawContent })
+        if (messageType is "image" or "audio" or "video" or "file" or "emoji")
         {
-            if ((text.Contains('/') || text.Contains('\\'))
-                && !text.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                && !text.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            foreach (var text in new[] { content, rawContent })
             {
-                candidatePaths.Add(text.Trim());
+                if ((text.Contains('/') || text.Contains('\\'))
+                    && !text.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                    && !text.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    candidatePaths.Add(text.Trim());
+                }
             }
         }
 

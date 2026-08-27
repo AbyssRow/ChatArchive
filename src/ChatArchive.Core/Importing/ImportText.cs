@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -55,14 +56,28 @@ public static class ImportText
             return null;
         }
 
+        if (value is JsonValue scalar && scalar.TryGetValue<string>(out var s))
+        {
+            if (long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLong))
+            {
+                return parsedLong;
+            }
+
+            if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedDouble))
+            {
+                return (long)parsedDouble;
+            }
+
+            return null;
+        }
+
         var raw = value.ToJsonString();
-        if (long.TryParse(raw, out var parsed))
+        if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
         {
             return parsed;
         }
 
-        if (double.TryParse(raw, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var doubled))
+        if (double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var doubled))
         {
             return (long)doubled;
         }
@@ -77,9 +92,18 @@ public static class ImportText
             return null;
         }
 
+        if (value is JsonValue scalar && scalar.TryGetValue<string>(out var s))
+        {
+            if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedDouble))
+            {
+                return parsedDouble;
+            }
+
+            return null;
+        }
+
         var raw = value.ToJsonString();
-        if (double.TryParse(raw, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+        if (double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
         {
             return parsed;
         }
@@ -130,7 +154,7 @@ public static class ImportText
         }
 
         var normalized = declaredPath.Replace('\\', '/').TrimStart('/');
-        if (string.IsNullOrWhiteSpace(normalized) || Path.IsPathRooted(normalized))
+        if (string.IsNullOrWhiteSpace(normalized) || Path.IsPathRooted(normalized) || normalized.Split('/').Any(seg => seg == ".."))
         {
             return null;
         }

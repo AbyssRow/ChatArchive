@@ -155,9 +155,10 @@ public static class ChatLabParser
                 }
             }
 
-            nativeId = peerFromMember
-                ?? ExtractMemberPlatformId(members[0])
-                ?? (ownerId.Length > 0 ? ownerId : TitleFromPath(filePath, "chat"));
+            var fromMember = peerFromMember ?? ExtractMemberPlatformId(members[0]);
+            nativeId = !string.IsNullOrWhiteSpace(fromMember)
+                ? fromMember
+                : (ownerId.Length > 0 ? ownerId : TitleFromPath(filePath, "chat"));
         }
         else
         {

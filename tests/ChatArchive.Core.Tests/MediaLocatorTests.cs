@@ -87,6 +87,22 @@ public class MediaLocatorTests : IDisposable
         Assert.NotEqual(parentSecretFile, resolved);
     }
 
+    [Theory]
+    [InlineData("../outside.png")]
+    [InlineData("sub/../../outside.png")]
+    [InlineData("a/b/../../../secret.txt")]
+    [InlineData("..\\outside.png")]
+    public void SafeResolveMedia_RejectsPathTraversalWithParentSegments(string declaredPath)
+    {
+        var exportRoot = Path.Combine(_dir, "session_export_traversal");
+        Directory.CreateDirectory(exportRoot);
+        var outsideFile = Path.Combine(_dir, "outside.png");
+        File.WriteAllText(outsideFile, "outside content");
+
+        var resolved = ChatArchive.Core.Importing.ImportText.SafeResolveMedia(exportRoot, declaredPath);
+        Assert.Null(resolved);
+    }
+
     public void Dispose()
     {
         try

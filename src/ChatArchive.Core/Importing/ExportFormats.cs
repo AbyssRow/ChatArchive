@@ -179,13 +179,14 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
 
         return new ExportFile(
             conversation,
-            token => IterateChunkedMessages(sortedChunks, conversation, selfSender, token));
+            token => IterateChunkedMessages(sortedChunks, conversation, selfSender, manifestDir, token));
     }
 
     private static IEnumerable<ParsedMessage> IterateChunkedMessages(
         IReadOnlyList<string> chunkFiles,
         ParsedConversation conversation,
         string? selfSender,
+        string exportRoot,
         CancellationToken cancellationToken)
     {
         var globalIndex = 0;
@@ -210,7 +211,7 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
                     continue;
                 }
 
-                var message = QqParser.ParseChunkedLine(trimmed, conversation, selfSender, chunkFile, globalIndex);
+                var message = QqParser.ParseChunkedLine(trimmed, conversation, selfSender, chunkFile, globalIndex, exportRoot);
                 if (message != null)
                 {
                     yield return message;

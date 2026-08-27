@@ -76,7 +76,8 @@ public static class QqParser
         ParsedConversation conversation,
         string? selfSender,
         string filePath,
-        int lineIndex)
+        int lineIndex,
+        string? exportRoot = null)
     {
         var trimmed = line.Trim();
         if (trimmed.Length == 0)
@@ -101,9 +102,9 @@ public static class QqParser
 
         var selfUid = selfSender ?? conversation.AccountId;
         var selfUin = selfSender ?? conversation.AccountId;
-        var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
+        var resolvedExportRoot = exportRoot ?? Path.GetDirectoryName(Path.GetFullPath(filePath))!;
 
-        return ParseMessage(raw, lineIndex, selfUid, selfUin, exportRoot);
+        return ParseMessage(raw, lineIndex, selfUid, selfUin, resolvedExportRoot);
     }
 
     private static ParsedMessage ParseMessage(JsonObject raw, int index, string selfUid, string selfUin, string exportRoot)

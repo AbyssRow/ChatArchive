@@ -1672,6 +1672,199 @@ public class ParserTests : IDisposable
         }
     }
 
+    [Fact]
+    public void CipherTalkParser_PlaintextWithSlashes_DoesNotCreateFakeAttachments()
+    {
+        var json = """
+            {
+              "exportInfo": {
+                "version": "0.0.2",
+                "generator": "CipherTalk",
+                "format": "detailed-json"
+              },
+              "session": {
+                "wxid": "wxid_friend",
+                "displayName": "好友",
+                "type": "私聊",
+                "platform": "wechat"
+              },
+              "messages": [
+                {
+                  "localId": 101,
+                  "createTime": 1700000100,
+                  "type": "文本消息",
+                  "localType": 1,
+                  "content": "进度大约 3/4 and/or N/A，请查收 C:\\temp\\notes",
+                  "isSend": 0,
+                  "senderUsername": "wxid_friend"
+                }
+              ]
+            }
+            """;
+
+        var path = Path.Combine(_dir, "ciphertalk_slash.json");
+        File.WriteAllText(path, json);
+
+        var format = new CipherTalkDetailedJsonFormat();
+        using var exportFile = format.Open(path);
+        var messages = exportFile.EnumerateMessages().ToList();
+        Assert.Single(messages);
+        Assert.Equal("text", messages[0].MessageType);
+        Assert.Null(messages[0].MediaType);
+        Assert.Empty(messages[0].Attachments);
+    }
+
+    [Fact]
+    public void QqChunked_ResolvesMediaUnderExportRootResources_WhenChunksInSubdir()
+    {
+        var exportRoot = Path.Combine(_dir, "qq_chunked_export");
+        var chunksDir = Path.Combine(exportRoot, "chunks");
+        var resDir = Path.Combine(exportRoot, "resources", "images");
+        Directory.CreateDirectory(chunksDir);
+        Directory.CreateDirectory(resDir);
+
+        var imageFile = Path.Combine(resDir, "photo.jpg");
+        File.WriteAllText(imageFile, "fake image bytes");
+
+        var manifestPath = Path.Combine(exportRoot, "manifest.json");
+        var manifestJson = """
+            {
+              "metadata": {"name": "QQChatExporter", "version": "0.1.0"},
+              "chatInfo": {"selfUin": "10001", "selfUid": "uSELF", "peerUid": "uPEER", "peerUin": "12345", "name": "老张", "type": "private"}
+            }
+            """;
+        File.WriteAllText(manifestPath, manifestJson);
+
+        var chunkFile = Path.Combine(chunksDir, "part1.jsonl");
+        var chunkLine = """
+            {"id": "m1", "timestamp": 1700000000000, "type": "image", "sender": {"uid": "uPEER", "uin": "12345", "nickname": "Li"}, "content": {"text": "", "resources": [{"type": "image", "localPath": "resources/images/photo.jpg", "width": 100, "height": 100}]}}
+            """;
+        File.WriteAllText(chunkFile, chunkLine);
+
+        var format = new QqChunkedExportFormat();
+        Assert.True(format.Matches(manifestPath));
+        using var exportFile = format.Open(manifestPath);
+        var messages = exportFile.EnumerateMessages().ToList();
+        Assert.Single(messages);
+        var msg = messages[0];
+        Assert.Single(msg.Attachments);
+        Assert.Equal(imageFile, msg.Attachments[0].SourcePath);
+    }
+
+    [Fact]
+    public void ChatLabParser_EmptyMemberPlatformId_FallsBackToOwnerOrTitle()
+    {
+        var json = """
+            {
+              "chatlab": {
+                "version": "0.0.2",
+                "generator": "ChatLab"
+              },
+              "meta": {
+                "sessionType": "private",
+                "ownerId": "wxid_owner_123",
+                "title": "测试会话"
+              },
+              "members": [
+                {
+                  "nickname": "无ID成员"
+                }
+              ],
+              "messages": []
+            }
+            """;
+
+        var path = Path.Combine(_dir, "chatlab_empty_member.json");
+        File.WriteAllText(path, json);
+
+        var format = new ChatLabJsonExportFormat();
+        Assert.True(format.Matches(path));
+        using var exportFile = format.Open(path);
+        Assert.Equal("wxid_owner_123", exportFile.Conversation.NativeId);
+        Assert.Equal("测试会话", exportFile.Conversation.Title);
+    }
+
+    [Fact]
+    public void ChatLabParser_EmptyMemberAndNoOwner_FallsBackToTitleFromPath()
+    {
+        var json = """
+            {
+              "chatlab": {
+                "version": "0.0.2",
+                "generator": "ChatLab"
+              },
+              "meta": {
+                "sessionType": "private"
+              },
+              "members": [
+                {
+                  "nickname": "无ID成员"
+                }
+              ],
+              "messages": []
+            }
+            """;
+
+        var chatDir = Path.Combine(_dir, "my_custom_chat");
+        Directory.CreateDirectory(chatDir);
+        var path = Path.Combine(chatDir, "export.json");
+        File.WriteAllText(path, json);
+
+        var format = new ChatLabJsonExportFormat();
+        Assert.True(format.Matches(path));
+        using var exportFile = format.Open(path);
+        Assert.Equal("my_custom_chat", exportFile.Conversation.NativeId);
+    }
+
+    [Fact]
+    public void ImportText_AsLong_And_AsDouble_ParseStringifiedNumbers()
+    {
+        var nodeLong = JsonValue.Create("1700000010");
+        Assert.Equal(1700000010L, ImportText.AsLong(nodeLong));
+
+        var nodeDouble = JsonValue.Create("123.456");
+        Assert.Equal(123.456d, ImportText.AsDouble(nodeDouble));
+
+        var nodeLongFromFloat = JsonValue.Create("1700000010.5");
+        Assert.Equal(1700000010L, ImportText.AsLong(nodeLongFromFloat));
+
+        var numLong = JsonValue.Create(1700000010L);
+        Assert.Equal(1700000010L, ImportText.AsLong(numLong));
+
+        var numDouble = JsonValue.Create(123.456d);
+        Assert.Equal(123.456d, ImportText.AsDouble(numDouble));
+
+        var invalidStr = JsonValue.Create("not_a_number");
+        Assert.Null(ImportText.AsLong(invalidStr));
+        Assert.Null(ImportText.AsDouble(invalidStr));
+    }
+
+    [Fact]
+    public void HtmlDataExtractor_HasEmbeddedPayload_DetectsPayloadBeyond128KB()
+    {
+        var path = Path.Combine(_dir, "large_embedded.html");
+        var padding = new string(' ', 200 * 1024);
+        var content = "<!DOCTYPE html><html><head><title>Large</title></head><body><!-- "
+            + padding
+            + " --><script id=\"__DATA__\" type=\"application/json\">{\"messages\":[]}</script></body></html>";
+        File.WriteAllText(path, content);
+
+        Assert.True(HtmlDataExtractor.HasEmbeddedPayload(path));
+    }
+
+    [Fact]
+    public void HtmlDataExtractor_HasEmbeddedPayload_DetectsWindowVarBeyond128KB()
+    {
+        var path = Path.Combine(_dir, "large_window_var.html");
+        var padding = new string(' ', 150 * 1024);
+        var content = "<!DOCTYPE html><html><head><title>Large Window</title></head><body><!-- "
+            + padding
+            + " --><script>window.__CIPHERTALK_DATA__ = {\"exportInfo\":{},\"session\":{}};</script></body></html>";
+        File.WriteAllText(path, content);
+
+        Assert.True(HtmlDataExtractor.HasEmbeddedPayload(path));
+    }
+
     public void Dispose()
     {
         try
