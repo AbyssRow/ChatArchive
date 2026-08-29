@@ -5,6 +5,20 @@ namespace ChatArchive.Core.Tests;
 
 public class SqlScriptParserTests
 {
+    private const string ExactWeFlowCreate = """
+        CREATE TABLE IF NOT EXISTS weflow_messages (
+          session_id TEXT NOT NULL, local_id TEXT, message_id TEXT,
+          create_time BIGINT NOT NULL, sender TEXT, is_send BOOLEAN NOT NULL,
+          local_type INTEGER, media_type TEXT, content TEXT, media_path TEXT
+        );
+        """;
+
+    private const string ExactWeFlowInsert = """
+        INSERT INTO weflow_messages
+          (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path)
+        VALUES ('session-a', '1', '101', 0, 'alice', FALSE, 1, NULL, 'hello', NULL);
+        """;
+
     [Fact]
     public void Enumerate_AcceptsCurrentFramingAndPostgreSqlScalars()
     {
@@ -54,6 +68,84 @@ public class SqlScriptParserTests
         using var reader = new StringReader(sql);
 
         Assert.Throws<FormatException>(() => SqlInsertReader.Enumerate(reader).ToList());
+    }
+
+    [Theory]
+    [InlineData("create_time BIGINT NOT NULL", "create_time TEXT NOT NULL")]
+    [InlineData("is_send BOOLEAN NOT NULL", "is_send BOOLEAN")]
+    [InlineData("content TEXT", "content TEXT CHECK (content IS NOT NULL)")]
+    public void Enumerate_RejectsAlteredWeFlowDeclarationsBeforeValidRow(
+        string currentDeclaration,
+        string alteredDeclaration)
+    {
+        var sql = ExactWeFlowCreate.Replace(
+            currentDeclaration,
+            alteredDeclaration,
+            StringComparison.Ordinal) + ExactWeFlowInsert;
+
+        using var reader = new StringReader(sql);
+
+        Assert.Throws<FormatException>(() => SqlInsertReader.Enumerate(reader).ToList());
+    }
+
+    [Fact]
+    public void Enumerate_RejectsAlteredCipherTalkSessionDefaultBeforeValidRow()
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS sessions (
+              wxid TEXT PRIMARY KEY, display_name TEXT NOT NULL, session_type TEXT NOT NULL,
+              owner_id TEXT, message_count INTEGER, first_message_time BIGINT,
+              last_message_time BIGINT, exported_at BIGINT
+            );
+            INSERT INTO sessions
+              (wxid, display_name, session_type, owner_id, message_count, first_message_time, last_message_time, exported_at)
+            VALUES ('session-a', 'A', 'private', NULL, 1, 0, 0, 0);
+            """;
+
+        using var reader = new StringReader(sql);
+
+        Assert.Throws<FormatException>(() => SqlInsertReader.Enumerate(reader).ToList());
+    }
+
+    [Fact]
+    public void Enumerate_RejectsAlteredCipherTalkMessageReferenceBeforeValidRow()
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS messages (
+              id SERIAL PRIMARY KEY, session_wxid TEXT NOT NULL,
+              local_id INTEGER, create_time BIGINT NOT NULL, formatted_time TEXT,
+              msg_type TEXT, content TEXT, is_send SMALLINT DEFAULT 0,
+              sender_username TEXT, sender_display_name TEXT, group_nickname TEXT,
+              reply_to_message_id TEXT
+            );
+            INSERT INTO messages
+              (session_wxid, local_id, create_time, formatted_time, msg_type, content, is_send, sender_username, sender_display_name, group_nickname, reply_to_message_id)
+            VALUES ('session-a', 1, 0, NULL, '文本消息', 'hello', 0, NULL, 'Alice', NULL, NULL);
+            """;
+
+        using var reader = new StringReader(sql);
+
+        Assert.Throws<FormatException>(() => SqlInsertReader.Enumerate(reader).ToList());
+    }
+
+    [Fact]
+    public void Enumerate_AcceptsQuotedIdentifiersInExactCurrentDeclarations()
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS "weflow_messages" (
+              "session_id" TEXT NOT NULL, "local_id" TEXT, "message_id" TEXT,
+              "create_time" BIGINT NOT NULL, "sender" TEXT, "is_send" BOOLEAN NOT NULL,
+              "local_type" INTEGER, "media_type" TEXT, "content" TEXT, "media_path" TEXT
+            );
+            INSERT INTO weflow_messages
+              (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path)
+            VALUES ('session-a', '1', '101', 0, 'alice', FALSE, 1, NULL, 'hello', NULL);
+            """;
+
+        using var reader = new StringReader(sql);
+        var row = Assert.Single(SqlInsertReader.Enumerate(reader));
+
+        Assert.Equal("hello", row.Values["content"]);
     }
 
     [Theory]

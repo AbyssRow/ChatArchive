@@ -23,7 +23,7 @@ internal static class SqlInsertReader
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex CreateTableRegex = new(
-        @"^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(?<table>[A-Za-z_][A-Za-z0-9_]*)\s*\((?<body>[\s\S]*)\)\s*$",
+        "^CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+(?<table>\"(?:\"\"|[^\"])+\"|[A-Za-z_][A-Za-z0-9_]*)\\s*\\((?<body>[\\s\\S]*)\\)\\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static readonly Regex CreateIndexRegex = new(
@@ -34,24 +34,47 @@ internal static class SqlInsertReader
         @"^DELETE\s+FROM\s+(?<table>messages|sessions)\s+WHERE\s+(?<column>session_wxid|wxid)\s*=\s*'(?:[^']|'')*'\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    private static readonly IReadOnlyDictionary<string, string[]> CreateTableColumns =
+    private static readonly IReadOnlyDictionary<string, string[]> CreateTableDeclarations =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
             ["weflow_messages"] =
             [
-                "session_id", "local_id", "message_id", "create_time", "sender",
-                "is_send", "local_type", "media_type", "content", "media_path"
+                "session_id TEXT NOT NULL",
+                "local_id TEXT",
+                "message_id TEXT",
+                "create_time BIGINT NOT NULL",
+                "sender TEXT",
+                "is_send BOOLEAN NOT NULL",
+                "local_type INTEGER",
+                "media_type TEXT",
+                "content TEXT",
+                "media_path TEXT"
             ],
             ["sessions"] =
             [
-                "wxid", "display_name", "session_type", "owner_id", "message_count",
-                "first_message_time", "last_message_time", "exported_at"
+                "wxid TEXT PRIMARY KEY",
+                "display_name TEXT NOT NULL",
+                "session_type TEXT NOT NULL",
+                "owner_id TEXT",
+                "message_count INTEGER DEFAULT 0",
+                "first_message_time BIGINT",
+                "last_message_time BIGINT",
+                "exported_at BIGINT"
             ],
             ["messages"] =
             [
-                "id", "session_wxid", "local_id", "create_time", "formatted_time",
-                "msg_type", "content", "is_send", "sender_username",
-                "sender_display_name", "group_nickname", "reply_to_message_id"
+                "id SERIAL PRIMARY KEY",
+                "session_wxid TEXT NOT NULL REFERENCES sessions(wxid)",
+                "local_id INTEGER",
+                "create_time BIGINT NOT NULL",
+                "formatted_time TEXT",
+                "msg_type TEXT",
+                "content TEXT",
+                "is_send SMALLINT DEFAULT 0",
+                "sender_username TEXT",
+                "sender_display_name TEXT",
+                "group_nickname TEXT",
+                "reply_to_message_id TEXT"
             ]
         };
 
@@ -108,7 +131,7 @@ internal static class SqlInsertReader
     {
         source.ExpectKeyword("INTO");
         var table = source.ReadIdentifier("INSERT table");
-        if (!CreateTableColumns.ContainsKey(table))
+        if (!CreateTableDeclarations.ContainsKey(table))
         {
             throw new FormatException($"Unsupported INSERT table {table}.");
         }
@@ -346,22 +369,32 @@ internal static class SqlInsertReader
             throw new FormatException("Unsupported or malformed CREATE statement.");
         }
 
-        var table = match.Groups["table"].Value;
-        if (!CreateTableColumns.TryGetValue(table, out var expected))
+        var table = ReadCreateIdentifier(match.Groups["table"].Value, "CREATE TABLE name");
+        if (!CreateTableDeclarations.TryGetValue(table, out var expected))
         {
             throw new FormatException($"Unsupported CREATE TABLE {table}.");
         }
 
-        var actual = ReadCreateColumnNames(match.Groups["body"].Value);
-        if (!actual.SequenceEqual(expected, StringComparer.OrdinalIgnoreCase))
+        var actual = ReadCreateDeclarations(match.Groups["body"].Value);
+        if (actual.Count != expected.Length)
         {
             throw new FormatException($"CREATE TABLE {table} does not match the current writer schema.");
         }
+
+        for (var index = 0; index < expected.Length; index++)
+        {
+            var expectedTokens = TokenizeCreateDeclaration(expected[index]);
+            var actualTokens = actual[index];
+            if (!CreateDeclarationMatches(actualTokens, expectedTokens))
+            {
+                throw new FormatException($"CREATE TABLE {table} does not match the current writer schema.");
+            }
+        }
     }
 
-    private static IReadOnlyList<string> ReadCreateColumnNames(string body)
+    private static IReadOnlyList<IReadOnlyList<CreateToken>> ReadCreateDeclarations(string body)
     {
-        var columns = new List<string>();
+        var declarations = new List<IReadOnlyList<CreateToken>>();
         var item = new StringBuilder();
         var depth = 0;
         var quote = '\0';
@@ -406,7 +439,7 @@ internal static class SqlInsertReader
             }
             else if (current == ',' && depth == 0)
             {
-                columns.Add(ReadDefinitionIdentifier(item.ToString()));
+                declarations.Add(TokenizeCreateDeclaration(item.ToString()));
                 item.Clear();
             }
             else
@@ -419,25 +452,136 @@ internal static class SqlInsertReader
         {
             throw new FormatException("CREATE TABLE has an unterminated quote or parentheses.");
         }
-        columns.Add(ReadDefinitionIdentifier(item.ToString()));
-        return columns;
+        declarations.Add(TokenizeCreateDeclaration(item.ToString()));
+        return declarations;
     }
 
-    private static string ReadDefinitionIdentifier(string definition)
+    private static IReadOnlyList<CreateToken> TokenizeCreateDeclaration(string declaration)
     {
-        var trimmed = definition.TrimStart();
-        var length = 0;
-        while (length < trimmed.Length
-               && (char.IsLetterOrDigit(trimmed[length]) || trimmed[length] == '_'))
+        var tokens = new List<CreateToken>();
+        var index = 0;
+        while (index < declaration.Length)
         {
-            length++;
+            var current = declaration[index];
+            if (char.IsWhiteSpace(current))
+            {
+                index++;
+                continue;
+            }
+
+            if (current == '"')
+            {
+                var quoted = new StringBuilder();
+                index++;
+                var terminated = false;
+                while (index < declaration.Length)
+                {
+                    current = declaration[index++];
+                    if (current != '"')
+                    {
+                        quoted.Append(current);
+                        continue;
+                    }
+                    if (index < declaration.Length && declaration[index] == '"')
+                    {
+                        quoted.Append('"');
+                        index++;
+                        continue;
+                    }
+                    terminated = true;
+                    break;
+                }
+                if (!terminated)
+                {
+                    throw new FormatException("CREATE TABLE has an unterminated quoted identifier.");
+                }
+                tokens.Add(new CreateToken(
+                    ReadCreateIdentifier(quoted.ToString(), "quoted column identifier"),
+                    IsQuoted: true));
+                continue;
+            }
+
+            if (char.IsLetter(current) || current == '_')
+            {
+                var start = index++;
+                while (index < declaration.Length
+                       && (char.IsLetterOrDigit(declaration[index]) || declaration[index] == '_'))
+                {
+                    index++;
+                }
+                tokens.Add(new CreateToken(declaration[start..index].ToLowerInvariant(), IsQuoted: false));
+                continue;
+            }
+
+            if (char.IsDigit(current))
+            {
+                var start = index++;
+                while (index < declaration.Length && char.IsDigit(declaration[index]))
+                {
+                    index++;
+                }
+                tokens.Add(new CreateToken(declaration[start..index], IsQuoted: false));
+                continue;
+            }
+
+            if (current is '(' or ')')
+            {
+                tokens.Add(new CreateToken(current.ToString(), IsQuoted: false));
+                index++;
+                continue;
+            }
+
+            throw new FormatException($"CREATE TABLE contains unsupported declaration token {current}.");
         }
-        if (length == 0)
-        {
-            throw new FormatException("CREATE TABLE contains an invalid column definition.");
-        }
-        return trimmed[..length];
+
+        return tokens;
     }
+
+    private static bool CreateDeclarationMatches(
+        IReadOnlyList<CreateToken> actual,
+        IReadOnlyList<CreateToken> expected)
+    {
+        if (actual.Count != expected.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < expected.Count; index++)
+        {
+            if (!string.Equals(actual[index].Value, expected[index].Value, StringComparison.Ordinal)
+                || (actual[index].IsQuoted && !CanQuoteCreateIdentifier(expected, index)))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool CanQuoteCreateIdentifier(IReadOnlyList<CreateToken> tokens, int index) =>
+        index == 0
+        || (index > 0 && tokens[index - 1].Value == "references")
+        || (index > 2
+            && tokens[index - 1].Value == "("
+            && tokens[index - 3].Value == "references");
+
+    private static string ReadCreateIdentifier(string raw, string description)
+    {
+        var value = raw;
+        if (raw.Length >= 2 && raw[0] == '"' && raw[^1] == '"')
+        {
+            value = raw[1..^1].Replace("\"\"", "\"", StringComparison.Ordinal);
+        }
+        if (value.Length == 0
+            || !(char.IsLetter(value[0]) || value[0] == '_')
+            || value.Any(character => !(char.IsLetterOrDigit(character) || character == '_'))
+            || value.Length > MaxIdentifierLength)
+        {
+            throw new FormatException($"CREATE TABLE contains an invalid {description}.");
+        }
+        return value.ToLowerInvariant();
+    }
+
+    private readonly record struct CreateToken(string Value, bool IsQuoted);
 
     private static void ValidateDelete(string statement)
     {

@@ -1160,13 +1160,13 @@ public class ParserTests : IDisposable
             DELETE FROM sessions WHERE wxid = 'group@chatroom';
             CREATE TABLE IF NOT EXISTS sessions (
               wxid TEXT PRIMARY KEY, display_name TEXT NOT NULL, session_type TEXT NOT NULL,
-              owner_id TEXT, message_count INTEGER, first_message_time BIGINT,
+              owner_id TEXT, message_count INTEGER DEFAULT 0, first_message_time BIGINT,
               last_message_time BIGINT, exported_at BIGINT
             );
             CREATE TABLE IF NOT EXISTS messages (
-              id SERIAL PRIMARY KEY, session_wxid TEXT NOT NULL, local_id INTEGER,
+              id SERIAL PRIMARY KEY, session_wxid TEXT NOT NULL REFERENCES sessions(wxid), local_id INTEGER,
               create_time BIGINT NOT NULL, formatted_time TEXT, msg_type TEXT, content TEXT,
-              is_send SMALLINT, sender_username TEXT, sender_display_name TEXT,
+              is_send SMALLINT DEFAULT 0, sender_username TEXT, sender_display_name TEXT,
               group_nickname TEXT, reply_to_message_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_wxid);
@@ -1211,6 +1211,29 @@ public class ParserTests : IDisposable
 
         Assert.Equal("  It's; (x,y)  ", message.Content);
         Assert.Equal(0, message.TimestampMs);
+    }
+
+    [Fact]
+    public void WeFlowSql_MalformedDdlCannotCamouflageValidRow()
+    {
+        var path = Path.Combine(_dir, "weflow_bad_ddl.sql");
+        File.WriteAllText(path, """
+            CREATE TABLE IF NOT EXISTS weflow_messages (
+              session_id TEXT NOT NULL, local_id TEXT, message_id TEXT,
+              create_time TEXT NOT NULL, sender TEXT, is_send BOOLEAN NOT NULL,
+              local_type INTEGER, media_type TEXT, content TEXT, media_path TEXT
+            );
+            INSERT INTO weflow_messages
+              (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path)
+            VALUES ('session-a', '1', '101', 0, 'alice', FALSE, 1, NULL, 'hello', NULL);
+            """);
+
+        var format = new WeFlowSqlExportFormat();
+        Assert.False(format.Matches(path));
+        var error = Assert.Throws<ImportFormatException>(() => format.Open(path));
+
+        Assert.Contains(path, error.Message);
+        Assert.Contains("weflow_messages", error.Message);
     }
 
     [Fact]
