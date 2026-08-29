@@ -685,6 +685,25 @@ public sealed class WeFlowMarkdownExportFormat : IChatExportFormat
     }
 }
 
+/// <summary>Current QQ Chat Exporter TXT adapter.</summary>
+public sealed class QqTextExportFormat : IChatExportFormat
+{
+    public string Platform => "qq";
+
+    public bool Matches(string filePath)
+    {
+        return QqTextParser.Matches(filePath);
+    }
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        var conversation = QqTextParser.ReadConversation(filePath);
+        return new ExportFile(
+            conversation,
+            token => QqTextParser.IterateMessages(filePath, conversation, token));
+    }
+}
+
 /// <summary>Current WeFlow TXT export adapter.</summary>
 public sealed class WeFlowTextExportFormat : IChatExportFormat
 {
@@ -739,6 +758,7 @@ public static class ExportFormats
         new ChatLabJsonlExportFormat(),
         new WeFlowCsvExportFormat(),
         new WeFlowMarkdownExportFormat(),
+        new QqTextExportFormat(),
         new WeFlowTextExportFormat(),
         new ChatSqlExportFormat(),
     };

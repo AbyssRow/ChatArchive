@@ -100,7 +100,33 @@ public class ImportDiscoveryTests : IDisposable
             1,9001,text,0,张三,hello csv,,2023-11-15T10:00:00.000Z
             """);
 
-        // 6. sql_dump/backup.sql (SQL 导出的 messages)
+        // 6. qq_text/chat.txt (current QQ Chat Exporter V5 TXT)
+        var qqTextDir = Path.Combine(_tempDir, "qq_text");
+        Directory.CreateDirectory(qqTextDir);
+        var qqTextPath = Path.Combine(qqTextDir, "chat.txt");
+        File.WriteAllText(qqTextPath, """
+            [QQChatExporter V5 / https://github.com/shuakami/qq-chat-exporter]
+            [本软件是免费的开源项目~ 如果您是买来的，请立即退款！如果有帮助到您，欢迎给我点个Star~]
+
+            ===============================================
+                       QQ聊天记录导出文件
+            ===============================================
+
+            聊天名称: QQ TXT测试
+            聊天类型: 私聊
+
+            [1]
+            Alice:
+            时间: 2023-11-15 06:15:23
+            内容: hello qq txt
+
+            ===============================================
+                          导出完成
+            ===============================================
+            总计导出 1 条消息
+            """);
+
+        // 7. sql_dump/backup.sql (SQL 导出的 messages)
         var sqlDir = Path.Combine(_tempDir, "sql_dump");
         Directory.CreateDirectory(sqlDir);
         var sqlPath = Path.Combine(sqlDir, "backup.sql");
@@ -138,8 +164,8 @@ public class ImportDiscoveryTests : IDisposable
         // 执行扫描嗅探
         var discovered = ImportDiscovery.Discover(new[] { _tempDir });
 
-        // 验证只发现了 6 个有效导出，无多余文件、无媒体目录污染、无 chunk_0.jsonl 独立识别
-        Assert.Equal(6, discovered.Count);
+        // 验证只发现了 7 个有效导出，无多余文件、无媒体目录污染、无 chunk_0.jsonl 独立识别
+        Assert.Equal(7, discovered.Count);
         Assert.All(discovered, d => Assert.Null(d.Error));
 
         var discoveredDict = discovered.ToDictionary(
@@ -152,6 +178,7 @@ public class ImportDiscoveryTests : IDisposable
         Assert.Equal("wechat", discoveredDict[Path.GetFullPath(chatlabPath)]);
         Assert.Equal("qq", discoveredDict[Path.GetFullPath(qqManifestPath)]);
         Assert.Equal("wechat", discoveredDict[Path.GetFullPath(csvPath)]);
+        Assert.Equal("qq", discoveredDict[Path.GetFullPath(qqTextPath)]);
         Assert.Equal("sql", discoveredDict[Path.GetFullPath(sqlPath)]);
 
         // 确保 chunk_0.jsonl 未被当作独立导出识别
