@@ -115,6 +115,15 @@ public sealed class WeFlowTextFormatTests : IDisposable
         Assert.Contains("CreateTime", exception.Message);
     }
 
+    [Fact]
+    public void WeFlowCsv_ImportsIsoEpochCreateTime()
+    {
+        var path = WriteCurrentCsv("epoch.csv", "1,9001,text,0,Alice,hello,,1970-01-01T00:00:00.000Z\r\n");
+        using var export = new WeFlowCsvExportFormat().Open(path);
+
+        Assert.Equal(0, Assert.Single(export.EnumerateMessages()).TimestampMs);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_dir))

@@ -315,9 +315,15 @@ public static class ImportText
 
     public static long ParseFlexibleTimestamp(string? timeStr)
     {
+        return TryParseFlexibleTimestamp(timeStr, out var timestampMs) ? timestampMs : 0;
+    }
+
+    public static bool TryParseFlexibleTimestamp(string? timeStr, out long timestampMs)
+    {
+        timestampMs = 0;
         if (string.IsNullOrWhiteSpace(timeStr))
         {
-            return 0;
+            return false;
         }
 
         timeStr = timeStr.Trim();
@@ -326,16 +332,19 @@ public static class ImportText
             if (timeStr.Length == 8 && rawLong is >= 19700101 and <= 20991231
                 && DateTimeOffset.TryParseExact(timeStr, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out var dto8))
             {
-                return dto8.ToUnixTimeMilliseconds();
+                timestampMs = dto8.ToUnixTimeMilliseconds();
+                return true;
             }
 
-            return rawLong >= 10_000_000_000L ? rawLong : rawLong * 1000L;
+            timestampMs = rawLong >= 10_000_000_000L ? rawLong : rawLong * 1000L;
+            return true;
         }
 
         if (double.TryParse(timeStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rawDouble))
         {
             var asLong = (long)rawDouble;
-            return asLong >= 10_000_000_000L ? asLong : asLong * 1000L;
+            timestampMs = asLong >= 10_000_000_000L ? asLong : asLong * 1000L;
+            return true;
         }
 
         var normalized = System.Text.RegularExpressions.Regex.Replace(timeStr, @"(\d{4})年(\d{1,2})月(\d{1,2})日?", "$1-$2-$3");
@@ -373,12 +382,14 @@ public static class ImportText
 
         if (DateTimeOffset.TryParseExact(normalized, formats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out var dtoExact))
         {
-            return dtoExact.ToUnixTimeMilliseconds();
+            timestampMs = dtoExact.ToUnixTimeMilliseconds();
+            return true;
         }
 
         if (DateTimeOffset.TryParse(normalized, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out var dto))
         {
-            return dto.ToUnixTimeMilliseconds();
+            timestampMs = dto.ToUnixTimeMilliseconds();
+            return true;
         }
 
         if (DateTime.TryParse(normalized, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt))
@@ -386,10 +397,11 @@ public static class ImportText
             var local = TimeZoneInfo.Local;
             var unspecified = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
             var offset = local.GetUtcOffset(unspecified);
-            return new DateTimeOffset(unspecified, offset).ToUnixTimeMilliseconds();
+            timestampMs = new DateTimeOffset(unspecified, offset).ToUnixTimeMilliseconds();
+            return true;
         }
 
-        return 0;
+        return false;
     }
 
     private static readonly Dictionary<string, string> MimeByExtension = new(StringComparer.OrdinalIgnoreCase)

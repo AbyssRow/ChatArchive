@@ -167,8 +167,7 @@ public static class WeFlowCsvParser
                 };
 
             var talker = values[4];
-            var timestampMs = ImportText.ParseFlexibleTimestamp(values[7]);
-            if (string.IsNullOrWhiteSpace(values[7]) || timestampMs == 0)
+            if (!ImportText.TryParseFlexibleTimestamp(values[7], out var timestampMs))
             {
                 throw new ImportFormatException(filePath, $"第 {rowNumber} 行 CreateTime 无效");
             }

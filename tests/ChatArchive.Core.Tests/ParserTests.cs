@@ -1259,6 +1259,18 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
+    public void TryParseFlexibleTimestamp_DistinguishesEpochFromFailure()
+    {
+        Assert.True(ImportText.TryParseFlexibleTimestamp("0", out var numericEpoch));
+        Assert.Equal(0, numericEpoch);
+        Assert.True(ImportText.TryParseFlexibleTimestamp("1970-01-01T00:00:00.000Z", out var isoEpoch));
+        Assert.Equal(0, isoEpoch);
+        Assert.False(ImportText.TryParseFlexibleTimestamp("not-a-time", out var invalid));
+        Assert.Equal(0, invalid);
+        Assert.Equal(0, ImportText.ParseFlexibleTimestamp("not-a-time"));
+    }
+
+    [Fact]
     public void SqlScriptParser_Handles_NullLiteral_And_Multiline_Comments()
     {
         var sqlContent = """
