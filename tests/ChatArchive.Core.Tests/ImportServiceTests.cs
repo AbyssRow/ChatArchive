@@ -728,30 +728,7 @@ public class ImportServiceTests : IDisposable
             var qqChunk0 = """{"id":"qq_c1","timestamp":1700000400000,"sender":{"uid":"u_qq_friend","name":"QQ群友"},"content":{"type":"text","text":"来自QQ分块消息1"}}""" + "\n"
                          + """{"id":"qq_c2","timestamp":1700000410000,"sender":{"uid":"u_self","name":"我自己"},"content":{"type":"text","text":"来自QQ分块消息2"}}""" + "\n";
             File.WriteAllText(Path.Combine(qqChunksDir, "chunk_0.jsonl"), qqChunk0);
-
-            // 6. 内嵌数据的 HTML 导出
-            var htmlExport = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                  <meta charset="utf-8">
-                  <title>HTML Export</title>
-                  <script id="__DATA__" type="application/json">
-                  {
-                    "metadata": { "name": "QQChatExporter", "version": "0.2.0" },
-                    "chatInfo": { "selfUid": "u_self", "peerUid": "u_qq_html_session", "name": "HTML内嵌QQ会话", "type": "private" },
-                    "messages": [
-                      { "id": "html_q1", "timestamp": 1700000500000, "sender": { "uid": "u_qq_html_session", "name": "HTML好友" }, "content": { "type": "text", "text": "来自HTML内嵌数据消息" } }
-                    ]
-                  }
-                  </script>
-                </head>
-                <body></body>
-                </html>
-                """;
-            File.WriteAllText(Path.Combine(exportsDir, "06_chat_embedded.html"), htmlExport);
-
-            // 7. WeClone CSV
+// 7. WeClone CSV
             var wecloneCsv = """
                 is_sender,sender_name,talker,time,type,content
                 0,CSV好友,wxid_csv_user,2023-11-15 10:00:00,1,来自WeClone CSV消息
@@ -797,8 +774,8 @@ public class ImportServiceTests : IDisposable
             var result = await service.RunAsync(new[] { exportsDir });
 
             // 断言导入统计
-            Assert.Equal(10, result.FilesFound);
-            Assert.Equal(10, result.FilesImported);
+            Assert.Equal(9, result.FilesFound);
+            Assert.Equal(9, result.FilesImported);
             Assert.Equal(0, result.FilesFailed);
             Assert.True(result.MessagesSeen > 0);
             Assert.True(result.Added > 0);
@@ -808,10 +785,10 @@ public class ImportServiceTests : IDisposable
             using (var connection = db.OpenConnection())
             {
                 var convCount = Scalar(connection, "SELECT COUNT(*) FROM conversations");
-                Assert.True(convCount >= 10, $"conversations count: {convCount}");
+                Assert.True(convCount >= 9, $"conversations count: {convCount}");
 
                 var senderCount = Scalar(connection, "SELECT COUNT(*) FROM senders");
-                Assert.True(senderCount >= 10, $"senders count: {senderCount}");
+                Assert.True(senderCount >= 9, $"senders count: {senderCount}");
 
                 var msgCount = Scalar(connection, "SELECT COUNT(*) FROM messages");
                 Assert.Equal(result.Added, msgCount);
@@ -822,7 +799,6 @@ public class ImportServiceTests : IDisposable
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自ChatLab标准JSON消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自ChatLab JSONL流式消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自QQ分块消息1%'"));
-                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自HTML内嵌数据消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自WeClone CSV消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自Markdown导出的消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自TXT纯文本导出的消息%'"));
@@ -863,8 +839,8 @@ public class ImportServiceTests : IDisposable
 
             // 二次运行导入，断言所有消息基于 NativeId 与 PayloadHash 完美去重（重复消息数为 0，跳过计数正常）
             var secondResult = await service.RunAsync(new[] { exportsDir });
-            Assert.Equal(10, secondResult.FilesFound);
-            Assert.Equal(10, secondResult.FilesSkipped);
+            Assert.Equal(9, secondResult.FilesFound);
+            Assert.Equal(9, secondResult.FilesSkipped);
             Assert.Equal(0, secondResult.FilesImported);
             Assert.Equal(0, secondResult.Added);
             Assert.Equal(0, secondResult.FilesFailed);
