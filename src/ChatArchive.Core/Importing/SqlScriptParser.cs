@@ -35,7 +35,7 @@ internal static class SqlInsertReader
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static readonly IReadOnlyDictionary<string, string[]> CreateTableDeclarations =
-        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["weflow_messages"] =
             [
@@ -130,7 +130,7 @@ internal static class SqlInsertReader
     private static IEnumerable<SqlInsertRow> ReadInsert(CharacterSource source)
     {
         source.ExpectKeyword("INTO");
-        var table = source.ReadIdentifier("INSERT table");
+        var table = source.ReadIdentifier("INSERT table").ToLowerInvariant();
         if (!CreateTableDeclarations.ContainsKey(table))
         {
             throw new FormatException($"Unsupported INSERT table {table}.");
@@ -496,7 +496,10 @@ internal static class SqlInsertReader
                     throw new FormatException("CREATE TABLE has an unterminated quoted identifier.");
                 }
                 tokens.Add(new CreateToken(
-                    ReadCreateIdentifier(quoted.ToString(), "quoted column identifier"),
+                    ReadCreateIdentifier(
+                        quoted.ToString(),
+                        "quoted column identifier",
+                        isQuoted: true),
                     IsQuoted: true));
                 continue;
             }
@@ -564,11 +567,15 @@ internal static class SqlInsertReader
             && tokens[index - 1].Value == "("
             && tokens[index - 3].Value == "references");
 
-    private static string ReadCreateIdentifier(string raw, string description)
+    private static string ReadCreateIdentifier(
+        string raw,
+        string description,
+        bool isQuoted = false)
     {
         var value = raw;
         if (raw.Length >= 2 && raw[0] == '"' && raw[^1] == '"')
         {
+            isQuoted = true;
             value = raw[1..^1].Replace("\"\"", "\"", StringComparison.Ordinal);
         }
         if (value.Length == 0
@@ -578,7 +585,7 @@ internal static class SqlInsertReader
         {
             throw new FormatException($"CREATE TABLE contains an invalid {description}.");
         }
-        return value.ToLowerInvariant();
+        return isQuoted ? value : value.ToLowerInvariant();
     }
 
     private readonly record struct CreateToken(string Value, bool IsQuoted);

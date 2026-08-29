@@ -148,6 +148,55 @@ public class SqlScriptParserTests
         Assert.Equal("hello", row.Values["content"]);
     }
 
+    [Fact]
+    public void Enumerate_RejectsCaseChangedQuotedTableIdentifier()
+    {
+        var sql = ExactWeFlowCreate.Replace(
+            "weflow_messages",
+            "\"WEFLOW_MESSAGES\"",
+            StringComparison.Ordinal) + ExactWeFlowInsert;
+
+        using var reader = new StringReader(sql);
+
+        Assert.Throws<FormatException>(() => SqlInsertReader.Enumerate(reader).ToList());
+    }
+
+    [Fact]
+    public void Enumerate_RejectsCaseChangedQuotedColumnIdentifier()
+    {
+        var sql = ExactWeFlowCreate.Replace(
+            "session_id TEXT NOT NULL",
+            "\"Session_Id\" TEXT NOT NULL",
+            StringComparison.Ordinal) + ExactWeFlowInsert;
+
+        using var reader = new StringReader(sql);
+
+        Assert.Throws<FormatException>(() => SqlInsertReader.Enumerate(reader).ToList());
+    }
+
+    [Theory]
+    [InlineData("REFERENCES \"SESSIONS\"(wxid)")]
+    [InlineData("REFERENCES sessions(\"WxId\")")]
+    public void Enumerate_RejectsCaseChangedQuotedReferenceIdentifiers(string reference)
+    {
+        var sql = $$"""
+            CREATE TABLE IF NOT EXISTS messages (
+              id SERIAL PRIMARY KEY, session_wxid TEXT NOT NULL {{reference}},
+              local_id INTEGER, create_time BIGINT NOT NULL, formatted_time TEXT,
+              msg_type TEXT, content TEXT, is_send SMALLINT DEFAULT 0,
+              sender_username TEXT, sender_display_name TEXT, group_nickname TEXT,
+              reply_to_message_id TEXT
+            );
+            INSERT INTO messages
+              (session_wxid, local_id, create_time, formatted_time, msg_type, content, is_send, sender_username, sender_display_name, group_nickname, reply_to_message_id)
+            VALUES ('session-a', 1, 0, NULL, '文本消息', 'hello', 0, NULL, 'Alice', NULL, NULL);
+            """;
+
+        using var reader = new StringReader(sql);
+
+        Assert.Throws<FormatException>(() => SqlInsertReader.Enumerate(reader).ToList());
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("bare_identifier")]
