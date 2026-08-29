@@ -154,6 +154,46 @@ public class ImportDiscoveryTests : IDisposable
             new XlsxTestCell[] { new("A5", "1"), new("B5", "2023-11-15 06:15:23"), new("C5", "对方"), new("D5", "文本消息"), new("E5", "hello excel") },
         }));
 
+        // 9. ciphertalk_excel/chat.xlsx (current CipherTalk Excel export)
+        var cipherTalkExcelDir = Path.Combine(_tempDir, "ciphertalk_excel");
+        Directory.CreateDirectory(cipherTalkExcelDir);
+        var cipherTalkExcelPath = Path.Combine(cipherTalkExcelDir, "chat.xlsx");
+        XlsxTestFile.Write(cipherTalkExcelPath, new XlsxTestSheet("CipherTalk测试", new IReadOnlyList<XlsxTestCell>[]
+        {
+            new XlsxTestCell[]
+            {
+                new("A1", "序号"), new("B1", "时间"), new("C1", "日期"), new("D1", "时刻"),
+                new("E1", "星期"), new("F1", "发送者"), new("G1", "微信ID"), new("H1", "消息类型"),
+                new("I1", "消息内容"), new("J1", "原始类型代码"), new("K1", "时间戳")
+            },
+            new XlsxTestCell[]
+            {
+                new("A2", "1", "n"), new("B2", "2023-11-15 06:15:23"), new("C2", "2023/11/15"),
+                new("D2", "06:15:23"), new("E2", "三"), new("F2", "Alice"), new("G2", "wxid_alice"),
+                new("H2", "文本消息"), new("I2", "hello ciphertalk excel"), new("J2", "1", "n"),
+                new("K2", "1700000123", "n")
+            },
+        }));
+
+        // 10. qq_excel/chat.xlsx (current QQ Chat Exporter Excel export)
+        var qqExcelDir = Path.Combine(_tempDir, "qq_excel");
+        Directory.CreateDirectory(qqExcelDir);
+        var qqExcelPath = Path.Combine(qqExcelDir, "chat.xlsx");
+        XlsxTestFile.Write(qqExcelPath, new XlsxTestSheet("聊天记录", new IReadOnlyList<XlsxTestCell>[]
+        {
+            new XlsxTestCell[]
+            {
+                new("A1", "序号"), new("B1", "时间"), new("C1", "发送者"), new("D1", "发送者QQ号"),
+                new("E1", "消息类型"), new("F1", "消息内容"), new("G1", "是否撤回"), new("H1", "资源数量")
+            },
+            new XlsxTestCell[]
+            {
+                new("A2", "1", "n"), new("B2", "2023-11-15 06:15:23"), new("C2", "Alice"),
+                new("D2", "10002"), new("E2", "文本"), new("F2", "hello qq excel"),
+                new("G2", "否"), new("H2", "0", "n")
+            },
+        }));
+
         // 媒体子目录与无关子目录，放置格式文件/垃圾文件，测试是否全部被跳过
         var mediaDirs = new[]
         {
@@ -183,8 +223,8 @@ public class ImportDiscoveryTests : IDisposable
         // 执行扫描嗅探
         var discovered = ImportDiscovery.Discover(new[] { _tempDir });
 
-        // 验证只发现了 8 个有效导出，无多余文件、无媒体目录污染、无 chunk_0.jsonl 独立识别
-        Assert.Equal(8, discovered.Count);
+        // 验证只发现了 10 个有效导出，无多余文件、无媒体目录污染、无 chunk_0.jsonl 独立识别
+        Assert.Equal(10, discovered.Count);
         Assert.All(discovered, d => Assert.Null(d.Error));
 
         var discoveredDict = discovered.ToDictionary(
@@ -200,6 +240,8 @@ public class ImportDiscoveryTests : IDisposable
         Assert.Equal("qq", discoveredDict[Path.GetFullPath(qqTextPath)]);
         Assert.Equal("wechat", discoveredDict[Path.GetFullPath(sqlPath)]);
         Assert.Equal("wechat", discoveredDict[Path.GetFullPath(excelPath)]);
+        Assert.Equal("wechat", discoveredDict[Path.GetFullPath(cipherTalkExcelPath)]);
+        Assert.Equal("qq", discoveredDict[Path.GetFullPath(qqExcelPath)]);
 
         // 确保 chunk_0.jsonl 未被当作独立导出识别
         Assert.DoesNotContain(Path.GetFullPath(qqChunk0Path), discoveredDict.Keys);

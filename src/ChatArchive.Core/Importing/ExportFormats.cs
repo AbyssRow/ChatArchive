@@ -744,6 +744,8 @@ public static class ExportFormats
         new WeFlowSqlExportFormat(),
         new CipherTalkSqlExportFormat(),
         new WeFlowExcelExportFormat(),
+        new CipherTalkExcelExportFormat(),
+        new QqExcelExportFormat(),
     };
 
     public static IReadOnlyList<IChatExportFormat> Default => _formats;
