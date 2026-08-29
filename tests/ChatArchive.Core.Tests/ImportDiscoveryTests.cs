@@ -14,6 +14,21 @@ public class ImportDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void ImportDiscovery_DoesNotDiscoverEmbeddedHtml()
+    {
+        var html = Path.Combine(_tempDir, "chat.html");
+        File.WriteAllText(html, """
+            <script id="__DATA__" type="application/json">
+            {"metadata":{"name":"QQChatExporter"},"chatInfo":{"name":"demo"},"messages":[]}
+            </script>
+            """);
+
+        Assert.DoesNotContain(".html", ImportDiscovery.SupportedExtensions);
+        Assert.DoesNotContain(".htm", ImportDiscovery.SupportedExtensions);
+        Assert.Empty(ImportDiscovery.Discover(new[] { html }));
+    }
+
+    [Fact]
     public void ImportDiscovery_ScansAllSupportedFormats_And_SkipsMediaSubdirectories()
     {
         // 1. weflow/session.json (WeFlow JSON)
@@ -76,23 +91,7 @@ public class ImportDiscoveryTests : IDisposable
         var qqChunk0Path = Path.Combine(qqChunksSubdir, "chunk_0.jsonl");
         File.WriteAllText(qqChunk0Path, """{"id":"q1","timestamp":1700000000,"sender":{"uid":"u_self","name":"我自己"},"content":{"type":"text","text":"分块内容"}}""" + "\n");
 
-        // 5. html_export/chat.html (内嵌 HTML)
-        var htmlDir = Path.Combine(_tempDir, "html_export");
-        Directory.CreateDirectory(htmlDir);
-        var htmlPath = Path.Combine(htmlDir, "chat.html");
-        File.WriteAllText(htmlPath, """
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <script id="__DATA__" type="application/json">
-              {"metadata":{"name":"QQChatExporter","version":"0.2.0"},"chatInfo":{"selfUid":"u_self","peerUid":"u_html","name":"HTML测试","type":"private"},"messages":[{"id":"q1","timestamp":1700000000,"sender":{"uid":"u_html"},"content":{"type":"text","text":"hello html"}}]}
-              </script>
-            </head>
-            <body></body>
-            </html>
-            """);
-
-        // 6. csv_export/records.csv (WeClone CSV)
+        // 5. csv_export/records.csv (WeClone CSV)
         var csvDir = Path.Combine(_tempDir, "csv_export");
         Directory.CreateDirectory(csvDir);
         var csvPath = Path.Combine(csvDir, "records.csv");
@@ -101,7 +100,7 @@ public class ImportDiscoveryTests : IDisposable
             0,张三,wxid_zhang,2023-11-15 10:00:00,1,hello csv
             """);
 
-        // 7. md_export/notes.md (Markdown 聊天记录)
+        // 6. md_export/notes.md (Markdown 聊天记录)
         var mdDir = Path.Combine(_tempDir, "md_export");
         Directory.CreateDirectory(mdDir);
         var mdPath = Path.Combine(mdDir, "notes.md");
@@ -110,7 +109,7 @@ public class ImportDiscoveryTests : IDisposable
             [2023-11-15 10:00:00] 张三: hello markdown
             """);
 
-        // 8. txt_export/chat.txt (TXT 聊天记录)
+        // 7. txt_export/chat.txt (TXT 聊天记录)
         var txtDir = Path.Combine(_tempDir, "txt_export");
         Directory.CreateDirectory(txtDir);
         var txtPath = Path.Combine(txtDir, "chat.txt");
@@ -120,7 +119,7 @@ public class ImportDiscoveryTests : IDisposable
             hello txt
             """);
 
-        // 9. sql_dump/backup.sql (SQL 导出的 messages)
+        // 8. sql_dump/backup.sql (SQL 导出的 messages)
         var sqlDir = Path.Combine(_tempDir, "sql_dump");
         Directory.CreateDirectory(sqlDir);
         var sqlPath = Path.Combine(sqlDir, "backup.sql");
@@ -151,7 +150,6 @@ public class ImportDiscoveryTests : IDisposable
             Directory.CreateDirectory(dir);
             File.WriteAllText(Path.Combine(dir, "junk.txt"), "2023-11-15 10:00:00 张三: fake text");
             File.WriteAllText(Path.Combine(dir, "junk.json"), """{"weflow":{"version":"1.0.3"},"session":{"wxid":"fake"},"messages":[]}""");
-            File.WriteAllText(Path.Combine(dir, "junk.html"), """<html><head><script id="__DATA__" type="application/json">{"metadata":{"name":"QQChatExporter","version":"0.2.0"},"chatInfo":{"selfUid":"u_fake","peerUid":"u_fake"},"messages":[]}</script></head></html>""");
             File.WriteAllText(Path.Combine(dir, "junk.sql"), "INSERT INTO messages (id, talker, content) VALUES ('1','2','fake');");
             File.WriteAllText(Path.Combine(dir, "junk.csv"), "is_sender,talker,content\n1,fake,fake");
         }
@@ -159,8 +157,8 @@ public class ImportDiscoveryTests : IDisposable
         // 执行扫描嗅探
         var discovered = ImportDiscovery.Discover(new[] { _tempDir });
 
-        // 验证只发现了 9 个有效导出，无多余文件、无媒体目录污染、无 chunk_0.jsonl 独立识别
-        Assert.Equal(9, discovered.Count);
+        // 验证只发现了 8 个有效导出，无多余文件、无媒体目录污染、无 chunk_0.jsonl 独立识别
+        Assert.Equal(8, discovered.Count);
         Assert.All(discovered, d => Assert.Null(d.Error));
 
         var discoveredDict = discovered.ToDictionary(
@@ -172,7 +170,6 @@ public class ImportDiscoveryTests : IDisposable
         Assert.Equal("wechat", discoveredDict[Path.GetFullPath(cipherTalkPath)]);
         Assert.Equal("wechat", discoveredDict[Path.GetFullPath(chatlabPath)]);
         Assert.Equal("qq", discoveredDict[Path.GetFullPath(qqManifestPath)]);
-        Assert.Equal("html", discoveredDict[Path.GetFullPath(htmlPath)]);
         Assert.Equal("wechat", discoveredDict[Path.GetFullPath(csvPath)]);
         Assert.Equal("text", discoveredDict[Path.GetFullPath(mdPath)]);
         Assert.Equal("text", discoveredDict[Path.GetFullPath(txtPath)]);

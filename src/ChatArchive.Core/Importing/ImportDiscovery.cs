@@ -15,12 +15,11 @@ public static class ImportDiscovery
     {
         ".json",
         ".jsonl",
-        ".html",
-        ".htm",
         ".csv",
         ".md",
         ".txt",
-        ".sql"
+        ".sql",
+        ".xlsx"
     };
 
     public static readonly HashSet<string> DefaultPrunedDirectories = new(StringComparer.OrdinalIgnoreCase)

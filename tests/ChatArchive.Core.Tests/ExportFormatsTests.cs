@@ -25,6 +25,14 @@ public class ExportFormatsTests
     }
 
     [Fact]
+    public void Default_DoesNotRegisterHtmlImporter()
+    {
+        Assert.DoesNotContain(
+            ExportFormats.Default,
+            format => format.GetType().Name.Contains("Html", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task Register_And_Enumerate_IsThreadSafe()
     {
         var readTasks = new List<Task>();
