@@ -23,6 +23,20 @@ public static class ImportText
         return value?.Replace("\0", "").Trim() ?? string.Empty;
     }
 
+    public static string StableFileNativeId(string filePath)
+    {
+        var normalized = Path.GetFullPath(filePath)
+            .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        if (OperatingSystem.IsWindows())
+        {
+            normalized = normalized.ToUpperInvariant();
+        }
+
+        var digest = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(normalized));
+        return $"file:{Convert.ToHexStringLower(digest)}";
+    }
+
     private static readonly System.Text.Json.JsonSerializerOptions RawOptions = new()
     {
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
@@ -137,6 +151,41 @@ public static class ImportText
         }
     }
 
+    private static readonly HashSet<string> WeFlowParentMediaDirectories =
+        new(StringComparer.OrdinalIgnoreCase) { "images", "voices", "videos", "emojis", "file" };
+
+    private static string? ResolveWeFlowParentMedia(string exportRoot, string normalized)
+    {
+        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 3
+            || segments[0] != ".."
+            || !WeFlowParentMediaDirectories.Contains(segments[1])
+            || segments.Skip(2).Any(segment => segment is "." or ".."))
+        {
+            return null;
+        }
+
+        var root = Path.GetFullPath(exportRoot);
+        var parent = Path.GetDirectoryName(root);
+        if (parent is null)
+        {
+            return null;
+        }
+
+        var relative = Path.Combine(segments.Skip(1).ToArray());
+        var candidate = SafeExportPath(parent, relative);
+        if (candidate is null || !File.Exists(candidate))
+        {
+            return null;
+        }
+
+        var attributes = File.GetAttributes(candidate);
+        return attributes.HasFlag(FileAttributes.Directory)
+            || attributes.HasFlag(FileAttributes.ReparsePoint)
+            ? null
+            : candidate;
+    }
+
     /// <summary>
     /// 安全解析媒体文件路径，支持多级 fallback 探测：
     /// 1) exportRoot 下同级
@@ -154,7 +203,17 @@ public static class ImportText
         }
 
         var normalized = declaredPath.Replace('\\', '/').TrimStart('/');
-        if (string.IsNullOrWhiteSpace(normalized) || Path.IsPathRooted(normalized) || normalized.Split('/').Any(seg => seg == ".."))
+        if (string.IsNullOrWhiteSpace(normalized) || Path.IsPathRooted(normalized))
+        {
+            return null;
+        }
+
+        if (normalized.StartsWith("../", StringComparison.Ordinal))
+        {
+            return ResolveWeFlowParentMedia(exportRoot, normalized);
+        }
+
+        if (normalized.Split('/').Any(segment => segment == ".."))
         {
             return null;
         }

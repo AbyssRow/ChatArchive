@@ -87,6 +87,25 @@ public class MediaLocatorTests : IDisposable
         Assert.NotEqual(parentSecretFile, resolved);
     }
 
+    [Fact]
+    public void SafeResolveMedia_AllowsOnlyExistingWeFlowLayoutAFile()
+    {
+        var texts = Path.Combine(_dir, "export", "texts");
+        var images = Path.Combine(_dir, "export", "images");
+        Directory.CreateDirectory(texts);
+        Directory.CreateDirectory(images);
+        var image = Path.Combine(images, "one.jpg");
+        File.WriteAllText(image, "image");
+
+        Assert.Equal(image, ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/one.jpg"));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/missing.jpg"));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../private.txt"));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/../../private.txt"));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../../images/one.jpg"));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../image/one.jpg"));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images"));
+    }
+
     [Theory]
     [InlineData("../outside.png")]
     [InlineData("sub/../../outside.png")]

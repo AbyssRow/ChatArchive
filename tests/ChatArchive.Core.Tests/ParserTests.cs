@@ -15,6 +15,20 @@ public class ParserTests : IDisposable
         Directory.CreateDirectory(_dir);
     }
 
+    [Fact]
+    public void StableFileNativeId_IsRepeatableAndPathSpecific()
+    {
+        var first = Path.Combine(_dir, "a", "chat.txt");
+        var second = Path.Combine(_dir, "b", "chat.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(first)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(second)!);
+
+        var id = ImportText.StableFileNativeId(first);
+        Assert.Matches("^file:[0-9a-f]{64}$", id);
+        Assert.Equal(id, ImportText.StableFileNativeId(first));
+        Assert.NotEqual(id, ImportText.StableFileNativeId(second));
+    }
+
     // ---------- CanonicalJson ----------
 
     [Fact]
