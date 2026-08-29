@@ -519,7 +519,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 sheet.EntryPath,
                 _filePath,
                 token,
-                MaximumHyperlinkDeclarations);
+                MaximumHyperlinkDeclarations,
+                allowExternalHyperlinks: true);
             foreach (var relationship in relationships.Values)
             {
                 token.ThrowIfCancellationRequested();
@@ -800,7 +801,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         string ownerEntry,
         string filePath,
         CancellationToken token,
-        int? maximumRelationships = null)
+        int? maximumRelationships = null,
+        bool allowExternalHyperlinks = false)
     {
         return WithEntryFormatErrors(
             filePath,
@@ -811,7 +813,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 ownerEntry,
                 filePath,
                 token,
-                maximumRelationships));
+                maximumRelationships,
+                allowExternalHyperlinks));
     }
 
     private static IReadOnlyDictionary<string, PackageRelationship> ReadRelationshipsCore(
@@ -820,7 +823,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         string ownerEntry,
         string filePath,
         CancellationToken token,
-        int? maximumRelationships)
+        int? maximumRelationships,
+        bool allowExternalHyperlinks)
     {
         var entry = RequireEntry(entries, relationshipEntry, filePath, relationshipEntry);
         var relationships = new Dictionary<string, PackageRelationship>(StringComparer.Ordinal);
@@ -883,7 +887,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 throw Error(filePath, relationshipEntry, $"关系 {id} 的 TargetMode 无效：{targetMode}");
             }
 
-            if (isExternal && type != HyperlinkRelationship)
+            if (isExternal && (!allowExternalHyperlinks || type != HyperlinkRelationship))
             {
                 throw Error(filePath, relationshipEntry, $"关系 {id} 是外部关系");
             }

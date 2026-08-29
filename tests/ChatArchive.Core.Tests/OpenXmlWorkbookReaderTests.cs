@@ -135,6 +135,58 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
     }
 
     [Fact]
+    public void OpenXmlReader_RejectsExactExternalHyperlinkRelationshipInPackageRoot()
+    {
+        var path = NewPath("root-external-hyperlink.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(
+            path,
+            "_rels/.rels",
+            xml => xml.Replace(
+                "</Relationships>",
+                $"<Relationship Id=\"rIdExternalHyperlink\" Type=\"{HyperlinkRelationship}\" Target=\"images/missing.jpg\" TargetMode=\"External\" /></Relationships>",
+                StringComparison.Ordinal));
+
+        OpenXmlWorkbookReader? opened = null;
+        try
+        {
+            var error = Assert.Throws<ImportFormatException>(() => { opened = OpenXmlWorkbookReader.Open(path); });
+            Assert.Contains("外部关系", error.Message);
+            Assert.Contains("_rels/.rels", error.Message);
+        }
+        finally
+        {
+            opened?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsExactExternalHyperlinkRelationshipInWorkbookPart()
+    {
+        var path = NewPath("workbook-external-hyperlink.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(
+            path,
+            "xl/_rels/workbook.xml.rels",
+            xml => xml.Replace(
+                "</Relationships>",
+                $"<Relationship Id=\"rIdExternalHyperlink\" Type=\"{HyperlinkRelationship}\" Target=\"../images/missing.jpg\" TargetMode=\"External\" /></Relationships>",
+                StringComparison.Ordinal));
+
+        OpenXmlWorkbookReader? opened = null;
+        try
+        {
+            var error = Assert.Throws<ImportFormatException>(() => { opened = OpenXmlWorkbookReader.Open(path); });
+            Assert.Contains("外部关系", error.Message);
+            Assert.Contains("workbook.xml.rels", error.Message);
+        }
+        finally
+        {
+            opened?.Dispose();
+        }
+    }
+
+    [Fact]
     public void OpenXmlReader_RejectsExternalRelationshipWhoseTypeOnlyCaseMatchesHyperlink()
     {
         var path = NewPath("non-exact-external-hyperlink-type.xlsx");
