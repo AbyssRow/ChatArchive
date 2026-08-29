@@ -31,7 +31,7 @@ public static class QqTextParser
 
         try
         {
-            _ = ReadHeader(filePath);
+            _ = ReadHeader(filePath, CancellationToken.None);
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ImportFormatException)
@@ -40,9 +40,9 @@ public static class QqTextParser
         }
     }
 
-    public static ParsedConversation ReadConversation(string filePath)
+    public static ParsedConversation ReadConversation(string filePath, CancellationToken cancellationToken = default)
     {
-        var header = ReadHeader(filePath);
+        var header = ReadHeader(filePath, cancellationToken);
         return new ParsedConversation(
             "qq",
             "qq-default",
@@ -76,6 +76,28 @@ public static class QqTextParser
         {
             cancellationToken.ThrowIfCancellationRequested();
             lineNumber++;
+
+            if (current?.PendingResources is { } pendingResources)
+            {
+                var pendingResource = ResourceRegex.Match(line);
+                if (pendingResources.Resources.Count < pendingResources.DeclaredCount && pendingResource.Success)
+                {
+                    pendingResources.Resources.Add(new ResourceLine(
+                        pendingResource.Groups["type"].Value.Trim(),
+                        pendingResource.Groups["name"].Value.Trim()));
+                    pendingResources.Lines.Add(line);
+                    continue;
+                }
+
+                if (pendingResources.Resources.Count == pendingResources.DeclaredCount && !pendingResource.Success)
+                {
+                    CommitResourceCandidate(current, pendingResources);
+                }
+                else
+                {
+                    ReplayResourceCandidate(current, pendingResources);
+                }
+            }
 
             if (pendingFooterSeparator)
             {
@@ -127,6 +149,16 @@ public static class QqTextParser
 
             if (time.Success)
             {
+                if (current?.Number is not null && current.TimestampMs is not null)
+                {
+                    if (current.ContentStarted)
+                    {
+                        current.ContentLines.Add(line);
+                    }
+
+                    continue;
+                }
+
                 if (!ImportText.TryParseFlexibleTimestamp(time.Groups["value"].Value, out var timestampMs))
                 {
                     throw new ImportFormatException(filePath, $"第 {messageIndex + 1} 个 QQ TXT 消息时间无效（第 {lineNumber} 行）");
@@ -192,16 +224,9 @@ public static class QqTextParser
             var resourceCount = ResourceCountRegex.Match(line);
             if (resourceCount.Success && current.ContentStarted)
             {
-                current.ResourceCount = int.Parse(resourceCount.Groups["count"].Value, System.Globalization.CultureInfo.InvariantCulture);
-                continue;
-            }
-
-            var resource = ResourceRegex.Match(line);
-            if (resource.Success && current.ContentStarted)
-            {
-                current.Resources.Add(new ResourceLine(
-                    resource.Groups["type"].Value.Trim(),
-                    resource.Groups["name"].Value.Trim()));
+                current.PendingResources = new ResourceCandidate(
+                    int.Parse(resourceCount.Groups["count"].Value, System.Globalization.CultureInfo.InvariantCulture),
+                    line);
                 continue;
             }
 
@@ -212,7 +237,7 @@ public static class QqTextParser
                 continue;
             }
 
-            if (current.ContentStarted && TryReadSender(line, out var pendingSender, out var pendingTitle))
+            if (current.ContentStarted && current.Number is null && TryReadSender(line, out var pendingSender, out var pendingTitle))
             {
                 current.PendingSender = pendingSender;
                 current.PendingSenderTitle = pendingTitle;
@@ -229,6 +254,18 @@ public static class QqTextParser
         if (pendingFooterSeparator && current?.ContentStarted == true)
         {
             current.ContentLines.Add("===============================================");
+        }
+
+        if (current?.PendingResources is { } finalResources)
+        {
+            if (finalResources.Resources.Count == finalResources.DeclaredCount)
+            {
+                CommitResourceCandidate(current, finalResources);
+            }
+            else
+            {
+                ReplayResourceCandidate(current, finalResources);
+            }
         }
 
         if (current?.PendingSenderLine is not null)
@@ -249,8 +286,9 @@ public static class QqTextParser
         }
     }
 
-    private static Header ReadHeader(string filePath)
+    private static Header ReadHeader(string filePath, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.SequentialScan);
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         if (!string.Equals(reader.ReadLine(), Signature, StringComparison.Ordinal))
@@ -263,6 +301,7 @@ public static class QqTextParser
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var titleMatch = TitleRegex.Match(line);
             var typeMatch = ChatTypeRegex.Match(line);
             if (titleMatch.Success)
@@ -292,6 +331,19 @@ public static class QqTextParser
             _ => throw new ImportFormatException(filePath, $"不支持的 QQ TXT 聊天类型：{type}"),
         };
         return new Header(title, kind);
+    }
+
+    private static void CommitResourceCandidate(MessageBlock block, ResourceCandidate candidate)
+    {
+        block.ResourceCount = candidate.DeclaredCount;
+        block.Resources.AddRange(candidate.Resources);
+        block.PendingResources = null;
+    }
+
+    private static void ReplayResourceCandidate(MessageBlock block, ResourceCandidate candidate)
+    {
+        block.ContentLines.AddRange(candidate.Lines);
+        block.PendingResources = null;
     }
 
     private static ParsedMessage BuildMessage(
@@ -442,7 +494,15 @@ public static class QqTextParser
         public string? PendingSenderLine { get; set; }
         public int? ResourceCount { get; set; }
         public List<ResourceLine> Resources { get; } = [];
+        public ResourceCandidate? PendingResources { get; set; }
     }
 
     private sealed record ResourceLine(string Type, string Name);
+
+    private sealed class ResourceCandidate(int declaredCount, string headerLine)
+    {
+        public int DeclaredCount { get; } = declaredCount;
+        public List<string> Lines { get; } = [headerLine];
+        public List<ResourceLine> Resources { get; } = [];
+    }
 }

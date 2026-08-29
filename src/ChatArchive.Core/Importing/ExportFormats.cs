@@ -697,7 +697,7 @@ public sealed class QqTextExportFormat : IChatExportFormat
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var conversation = QqTextParser.ReadConversation(filePath);
+        var conversation = QqTextParser.ReadConversation(filePath, cancellationToken);
         return new ExportFile(
             conversation,
             token => QqTextParser.IterateMessages(filePath, conversation, token));

@@ -186,6 +186,117 @@ public sealed class QqTextFormatTests : IDisposable
         Assert.Contains("第 1 个", exception.Message);
     }
 
+    [Fact]
+    public void QqTxt_OrdinalContentPreservesTimeLookingLine()
+    {
+        var path = WriteFile("ordinal-time-content.txt", """
+            [QQChatExporter V5 / https://github.com/shuakami/qq-chat-exporter]
+            聊天名称: 示例群
+            聊天类型: 群聊
+
+            [1]
+            Alice:
+            时间: 2023-11-15 06:15:23
+            内容: 第一行
+            时间: 这不是下一个消息
+            第二行
+
+            ===============================================
+                          导出完成
+            ===============================================
+            """);
+
+        using var export = new QqTextExportFormat().Open(path);
+        var message = Assert.Single(export.EnumerateMessages());
+
+        Assert.Equal("第一行\n时间: 这不是下一个消息\n第二行", message.Content);
+    }
+
+    [Fact]
+    public void QqTxt_ReplaysIncompleteResourceCandidateAsLiteralContent()
+    {
+        var path = WriteFile("literal-resources.txt", """
+            [QQChatExporter V5 / https://github.com/shuakami/qq-chat-exporter]
+            聊天名称: 示例群
+            聊天类型: 群聊
+
+            [1]
+            Alice:
+            时间: 2023-11-15 06:15:23
+            内容: 正文
+            资源: 2 个文件
+              - image: one.jpg
+            仍是正文
+
+            ===============================================
+                          导出完成
+            ===============================================
+            """);
+
+        using var export = new QqTextExportFormat().Open(path);
+        var message = Assert.Single(export.EnumerateMessages());
+
+        Assert.Equal("正文\n资源: 2 个文件\n  - image: one.jpg\n仍是正文", message.Content);
+        Assert.Empty(message.Attachments);
+        Assert.Null(message.RawPayload["resourceCount"]);
+    }
+
+    [Fact]
+    public void QqTxt_OpenHonorsPreCanceledToken()
+    {
+        var path = WriteFile("cancel-open.txt", """
+            [QQChatExporter V5 / https://github.com/shuakami/qq-chat-exporter]
+            聊天名称: 示例群
+            聊天类型: 群聊
+            """);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => new QqTextExportFormat().Open(path, cancellation.Token));
+    }
+
+    [Fact]
+    public void QqTxt_ReportsBlockWhenRequiredTimeIsMissing()
+    {
+        var path = WriteFile("missing-time.txt", """
+            [QQChatExporter V5 / https://github.com/shuakami/qq-chat-exporter]
+            聊天名称: 示例群
+            聊天类型: 群聊
+
+            [1]
+            Alice:
+            内容: text
+            """);
+        using var export = new QqTextExportFormat().Open(path);
+
+        var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
+
+        Assert.Contains(path, exception.Message);
+        Assert.Contains("第 1 个", exception.Message);
+        Assert.Contains("时间", exception.Message);
+    }
+
+    [Fact]
+    public void QqTxt_EmptySignedExportHasNoValidMessages()
+    {
+        var path = WriteFile("empty.txt", """
+            [QQChatExporter V5 / https://github.com/shuakami/qq-chat-exporter]
+            聊天名称: 示例群
+            聊天类型: 群聊
+
+            ===============================================
+                          导出完成
+            ===============================================
+            总计导出 0 条消息
+            """);
+        using var export = new QqTextExportFormat().Open(path);
+
+        var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
+
+        Assert.Contains(path, exception.Message);
+        Assert.Contains("未找到有效", exception.Message);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_dir))
