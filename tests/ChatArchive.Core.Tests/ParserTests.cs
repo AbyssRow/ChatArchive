@@ -1214,6 +1214,43 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
+    public void WeFlowSql_AcceptsExactLowercaseQuotedInsertIdentifiers()
+    {
+        var path = Path.Combine(_dir, "weflow_quoted_insert.sql");
+        File.WriteAllText(path, """
+            INSERT INTO "weflow_messages"
+              ("session_id", "local_id", "message_id", "create_time", "sender", "is_send", "local_type", "media_type", "content", "media_path")
+            VALUES ('session-a', '1', '101', 0, 'alice', FALSE, 1, NULL, 'hello', NULL);
+            """);
+
+        var format = new WeFlowSqlExportFormat();
+
+        Assert.True(format.Matches(path));
+        using var export = format.Open(path);
+        Assert.Equal("hello", Assert.Single(export.EnumerateMessages()).Content);
+    }
+
+    [Theory]
+    [InlineData("\"WEFLOW_MESSAGES\"", "session_id")]
+    [InlineData("\"Weflow_Messages\"", "session_id")]
+    [InlineData("weflow_messages", "\"SESSION_ID\"")]
+    [InlineData("weflow_messages", "\"Session_Id\"")]
+    public void WeFlowSql_RejectsCaseChangedQuotedInsertIdentifiers(string table, string sessionColumn)
+    {
+        var path = Path.Combine(_dir, "weflow_case_changed_insert.sql");
+        File.WriteAllText(path, $$"""
+            INSERT INTO {{table}}
+              ({{sessionColumn}}, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path)
+            VALUES ('session-a', '1', '101', 0, 'alice', FALSE, 1, NULL, 'hello', NULL);
+            """);
+
+        var format = new WeFlowSqlExportFormat();
+
+        Assert.False(format.Matches(path));
+        Assert.Throws<ImportFormatException>(() => format.Open(path));
+    }
+
+    [Fact]
     public void WeFlowSql_MalformedDdlCannotCamouflageValidRow()
     {
         var path = Path.Combine(_dir, "weflow_bad_ddl.sql");

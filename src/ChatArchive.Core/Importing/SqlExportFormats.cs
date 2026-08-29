@@ -27,7 +27,7 @@ public sealed class WeFlowSqlExportFormat : IChatExportFormat
             var found = false;
             foreach (var row in SqlExportSupport.ReadRows(filePath, CancellationToken.None))
             {
-                if (!string.Equals(row.Table, Table, StringComparison.OrdinalIgnoreCase)
+                if (!string.Equals(row.Table, Table, StringComparison.Ordinal)
                     || !SqlExportSupport.HasExactColumns(row, Columns))
                 {
                     return false;
@@ -46,7 +46,7 @@ public sealed class WeFlowSqlExportFormat : IChatExportFormat
     {
         var first = SqlExportSupport.ReadRows(filePath, cancellationToken).FirstOrDefault();
         if (first is null
-            || !string.Equals(first.Table, Table, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(first.Table, Table, StringComparison.Ordinal)
             || !SqlExportSupport.HasExactColumns(first, Columns))
         {
             throw new ImportFormatException(filePath, $"未找到当前 WeFlow {Table} INSERT 数据");
@@ -212,7 +212,7 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
         foreach (var row in SqlExportSupport.ReadRows(filePath, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (string.Equals(row.Table, SessionsTable, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(row.Table, SessionsTable, StringComparison.Ordinal))
             {
                 sessionCount++;
                 SqlExportSupport.RequireProfile(row, SessionsTable, SessionColumns, filePath, sessionCount);
@@ -299,7 +299,7 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
         foreach (var row in SqlExportSupport.ReadRows(filePath, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (string.Equals(row.Table, SessionsTable, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(row.Table, SessionsTable, StringComparison.Ordinal))
             {
                 sessionCount++;
                 SqlExportSupport.RequireProfile(row, SessionsTable, SessionColumns, filePath, sessionCount);
@@ -412,7 +412,7 @@ internal static class SqlExportSupport
 
     internal static bool HasExactColumns(SqlInsertRow row, IReadOnlyCollection<string> expected) =>
         row.Values.Count == expected.Count
-        && expected.All(row.Values.ContainsKey);
+        && expected.All(column => row.Values.Keys.Contains(column, StringComparer.Ordinal));
 
     internal static void RequireProfile(
         SqlInsertRow row,
@@ -421,7 +421,7 @@ internal static class SqlExportSupport
         string filePath,
         int rowNumber)
     {
-        if (!string.Equals(row.Table, table, StringComparison.OrdinalIgnoreCase)
+        if (!string.Equals(row.Table, table, StringComparison.Ordinal)
             || !HasExactColumns(row, columns))
         {
             throw RowError(filePath, table, rowNumber, "INSERT 表或列与当前导出格式不匹配");

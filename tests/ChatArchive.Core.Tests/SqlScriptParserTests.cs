@@ -149,6 +149,74 @@ public class SqlScriptParserTests
     }
 
     [Fact]
+    public void Enumerate_AcceptsExactLowercaseQuotedInsertIdentifiers()
+    {
+        const string sql = """
+            INSERT INTO "weflow_messages"
+              ("session_id", "local_id", "message_id", "create_time", "sender", "is_send", "local_type", "media_type", "content", "media_path")
+            VALUES ('session-a', '1', '101', 0, 'alice', FALSE, 1, NULL, 'hello', NULL);
+            """;
+
+        using var reader = new StringReader(sql);
+        var row = Assert.Single(SqlInsertReader.Enumerate(reader));
+
+        Assert.Equal("weflow_messages", row.Table);
+        Assert.Equal(
+            [
+                "session_id", "local_id", "message_id", "create_time", "sender",
+                "is_send", "local_type", "media_type", "content", "media_path"
+            ],
+            row.Values.Keys);
+    }
+
+    [Fact]
+    public void Enumerate_FoldsUnquotedUppercaseInsertIdentifiers()
+    {
+        const string sql = """
+            INSERT INTO WEFLOW_MESSAGES
+              (SESSION_ID, LOCAL_ID, MESSAGE_ID, CREATE_TIME, SENDER, IS_SEND, LOCAL_TYPE, MEDIA_TYPE, CONTENT, MEDIA_PATH)
+            VALUES ('session-a', '1', '101', 0, 'alice', FALSE, 1, NULL, 'hello', NULL);
+            """;
+
+        using var reader = new StringReader(sql);
+        var row = Assert.Single(SqlInsertReader.Enumerate(reader));
+
+        Assert.Equal("weflow_messages", row.Table);
+        Assert.Equal(
+            [
+                "session_id", "local_id", "message_id", "create_time", "sender",
+                "is_send", "local_type", "media_type", "content", "media_path"
+            ],
+            row.Values.Keys);
+    }
+
+    [Theory]
+    [InlineData("WEFLOW_MESSAGES")]
+    [InlineData("Weflow_Messages")]
+    public void Enumerate_RejectsCaseChangedQuotedInsertIdentifierTables(string table)
+    {
+        var sql = $"INSERT INTO \"{table}\" (session_id) VALUES ('session-a');";
+
+        using var reader = new StringReader(sql);
+
+        Assert.Throws<FormatException>(() => SqlInsertReader.Enumerate(reader).ToList());
+    }
+
+    [Theory]
+    [InlineData("SESSION_ID")]
+    [InlineData("Session_Id")]
+    public void Enumerate_PreservesCaseChangedQuotedInsertIdentifierColumns(string column)
+    {
+        var sql = $"INSERT INTO weflow_messages (\"{column}\") VALUES ('session-a');";
+
+        using var reader = new StringReader(sql);
+        var row = Assert.Single(SqlInsertReader.Enumerate(reader));
+
+        Assert.Equal(column, Assert.Single(row.Values).Key);
+        Assert.DoesNotContain("session_id", row.Values.Keys);
+    }
+
+    [Fact]
     public void Enumerate_RejectsCaseChangedQuotedTableIdentifier()
     {
         var sql = ExactWeFlowCreate.Replace(

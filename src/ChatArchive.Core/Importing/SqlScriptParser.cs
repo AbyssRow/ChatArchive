@@ -130,7 +130,7 @@ internal static class SqlInsertReader
     private static IEnumerable<SqlInsertRow> ReadInsert(CharacterSource source)
     {
         source.ExpectKeyword("INTO");
-        var table = source.ReadIdentifier("INSERT table").ToLowerInvariant();
+        var table = source.ReadSqlIdentifier("INSERT table").PostgreSqlName;
         if (!CreateTableDeclarations.ContainsKey(table))
         {
             throw new FormatException($"Unsupported INSERT table {table}.");
@@ -179,7 +179,7 @@ internal static class SqlInsertReader
     private static IReadOnlyList<string> ReadColumns(CharacterSource source, string table)
     {
         var columns = new List<string>();
-        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unique = new HashSet<string>(StringComparer.Ordinal);
         while (true)
         {
             source.SkipTrivia();
@@ -188,7 +188,7 @@ internal static class SqlInsertReader
                 throw new FormatException($"INSERT INTO {table} contains an empty column name.");
             }
 
-            var column = source.ReadIdentifier($"INSERT INTO {table} column");
+            var column = source.ReadSqlIdentifier($"INSERT INTO {table} column").PostgreSqlName;
             if (!unique.Add(column))
             {
                 throw new FormatException($"INSERT INTO {table} repeats column {column}.");
@@ -219,7 +219,7 @@ internal static class SqlInsertReader
         IReadOnlyList<string> columns,
         int rowNumber)
     {
-        var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var values = new Dictionary<string, string?>(StringComparer.Ordinal);
         for (var index = 0; index < columns.Count; index++)
         {
             source.CancellationToken.ThrowIfCancellationRequested();
@@ -590,6 +590,11 @@ internal static class SqlInsertReader
 
     private readonly record struct CreateToken(string Value, bool IsQuoted);
 
+    private readonly record struct SqlIdentifier(string Text, bool IsQuoted)
+    {
+        internal string PostgreSqlName => IsQuoted ? Text : Text.ToLowerInvariant();
+    }
+
     private static void ValidateDelete(string statement)
     {
         var match = DeleteRegex.Match(statement);
@@ -714,6 +719,59 @@ internal static class SqlInsertReader
                 }
             }
             return value.ToString();
+        }
+
+        internal SqlIdentifier ReadSqlIdentifier(string description)
+        {
+            SkipTrivia();
+            if (Peek() != '"')
+            {
+                return new SqlIdentifier(ReadIdentifier(description), IsQuoted: false);
+            }
+
+            _ = Read();
+            var value = new StringBuilder();
+            while (true)
+            {
+                CancellationToken.ThrowIfCancellationRequested();
+                var current = Read();
+                if (current < 0)
+                {
+                    throw new FormatException($"Unterminated {description}.");
+                }
+                if (current == '\0')
+                {
+                    throw new FormatException($"{description} contains a NUL character.");
+                }
+                if (current != '"')
+                {
+                    value.Append((char)current);
+                }
+                else
+                {
+                    var next = Read();
+                    if (next == '"')
+                    {
+                        value.Append('"');
+                    }
+                    else
+                    {
+                        Unread(next);
+                        break;
+                    }
+                }
+
+                if (value.Length > MaxIdentifierLength)
+                {
+                    throw new FormatException($"{description} is too long.");
+                }
+            }
+
+            if (value.Length == 0)
+            {
+                throw new FormatException($"Expected {description}.");
+            }
+            return new SqlIdentifier(value.ToString(), IsQuoted: true);
         }
 
         internal void ExpectKeyword(string expected)
