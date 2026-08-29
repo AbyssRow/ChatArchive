@@ -102,6 +102,7 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
     [InlineData("../images/one.jpg?download=1")]
     [InlineData("../images/one.jpg#preview")]
     [InlineData("../images/\none.jpg")]
+    [InlineData("../../../outside.jpg")]
     public void OpenXmlReader_IgnoresUnsafeExternalHyperlinkButReadsCellText(string target)
     {
         var path = NewPath("unsafe-external-link.xlsx");
@@ -375,6 +376,27 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
         Assert.Contains("ContentType", error.Message);
     }
 
+    [Theory]
+    [InlineData("xl/worksheets/unrelated.xml")]
+    [InlineData("xl/sharedStrings.xml")]
+    public void OpenXmlReader_IgnoresUnreferencedNonSpreadsheetPartWithSpreadsheetLikePath(
+        string entryPath)
+    {
+        var path = NewPath($"unreferenced-{Path.GetFileName(entryPath)}.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        AddTextEntry(path, entryPath, "<unrelated />");
+        RewriteEntry(path, "[Content_Types].xml", xml => InsertBeforeRequired(
+            xml,
+            "</Types>",
+            $"<Override PartName=\"/{entryPath}\" ContentType=\"application/xml\" />"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+
+        Assert.Equal("one", row.Cells[1].Value);
+    }
+
     [Fact]
     public void OpenXmlReader_RejectsForbiddenMacroPayloadDeclarationAnywhere()
     {
@@ -552,6 +574,33 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
             "</wrapper></sheets>"));
 
         var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+        Assert.Contains("xl/workbook.xml", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsSheetNestedInsideDirectSheet()
+    {
+        var path = NewPath("sheet-nested-inside-sheet.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/workbook.xml", xml =>
+        {
+            const string marker = "<sheet name=\"聊天记录\"";
+            Assert.Contains(marker, xml);
+            var start = xml.IndexOf(marker, StringComparison.Ordinal);
+            var end = xml.IndexOf("/>", start, StringComparison.Ordinal);
+            Assert.True(end >= 0);
+            var directSheet = xml.Substring(start, end + 2 - start);
+            var replacement = string.Concat(
+                directSheet.AsSpan(0, directSheet.Length - 2),
+                ">",
+                "<sheet name=\"Nested\" sheetId=\"2\" r:id=\"rIdSheet1\" />",
+                "</sheet>");
+            return xml.Remove(start, directSheet.Length).Insert(start, replacement);
+        });
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+        Assert.Contains("sheet", error.Message);
         Assert.Contains("xl/workbook.xml", error.Message);
     }
 

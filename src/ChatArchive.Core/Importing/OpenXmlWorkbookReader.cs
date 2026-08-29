@@ -63,7 +63,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         try
         {
             package = XlsxPackagePreflight.OpenValidated(filePath);
-            ValidateKnownPartContentTypes(package, filePath);
+            ValidateWorkbookEntryContentType(package, filePath);
             document = SpreadsheetDocument.Open(package.Stream, isEditable: false);
             var workbookPart = RequireWorkbookPart(document, package, filePath);
             ValidateContainerRelationships(
@@ -71,11 +71,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 filePath,
                 "_rels/.rels",
                 allowExternalHyperlinks: false);
-            ValidateContainerRelationships(
-                workbookPart,
-                filePath,
-                "xl/_rels/workbook.xml.rels",
-                allowExternalHyperlinks: false);
+            ValidateWorkbookRelationships(workbookPart, package, filePath);
             ValidateWorkbookPartContentTypes(workbookPart, package, filePath);
             var workbookMap = ReadSheets(workbookPart, package, filePath);
             var sharedStrings = ReadSharedStrings(workbookPart, package, filePath);
@@ -92,13 +88,15 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         }
         catch (ImportFormatException)
         {
-            DisposeOpenResources(document, package);
             throw;
         }
         catch (Exception ex) when (IsPackageFailure(ex))
         {
-            DisposeOpenResources(document, package);
             throw new ImportFormatException(filePath, $"XLSX 包读取失败（{ex.Message}）");
+        }
+        finally
+        {
+            DisposeOpenResources(document, package);
         }
     }
 
@@ -534,7 +532,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             if (relationship.IsExternal)
             {
                 var target = relationship.Target.OriginalString;
-                if (IsSafeExternalHyperlinkTarget(target))
+                if (IsSafeExternalHyperlinkTarget(worksheetPart, target))
                 {
                     result.Add(reference, target);
                 }
@@ -556,11 +554,40 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         return result;
     }
 
-    private static void ValidateKnownPartContentTypes(
+    private static void ValidateWorkbookEntryContentType(
         XlsxPackageHandle package,
         string filePath)
     {
         RequireContentType(package, WorkbookEntry, WorkbookContentType, filePath);
+    }
+
+    private static void ValidateWorkbookRelationships(
+        WorkbookPart workbookPart,
+        XlsxPackageHandle package,
+        string filePath)
+    {
+        try
+        {
+            ValidateContainerRelationships(
+                workbookPart,
+                filePath,
+                "xl/_rels/workbook.xml.rels",
+                allowExternalHyperlinks: false);
+        }
+        catch (ImportFormatException error) when (
+            error.Message.Contains("unexpected content type", StringComparison.OrdinalIgnoreCase)
+            || error.Message.Contains("doesn't exist in the package", StringComparison.Ordinal)
+            || error.Message.Contains("Specified part does not exist", StringComparison.Ordinal))
+        {
+            ValidateConventionalReferencedPartContentTypes(package, filePath);
+            throw;
+        }
+    }
+
+    private static void ValidateConventionalReferencedPartContentTypes(
+        XlsxPackageHandle package,
+        string filePath)
+    {
         foreach (var entryPath in package.EntryPaths)
         {
             if (entryPath.StartsWith("xl/worksheets/", StringComparison.Ordinal)
@@ -718,6 +745,17 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
                 var sheetElement = reader.LoadCurrentElement() as Sheet
                     ?? throw Error(filePath, WorkbookEntry, "sheet 元素无效");
+                var sheetMarkup = workbookPart.CreateUnknownElement(sheetElement.OuterXml);
+                if (sheetMarkup.Descendants().Any(element =>
+                        element.LocalName == "sheet"
+                        && element.NamespaceUri == SpreadsheetNamespace))
+                {
+                    throw Error(
+                        filePath,
+                        WorkbookEntry,
+                        "sheet 不能嵌套，sheet 必须是 sheets 的直接子元素");
+                }
+
                 var name = sheetElement.Name?.Value;
                 var relationshipId = sheetElement.Id?.Value;
                 if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(relationshipId))
@@ -999,23 +1037,38 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             return target;
         }
 
+        if (!ResolvesWithinPackageRoot(owner, target))
+        {
+            throw new ArgumentException("Relationship target escapes the package root.", nameof(target));
+        }
+
+        var source = owner is OpenXmlPart ownerPart
+            ? ownerPart.Uri
+            : new Uri("/", UriKind.Relative);
+        return System.IO.Packaging.PackUriHelper.ResolvePartUri(source, target);
+    }
+
+    private static bool ResolvesWithinPackageRoot(OpenXmlPartContainer owner, Uri target)
+    {
         var source = owner is OpenXmlPart ownerPart
             ? ownerPart.Uri
             : new Uri("/", UriKind.Relative);
         var sentinelSource = new Uri(
             "/__chatarchive_package_root__" + source.OriginalString,
             UriKind.Relative);
-        var sentinelTarget = System.IO.Packaging.PackUriHelper.ResolvePartUri(
-            sentinelSource,
-            target);
-        if (!sentinelTarget.OriginalString.StartsWith(
-                "/__chatarchive_package_root__/",
-                StringComparison.Ordinal))
+        try
         {
-            throw new ArgumentException("Relationship target escapes the package root.", nameof(target));
+            var sentinelTarget = System.IO.Packaging.PackUriHelper.ResolvePartUri(
+                sentinelSource,
+                target);
+            return sentinelTarget.OriginalString.StartsWith(
+                "/__chatarchive_package_root__/",
+                StringComparison.Ordinal);
         }
-
-        return System.IO.Packaging.PackUriHelper.ResolvePartUri(source, target);
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     private static void ValidateContainerRelationships(
@@ -1063,7 +1116,9 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     }
 
 
-    private static bool IsSafeExternalHyperlinkTarget(string target)
+    private static bool IsSafeExternalHyperlinkTarget(
+        WorksheetPart worksheetPart,
+        string target)
     {
         if (string.IsNullOrWhiteSpace(target)
             || target.Length != target.Trim().Length
@@ -1086,7 +1141,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             }
         }
 
-        return true;
+        return Uri.TryCreate(target, UriKind.Relative, out var targetUri)
+            && ResolvesWithinPackageRoot(worksheetPart, targetUri);
     }
 
     private (int ColumnIndex, uint RowIndex, string NormalizedReference) ParseCellReference(
