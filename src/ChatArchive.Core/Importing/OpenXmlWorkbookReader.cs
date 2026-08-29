@@ -13,12 +13,10 @@ internal sealed record OpenXmlRow(uint RowIndex, IReadOnlyDictionary<int, OpenXm
 
 internal sealed class OpenXmlWorkbookReader : IDisposable
 {
-    private const string ContentTypesEntry = "[Content_Types].xml";
     private const string RootRelationshipsEntry = "_rels/.rels";
     private const string WorkbookEntry = "xl/workbook.xml";
     private const string WorkbookRelationshipsEntry = "xl/_rels/workbook.xml.rels";
     private const string SpreadsheetNamespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-    private const string ContentTypesNamespace = "http://schemas.openxmlformats.org/package/2006/content-types";
     private const string OfficeRelationshipNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private const string PackageRelationshipNamespace = "http://schemas.openxmlformats.org/package/2006/relationships";
     private const string OfficeDocumentRelationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
@@ -33,6 +31,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     private const uint MaximumRowIndex = 1_048_576;
 
     private readonly string _filePath;
+    private readonly XlsxPackageHandle _package;
     private readonly ZipArchive _archive;
     private readonly IReadOnlyDictionary<string, ZipArchiveEntry> _entries;
     private readonly IReadOnlyList<string> _sharedStrings;
@@ -43,12 +42,14 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
     private OpenXmlWorkbookReader(
         string filePath,
+        XlsxPackageHandle package,
         ZipArchive archive,
         IReadOnlyDictionary<string, ZipArchiveEntry> entries,
         IReadOnlyList<OpenXmlSheet> sheets,
         IReadOnlyList<string> sharedStrings)
     {
         _filePath = filePath;
+        _package = package;
         _archive = archive;
         _entries = entries;
         _sharedStrings = sharedStrings;
@@ -58,16 +59,15 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
     public static OpenXmlWorkbookReader Open(string filePath)
     {
+        XlsxPackageHandle? package = null;
         ZipArchive? archive = null;
         try
         {
-            archive = ZipFile.OpenRead(filePath);
-            var entries = IndexEntries(archive, filePath);
-            RequireEntry(entries, ContentTypesEntry, filePath, ContentTypesEntry);
+            package = XlsxPackagePreflight.OpenValidated(filePath);
+            var entries = package.OpenValidatedEntryMap(out archive);
             RequireEntry(entries, RootRelationshipsEntry, filePath, RootRelationshipsEntry);
             RequireEntry(entries, WorkbookEntry, filePath, WorkbookEntry);
             RequireEntry(entries, WorkbookRelationshipsEntry, filePath, WorkbookRelationshipsEntry);
-            var contentTypes = ReadContentTypes(entries, filePath);
 
             var rootRelationships = ReadRelationships(
                 entries,
@@ -92,7 +92,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 throw Error(filePath, RootRelationshipsEntry, $"工作簿关系必须指向 {WorkbookEntry}");
             }
 
-            RequireContentType(contentTypes, resolvedWorkbook, WorkbookContentType, filePath);
+            RequireContentType(package, resolvedWorkbook, WorkbookContentType, filePath);
 
             var workbookRelationships = ReadRelationships(
                 entries,
@@ -103,32 +103,36 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             var sheets = ReadSheets(entries, workbookRelationships, filePath);
             foreach (var sheet in sheets)
             {
-                RequireContentType(contentTypes, sheet.EntryPath, WorksheetContentType, filePath);
+                RequireContentType(package, sheet.EntryPath, WorksheetContentType, filePath);
             }
 
             var sharedStrings = ReadSharedStrings(
                 entries,
                 workbookRelationships,
-                contentTypes,
+                package,
                 filePath,
                 CancellationToken.None);
             var reader = new OpenXmlWorkbookReader(
                 filePath,
+                package,
                 archive,
                 entries,
                 Array.AsReadOnly(sheets.ToArray()),
                 Array.AsReadOnly(sharedStrings.ToArray()));
+            package = null;
             archive = null;
             return reader;
         }
         catch (ImportFormatException)
         {
             archive?.Dispose();
+            package?.Dispose();
             throw;
         }
         catch (Exception ex) when (IsPackageFailure(ex))
         {
             archive?.Dispose();
+            package?.Dispose();
             throw new ImportFormatException(filePath, $"XLSX 包读取失败（{ex.Message}）");
         }
     }
@@ -696,7 +700,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     private static IReadOnlyList<string> ReadSharedStrings(
         IReadOnlyDictionary<string, ZipArchiveEntry> entries,
         IReadOnlyDictionary<string, PackageRelationship> relationships,
-        PackageContentTypes contentTypes,
+        XlsxPackageHandle package,
         string filePath,
         CancellationToken token)
     {
@@ -717,7 +721,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             entries,
             filePath,
             WorkbookRelationshipsEntry);
-        RequireContentType(contentTypes, entryPath, SharedStringsContentType, filePath);
+        RequireContentType(package, entryPath, SharedStringsContentType, filePath);
         return WithEntryFormatErrors(
             filePath,
             entryPath,
@@ -900,7 +904,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             if (!isExternal)
             {
                 var resolvedTarget = ResolvePackageTarget(ownerEntry, target, filePath, relationshipEntry);
-                if (IsForbiddenPayloadPath(resolvedTarget))
+                if (XlsxPackagePreflight.IsForbiddenPayloadPath(resolvedTarget))
                 {
                     throw Error(filePath, relationshipEntry, $"关系 {id} 指向禁止的宏或二进制负载：{resolvedTarget}");
                 }
@@ -920,127 +924,19 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         return relationships;
     }
 
-    private static PackageContentTypes ReadContentTypes(
-        IReadOnlyDictionary<string, ZipArchiveEntry> entries,
-        string filePath)
-    {
-        return WithEntryFormatErrors(filePath, ContentTypesEntry, () =>
-        {
-            var entry = RequireEntry(entries, ContentTypesEntry, filePath, ContentTypesEntry);
-            var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var sawTypes = false;
-            using var stream = entry.Open();
-            using var reader = CreateXmlReader(stream);
-            while (reader.Read())
-            {
-                if (reader.NodeType == XmlNodeType.Element && reader.Depth == 0)
-                {
-                    if (reader.LocalName != "Types" || reader.NamespaceURI != ContentTypesNamespace)
-                    {
-                        throw Error(filePath, ContentTypesEntry, "Types 根元素无效");
-                    }
-
-                    sawTypes = true;
-                    continue;
-                }
-
-                if (reader.NodeType != XmlNodeType.Element || reader.NamespaceURI != ContentTypesNamespace)
-                {
-                    continue;
-                }
-
-                CancellationToken.None.ThrowIfCancellationRequested();
-                var contentType = reader.GetAttribute("ContentType");
-                if (reader.Depth != 1 || reader.LocalName is not ("Default" or "Override"))
-                {
-                    throw Error(filePath, ContentTypesEntry, $"{reader.LocalName} 元素位置或类型无效");
-                }
-
-                if (string.IsNullOrWhiteSpace(contentType))
-                {
-                    throw Error(filePath, ContentTypesEntry, $"{reader.LocalName} 缺少 ContentType");
-                }
-
-                RejectForbiddenContentType(contentType, filePath);
-                if (reader.LocalName == "Default")
-                {
-                    var extension = reader.GetAttribute("Extension");
-                    if (string.IsNullOrWhiteSpace(extension)
-                        || extension.Contains('/')
-                        || extension.Contains('\\')
-                        || extension[0] == '.')
-                    {
-                        throw Error(filePath, ContentTypesEntry, "Default 缺少有效 Extension");
-                    }
-
-                    if (!defaults.TryAdd(extension, contentType))
-                    {
-                        throw Error(filePath, ContentTypesEntry, $"Extension 重复或歧义：{extension}");
-                    }
-
-                    continue;
-                }
-
-                var declaredPart = reader.GetAttribute("PartName");
-                if (string.IsNullOrWhiteSpace(declaredPart) || declaredPart[0] != '/')
-                {
-                    throw Error(filePath, ContentTypesEntry, "Override 缺少有效 PartName");
-                }
-
-                var partName = declaredPart[1..];
-                try
-                {
-                    ValidateEntryPath(partName, filePath);
-                }
-                catch (ImportFormatException)
-                {
-                    throw Error(filePath, ContentTypesEntry, $"PartName 无效：{declaredPart}");
-                }
-
-                if (!overrides.TryAdd(partName, contentType))
-                {
-                    throw Error(filePath, ContentTypesEntry, $"PartName 重复或歧义：{declaredPart}");
-                }
-            }
-
-            if (!sawTypes)
-            {
-                throw Error(filePath, ContentTypesEntry, "缺少 Types 根元素");
-            }
-
-            return new PackageContentTypes(overrides, defaults);
-        });
-    }
-
     private static void RequireContentType(
-        PackageContentTypes contentTypes,
+        XlsxPackageHandle package,
         string entryPath,
         string expected,
         string filePath)
     {
-        var actual = contentTypes.Get(entryPath);
+        var actual = package.GetContentType(entryPath);
         if (!string.Equals(actual, expected, StringComparison.Ordinal))
         {
             throw Error(
                 filePath,
-                ContentTypesEntry,
+                "[Content_Types].xml",
                 $"条目 {entryPath} 的 ContentType 必须为 {expected}，实际为 {actual ?? "<缺失>"}");
-        }
-    }
-
-    private static void RejectForbiddenContentType(string contentType, string filePath)
-    {
-        if (contentType.Contains("macroEnabled", StringComparison.OrdinalIgnoreCase)
-            || contentType.Contains("vbaProject", StringComparison.OrdinalIgnoreCase)
-            || contentType.Contains("activeX", StringComparison.OrdinalIgnoreCase)
-            || contentType.Contains("macrosheet", StringComparison.OrdinalIgnoreCase)
-            || contentType.Contains("intlmacrosheet", StringComparison.OrdinalIgnoreCase)
-            || contentType.Equals(
-                "application/vnd.openxmlformats-officedocument.oleObject",
-                StringComparison.OrdinalIgnoreCase))
-        {
-            throw Error(filePath, ContentTypesEntry, $"禁止的宏或二进制 ContentType：{contentType}");
         }
     }
 
@@ -1057,14 +953,6 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             || name.Equals("control", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsForbiddenPayloadPath(string path)
-    {
-        var fileName = path[(path.LastIndexOf('/') + 1)..];
-        return fileName.Equals("vbaProject.bin", StringComparison.OrdinalIgnoreCase)
-            || fileName.Equals("vbaProjectSignature.bin", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("xl/activeX/", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("xl/embeddings/", StringComparison.OrdinalIgnoreCase);
-    }
 
     private static bool IsSafeExternalHyperlinkTarget(string target)
     {
@@ -1246,66 +1134,6 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         return (columnIndex, rowIndex, normalized);
     }
 
-    private static IReadOnlyDictionary<string, ZipArchiveEntry> IndexEntries(ZipArchive archive, string filePath)
-    {
-        var entries = new Dictionary<string, ZipArchiveEntry>(StringComparer.Ordinal);
-        var entryNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in archive.Entries)
-        {
-            CancellationToken.None.ThrowIfCancellationRequested();
-            var path = entry.FullName;
-            ValidateEntryPath(path, filePath);
-            var identity = path.EndsWith("/", StringComparison.Ordinal) ? path[..^1] : path;
-            if (IsForbiddenPayloadPath(identity))
-            {
-                throw new ImportFormatException(
-                    filePath,
-                    $"XLSX 包含禁止的宏或二进制负载条目：{identity}");
-            }
-
-            if (!entryNames.Add(identity))
-            {
-                throw new ImportFormatException(filePath, $"XLSX 包含重复或歧义条目：{path}");
-            }
-
-            if (!path.EndsWith("/", StringComparison.Ordinal))
-            {
-                entries.Add(path, entry);
-            }
-        }
-
-        return entries;
-    }
-
-    private static void ValidateEntryPath(string path, string filePath)
-    {
-        if (string.IsNullOrWhiteSpace(path)
-            || path[0] == '/'
-            || path.Contains('\\')
-            || Path.IsPathRooted(path)
-            || IsDrivePath(path)
-            || Uri.TryCreate(path, UriKind.Absolute, out _))
-        {
-            throw new ImportFormatException(filePath, $"XLSX 包含非法条目路径：{path}");
-        }
-
-        var isDirectory = path.EndsWith("/", StringComparison.Ordinal);
-        var segments = path.Split('/');
-        for (var index = 0; index < segments.Length; index++)
-        {
-            var segment = segments[index];
-            if (isDirectory && index == segments.Length - 1 && segment.Length == 0)
-            {
-                continue;
-            }
-
-            if (segment.Length == 0 || segment is "." or "..")
-            {
-                throw new ImportFormatException(filePath, $"XLSX 包含非法条目路径：{path}");
-            }
-        }
-    }
-
     private static ZipArchiveEntry RequireEntry(
         IReadOnlyDictionary<string, ZipArchiveEntry> entries,
         string entryPath,
@@ -1395,30 +1223,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
         _disposed = true;
         _archive.Dispose();
-    }
-
-    private sealed record PackageContentTypes(
-        IReadOnlyDictionary<string, string> Overrides,
-        IReadOnlyDictionary<string, string> Defaults)
-    {
-        internal string? Get(string entryPath)
-        {
-            if (Overrides.TryGetValue(entryPath, out var contentType))
-            {
-                return contentType;
-            }
-
-            var separator = entryPath.LastIndexOf('/');
-            var dot = entryPath.LastIndexOf('.');
-            if (dot <= separator || dot == entryPath.Length - 1)
-            {
-                return null;
-            }
-
-            return Defaults.TryGetValue(entryPath[(dot + 1)..], out contentType)
-                ? contentType
-                : null;
-        }
+        _package.Dispose();
     }
 
     private sealed record PackageRelationship(string Id, string Type, string Target, bool IsExternal);
