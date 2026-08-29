@@ -124,6 +124,76 @@ public sealed class WeFlowTextFormatTests : IDisposable
         Assert.Equal(0, Assert.Single(export.EnumerateMessages()).TimestampMs);
     }
 
+    [Fact]
+    public void WeFlowMarkdown_ParsesMetadataBlocksAndMedia()
+    {
+        var dir = NewDirectory();
+        Directory.CreateDirectory(Path.Combine(dir, "images"));
+        var media = Path.Combine(dir, "images", "one.jpg");
+        File.WriteAllText(media, "image");
+        var path = WriteFile(dir, "chat.md", """
+            # 项目群
+
+            - 会话ID: `group@chatroom`
+            - 会话类型: 群聊
+            - 消息数量: 1
+            - 导出时间: 2023-11-15 06:16:00
+            - 导出工具: WeFlow
+
+            ---
+
+            ## 2023-11-15 06:15:23 Alice
+
+            > Bob: 被引用内容
+
+            ![图片](images/one.jpg)
+
+            回复正文
+            """);
+
+        var format = new WeFlowMarkdownExportFormat();
+        Assert.True(format.Matches(path));
+        using var export = format.Open(path);
+        Assert.Equal("group@chatroom", export.Conversation.NativeId);
+        Assert.Equal("group", export.Conversation.Kind);
+        var message = Assert.Single(export.EnumerateMessages());
+        Assert.Equal("Alice", message.SenderName);
+        Assert.Contains("被引用内容", message.SearchText);
+        Assert.Contains("回复正文", message.Content);
+        Assert.Equal(media, Assert.Single(message.Attachments).SourcePath);
+    }
+
+    [Fact]
+    public void WeFlowTxt_StripsWriterQuotesAndKeepsMultilineBody()
+    {
+        var path = WriteFile("chat.txt", """
+            2023-11-15 06:15:23 'Alice'
+            第一行
+            第二行
+
+            2023-11-15 06:16:23 '我'
+            回复
+            """);
+
+        var format = new WeFlowTextExportFormat();
+        Assert.True(format.Matches(path));
+        using var export = format.Open(path);
+        var messages = export.EnumerateMessages().ToList();
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("Alice", messages[0].SenderName);
+        Assert.Equal("第一行\n第二行", messages[0].Content.Replace("\r\n", "\n"));
+        Assert.Equal("outgoing", messages[1].Direction);
+    }
+
+    [Theory]
+    [InlineData("# Any title\n[2023-11-15 06:15:23] Alice: old", ".md")]
+    [InlineData("会话: old\n2023-11-15 06:15:23 Alice: old", ".txt")]
+    public void WeFlowText_RejectsFormerImaginedSyntax(string content, string extension)
+    {
+        var path = WriteFile($"old{extension}", content);
+        Assert.DoesNotContain(ExportFormats.Default, format => format.Matches(path));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_dir))
@@ -142,6 +212,13 @@ public sealed class WeFlowTextFormatTests : IDisposable
     private string WriteFile(string name, string content)
     {
         var path = Path.Combine(_dir, name);
+        File.WriteAllText(path, content);
+        return path;
+    }
+
+    private static string WriteFile(string directory, string name, string content)
+    {
+        var path = Path.Combine(directory, name);
         File.WriteAllText(path, content);
         return path;
     }

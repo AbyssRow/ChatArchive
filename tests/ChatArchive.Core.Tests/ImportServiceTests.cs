@@ -736,25 +736,7 @@ public class ImportServiceTests : IDisposable
                 """;
             File.WriteAllText(Path.Combine(exportsDir, "07_weflow.csv"), weflowCsv);
 
-            // 8. Markdown 导出
-            var markdownExport = """
-                # 聊天记录: Markdown项目组群
-                [2023-11-15 11:00:00] 王五: 来自Markdown导出的消息
-                [2023-11-15 11:00:05] 赵六: 收到Markdown消息
-                """;
-            File.WriteAllText(Path.Combine(exportsDir, "08_chat_export.md"), markdownExport);
-
-            // 9. TXT 导出
-            var txtExport = """
-                2023-11-15 12:00:00 钱七:
-                来自TXT纯文本导出的消息
-
-                2023-11-15 12:00:05 孙八:
-                收到TXT消息
-                """;
-            File.WriteAllText(Path.Combine(exportsDir, "09_chat_export.txt"), txtExport);
-
-            // 10. SQL 导出
+            // 8. SQL 导出
             var sqlExport = """
                 CREATE TABLE IF NOT EXISTS weflow_messages (local_id TEXT, talker TEXT, create_time INTEGER, is_send INTEGER, type INTEGER, content TEXT);
                 INSERT INTO weflow_messages (local_id, talker, create_time, is_send, type, content) VALUES
@@ -774,8 +756,8 @@ public class ImportServiceTests : IDisposable
             var result = await service.RunAsync(new[] { exportsDir });
 
             // 断言导入统计
-            Assert.Equal(9, result.FilesFound);
-            Assert.Equal(9, result.FilesImported);
+            Assert.Equal(7, result.FilesFound);
+            Assert.Equal(7, result.FilesImported);
             Assert.Equal(0, result.FilesFailed);
             Assert.True(result.MessagesSeen > 0);
             Assert.True(result.Added > 0);
@@ -785,10 +767,10 @@ public class ImportServiceTests : IDisposable
             using (var connection = db.OpenConnection())
             {
                 var convCount = Scalar(connection, "SELECT COUNT(*) FROM conversations");
-                Assert.True(convCount >= 9, $"conversations count: {convCount}");
+                Assert.True(convCount >= 7, $"conversations count: {convCount}");
 
                 var senderCount = Scalar(connection, "SELECT COUNT(*) FROM senders");
-                Assert.True(senderCount >= 9, $"senders count: {senderCount}");
+                Assert.True(senderCount >= 7, $"senders count: {senderCount}");
 
                 var msgCount = Scalar(connection, "SELECT COUNT(*) FROM messages");
                 Assert.Equal(result.Added, msgCount);
@@ -800,8 +782,6 @@ public class ImportServiceTests : IDisposable
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自ChatLab JSONL流式消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自QQ分块消息1%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自WeFlow CSV消息%'"));
-                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自Markdown导出的消息%'"));
-                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自TXT纯文本导出的消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自SQL导出消息1%'"));
 
                 // 断言 FTS 全文搜索索引正确同步触发写入
@@ -819,10 +799,6 @@ public class ImportServiceTests : IDisposable
             Assert.NotEmpty(searchCsv.Items);
             Assert.Contains(searchCsv.Items, item => item.Snippet.Contains("WeFlow"));
 
-            var searchMd = searchRepo.Search("Markdown");
-            Assert.NotEmpty(searchMd.Items);
-            Assert.Contains(searchMd.Items, item => item.Snippet.Contains("Markdown"));
-
             // 使用 ContactRepository 验证联系人绑定支持
             var contactRepo = new ContactRepository(db);
             using (var connection = db.OpenConnection())
@@ -839,8 +815,8 @@ public class ImportServiceTests : IDisposable
 
             // 二次运行导入，断言所有消息基于 NativeId 与 PayloadHash 完美去重（重复消息数为 0，跳过计数正常）
             var secondResult = await service.RunAsync(new[] { exportsDir });
-            Assert.Equal(9, secondResult.FilesFound);
-            Assert.Equal(9, secondResult.FilesSkipped);
+            Assert.Equal(7, secondResult.FilesFound);
+            Assert.Equal(7, secondResult.FilesSkipped);
             Assert.Equal(0, secondResult.FilesImported);
             Assert.Equal(0, secondResult.Added);
             Assert.Equal(0, secondResult.FilesFailed);

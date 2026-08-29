@@ -100,26 +100,7 @@ public class ImportDiscoveryTests : IDisposable
             1,9001,text,0,张三,hello csv,,2023-11-15T10:00:00.000Z
             """);
 
-        // 6. md_export/notes.md (Markdown 聊天记录)
-        var mdDir = Path.Combine(_tempDir, "md_export");
-        Directory.CreateDirectory(mdDir);
-        var mdPath = Path.Combine(mdDir, "notes.md");
-        File.WriteAllText(mdPath, """
-            # 聊天记录: Markdown测试群
-            [2023-11-15 10:00:00] 张三: hello markdown
-            """);
-
-        // 7. txt_export/chat.txt (TXT 聊天记录)
-        var txtDir = Path.Combine(_tempDir, "txt_export");
-        Directory.CreateDirectory(txtDir);
-        var txtPath = Path.Combine(txtDir, "chat.txt");
-        File.WriteAllText(txtPath, """
-            会话: TXT测试群
-            2023-11-15 10:00:00 张三:
-            hello txt
-            """);
-
-        // 8. sql_dump/backup.sql (SQL 导出的 messages)
+        // 6. sql_dump/backup.sql (SQL 导出的 messages)
         var sqlDir = Path.Combine(_tempDir, "sql_dump");
         Directory.CreateDirectory(sqlDir);
         var sqlPath = Path.Combine(sqlDir, "backup.sql");
@@ -157,8 +138,8 @@ public class ImportDiscoveryTests : IDisposable
         // 执行扫描嗅探
         var discovered = ImportDiscovery.Discover(new[] { _tempDir });
 
-        // 验证只发现了 8 个有效导出，无多余文件、无媒体目录污染、无 chunk_0.jsonl 独立识别
-        Assert.Equal(8, discovered.Count);
+        // 验证只发现了 6 个有效导出，无多余文件、无媒体目录污染、无 chunk_0.jsonl 独立识别
+        Assert.Equal(6, discovered.Count);
         Assert.All(discovered, d => Assert.Null(d.Error));
 
         var discoveredDict = discovered.ToDictionary(
@@ -171,8 +152,6 @@ public class ImportDiscoveryTests : IDisposable
         Assert.Equal("wechat", discoveredDict[Path.GetFullPath(chatlabPath)]);
         Assert.Equal("qq", discoveredDict[Path.GetFullPath(qqManifestPath)]);
         Assert.Equal("wechat", discoveredDict[Path.GetFullPath(csvPath)]);
-        Assert.Equal("text", discoveredDict[Path.GetFullPath(mdPath)]);
-        Assert.Equal("text", discoveredDict[Path.GetFullPath(txtPath)]);
         Assert.Equal("sql", discoveredDict[Path.GetFullPath(sqlPath)]);
 
         // 确保 chunk_0.jsonl 未被当作独立导出识别

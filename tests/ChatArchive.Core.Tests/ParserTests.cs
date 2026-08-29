@@ -1113,68 +1113,6 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
-    public void ChatTextAndMarkdownExportFormats_ParsePlainExports_Correctly()
-    {
-        // 1. Markdown
-        var md = """
-            # 聊天记录: 技术交流群
-            [2023-11-15 10:00:00] 张三: 早上好
-            [2023-11-15 10:00:10] 李四: 大家早
-            """;
-        var mdPath = Path.Combine(_dir, "chat.md");
-        File.WriteAllText(mdPath, md);
-
-        var mdFormat = new ChatMarkdownExportFormat();
-        Assert.True(mdFormat.Matches(mdPath));
-
-        using (var exportFile = mdFormat.Open(mdPath))
-        {
-            Assert.Equal("text", exportFile.Conversation.Platform);
-            Assert.Equal("技术交流群", exportFile.Conversation.Title);
-            Assert.Equal("group", exportFile.Conversation.Kind);
-
-            var messages = exportFile.EnumerateMessages().ToList();
-            Assert.Equal(2, messages.Count);
-
-            Assert.Equal("张三", messages[0].SenderName);
-            Assert.Equal("早上好", messages[0].Content);
-            Assert.Equal(DateTimeOffset.Parse("2023-11-15 10:00:00").ToUnixTimeMilliseconds(), messages[0].TimestampMs);
-
-            Assert.Equal("李四", messages[1].SenderName);
-            Assert.Equal("大家早", messages[1].Content);
-            Assert.Equal(DateTimeOffset.Parse("2023-11-15 10:00:10").ToUnixTimeMilliseconds(), messages[1].TimestampMs);
-        }
-
-        // 2. TXT
-        var txt = """
-            2023-11-15 10:00:00 张三:
-            早上好
-            2023-11-15 10:00:10 李四:
-            大家早
-            """;
-        var txtPath = Path.Combine(_dir, "chat.txt");
-        File.WriteAllText(txtPath, txt);
-
-        var txtFormat = new ChatTextExportFormat();
-        Assert.True(txtFormat.Matches(txtPath));
-
-        using (var exportFile = txtFormat.Open(txtPath))
-        {
-            Assert.Equal("text", exportFile.Conversation.Platform);
-            var messages = exportFile.EnumerateMessages().ToList();
-            Assert.Equal(2, messages.Count);
-
-            Assert.Equal("张三", messages[0].SenderName);
-            Assert.Equal("早上好", messages[0].Content);
-            Assert.Equal(DateTimeOffset.Parse("2023-11-15 10:00:00").ToUnixTimeMilliseconds(), messages[0].TimestampMs);
-
-            Assert.Equal("李四", messages[1].SenderName);
-            Assert.Equal("大家早", messages[1].Content);
-            Assert.Equal(DateTimeOffset.Parse("2023-11-15 10:00:10").ToUnixTimeMilliseconds(), messages[1].TimestampMs);
-        }
-    }
-
-    [Fact]
     public void ChatSqlExportFormat_ParsesSqlDumps_Correctly()
     {
         var sql = """
@@ -1314,45 +1252,6 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
-    public void TextChatParser_And_MarkdownChatParser_Support_SingleDigit_MonthAndDay()
-    {
-        var txtContent = """
-            会话：测试好友
-            2024-5-1 12:00:00 Alice: 你好单数字月日
-            [2024-5-2 13:00:00] Bob: 收到单数字
-            """;
-        var txtPath = Path.Combine(_dir, "singledigit.txt");
-        File.WriteAllText(txtPath, txtContent);
-
-        var txtFormat = new ChatTextExportFormat();
-        using (var exportFile = txtFormat.Open(txtPath))
-        {
-            var msgs = exportFile.EnumerateMessages().ToList();
-            Assert.Equal(2, msgs.Count);
-            Assert.Equal("你好单数字月日", msgs[0].Content);
-            Assert.Equal("收到单数字", msgs[1].Content);
-            Assert.True(msgs[0].TimestampMs > 0);
-            Assert.True(msgs[1].TimestampMs > 0);
-        }
-
-        var mdContent = """
-            # 聊天记录：测试Markdown
-            [2024-5-1 12:00:00] Alice: Markdown单数字测试
-            """;
-        var mdPath = Path.Combine(_dir, "singledigit.md");
-        File.WriteAllText(mdPath, mdContent);
-
-        var mdFormat = new ChatMarkdownExportFormat();
-        using (var exportFile = mdFormat.Open(mdPath))
-        {
-            var msgs = exportFile.EnumerateMessages().ToList();
-            Assert.Single(msgs);
-            Assert.Equal("Markdown单数字测试", msgs[0].Content);
-            Assert.True(msgs[0].TimestampMs > 0);
-        }
-    }
-
-    [Fact]
     public void ExportFormats_Register_Preserves_Default_Formats()
     {
         var dummyFormat = new ChatSqlExportFormat();
@@ -1375,55 +1274,6 @@ public class ParserTests : IDisposable
         Assert.Single(rows);
         Assert.Equal("1", rows[0]["id"]);
         Assert.Equal("hello; world", rows[0]["content"]);
-    }
-
-    [Fact]
-    public void MarkdownParser_PreservesHashtagsAndCodeInMessages()
-    {
-        var md = """
-            # 会话记录
-            [2024-01-01 10:00:00] Alice:
-            #include <stdio.h>
-            #urgent tag
-            """;
-        var tempFile = Path.GetTempFileName();
-        try
-        {
-            File.WriteAllText(tempFile, md);
-            var conv = new ParsedConversation("text", "text-default", "test", "private", "test");
-            var msgs = MarkdownChatParser.IterateMessages(tempFile, conv, CancellationToken.None).ToList();
-            Assert.Single(msgs);
-            Assert.Contains("#include <stdio.h>", msgs[0].Content);
-            Assert.Contains("#urgent tag", msgs[0].Content);
-        }
-        finally
-        {
-            if (File.Exists(tempFile)) File.Delete(tempFile);
-        }
-    }
-
-    [Fact]
-    public void TextParser_PreservesParagraphBlankLines()
-    {
-        var txt = """
-            2024-01-01 10:00:00 Alice:
-            Line 1
-
-            Line 2
-            """;
-        var tempFile = Path.GetTempFileName();
-        try
-        {
-            File.WriteAllText(tempFile, txt);
-            var conv = new ParsedConversation("text", "text-default", "test", "private", "test");
-            var msgs = TextChatParser.IterateMessages(tempFile, conv, CancellationToken.None).ToList();
-            Assert.Single(msgs);
-            Assert.Equal("Line 1\n\nLine 2", msgs[0].Content.Replace("\r\n", "\n").Trim());
-        }
-        finally
-        {
-            if (File.Exists(tempFile)) File.Delete(tempFile);
-        }
     }
 
     [Fact]

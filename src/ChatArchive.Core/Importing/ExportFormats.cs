@@ -666,41 +666,41 @@ public sealed class WeFlowCsvExportFormat : IChatExportFormat
     }
 }
 
-/// <summary>Markdown 格式聊天记录适配器。</summary>
-public sealed class ChatMarkdownExportFormat : IChatExportFormat
+/// <summary>Current WeFlow Markdown export adapter.</summary>
+public sealed class WeFlowMarkdownExportFormat : IChatExportFormat
 {
-    public string Platform => "text";
+    public string Platform => "wechat";
 
     public bool Matches(string filePath)
     {
-        return MarkdownChatParser.Matches(filePath);
+        return WeFlowMarkdownParser.Matches(filePath);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var conversation = MarkdownChatParser.ReadConversation(filePath);
+        var conversation = WeFlowMarkdownParser.ReadConversation(filePath);
         return new ExportFile(
             conversation,
-            token => MarkdownChatParser.IterateMessages(filePath, conversation, token));
+            token => WeFlowMarkdownParser.IterateMessages(filePath, conversation, token));
     }
 }
 
-/// <summary>TXT 纯文本格式聊天记录适配器。</summary>
-public sealed class ChatTextExportFormat : IChatExportFormat
+/// <summary>Current WeFlow TXT export adapter.</summary>
+public sealed class WeFlowTextExportFormat : IChatExportFormat
 {
-    public string Platform => "text";
+    public string Platform => "wechat";
 
     public bool Matches(string filePath)
     {
-        return TextChatParser.Matches(filePath);
+        return WeFlowTextParser.Matches(filePath);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var conversation = TextChatParser.ReadConversation(filePath);
+        var conversation = WeFlowTextParser.ReadConversation(filePath);
         return new ExportFile(
             conversation,
-            token => TextChatParser.IterateMessages(filePath, conversation, token));
+            token => WeFlowTextParser.IterateMessages(filePath, conversation, token));
     }
 }
 
@@ -738,8 +738,8 @@ public static class ExportFormats
         new ChatLabJsonExportFormat(),
         new ChatLabJsonlExportFormat(),
         new WeFlowCsvExportFormat(),
-        new ChatMarkdownExportFormat(),
-        new ChatTextExportFormat(),
+        new WeFlowMarkdownExportFormat(),
+        new WeFlowTextExportFormat(),
         new ChatSqlExportFormat(),
     };
 
