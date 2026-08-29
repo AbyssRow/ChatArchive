@@ -164,6 +164,30 @@ public sealed class WeFlowTextFormatTests : IDisposable
     }
 
     [Fact]
+    public void WeFlowMarkdown_TrimsOnlyTrailingSeparatorLinesAtMessageBoundaryAndEof()
+    {
+        var path = WriteFile("boundary.md",
+            "# 项目群\n\n" +
+            "- 会话ID: `group@chatroom`\n" +
+            "- 会话类型: 群聊\n" +
+            "- 消息数量: 2\n" +
+            "- 导出时间: 2023-11-15 06:16:00\n" +
+            "- 导出工具: WeFlow\n\n" +
+            "---\n\n" +
+            "## 2023-11-15 06:15:23 Alice\n\n" +
+            "第一行\n\n" +
+            "第二行\n\n\n" +
+            "## 2023-11-15 06:16:23 Bob\n\n" +
+            "末尾正文\n\n");
+
+        using var export = new WeFlowMarkdownExportFormat().Open(path);
+        var messages = export.EnumerateMessages().ToList();
+
+        Assert.Equal("\n第一行\n\n第二行", messages[0].Content);
+        Assert.Equal("\n末尾正文", messages[1].Content);
+    }
+
+    [Fact]
     public void WeFlowTxt_StripsWriterQuotesAndKeepsMultilineBody()
     {
         var path = WriteFile("chat.txt", """
@@ -183,6 +207,36 @@ public sealed class WeFlowTextFormatTests : IDisposable
         Assert.Equal("Alice", messages[0].SenderName);
         Assert.Equal("第一行\n第二行", messages[0].Content.Replace("\r\n", "\n"));
         Assert.Equal("outgoing", messages[1].Direction);
+    }
+
+    [Fact]
+    public void WeFlowTxt_RejectsConsecutiveHeadersWithoutBodyForFirstMessage()
+    {
+        var path = WriteFile("consecutive.txt",
+            "2023-11-15 06:15:23 'Alice'\n" +
+            "2023-11-15 06:16:23 'Bob'\n" +
+            "有效正文\n");
+        using var export = new WeFlowTextExportFormat().Open(path);
+
+        var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
+
+        Assert.Contains(path, exception.Message);
+        Assert.Contains("第 1 个", exception.Message);
+    }
+
+    [Fact]
+    public void WeFlowTxt_RejectsFinalHeaderWithoutBody()
+    {
+        var path = WriteFile("missing-final-body.txt",
+            "2023-11-15 06:15:23 'Alice'\n" +
+            "有效正文\n\n" +
+            "2023-11-15 06:16:23 'Bob'\n");
+        using var export = new WeFlowTextExportFormat().Open(path);
+
+        var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
+
+        Assert.Contains(path, exception.Message);
+        Assert.Contains("第 2 个", exception.Message);
     }
 
     [Theory]

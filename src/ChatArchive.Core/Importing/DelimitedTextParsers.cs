@@ -200,6 +200,7 @@ public static class WeFlowMarkdownParser
             if (!ImportText.TryParseFlexibleTimestamp(header.Groups["time"].Value, out _)) throw new ImportFormatException(filePath, $"第 {index + 1} 个 Markdown 消息时间无效");
             if (sender is not null && timestamp is not null)
             {
+                TrimTrailingBlankLines(body);
                 yield return BuildMessage(filePath, exportRoot, conversation, index++, timestamp, sender, body);
                 body.Clear();
             }
@@ -207,6 +208,7 @@ public static class WeFlowMarkdownParser
             sender = header.Groups["sender"].Value.Trim();
         }
         if (sender is null || timestamp is null) throw new ImportFormatException(filePath, "未找到有效的 WeFlow Markdown 消息");
+        TrimTrailingBlankLines(body);
         yield return BuildMessage(filePath, exportRoot, conversation, index, timestamp, sender, body);
     }
 
@@ -280,6 +282,11 @@ public static class WeFlowMarkdownParser
         }));
     }
 
+    private static void TrimTrailingBlankLines(List<string> lines)
+    {
+        while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1])) lines.RemoveAt(lines.Count - 1);
+    }
+
     private sealed record Metadata(string Title, string SessionId, string Kind);
 }
 
@@ -322,7 +329,7 @@ public static class WeFlowTextParser
         string? timestamp = null;
         var body = new List<string>();
         var index = 0;
-        var hasContentLine = false;
+        var hasCurrentContentLine = false;
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {
@@ -333,20 +340,23 @@ public static class WeFlowTextParser
                 if (sender is not null)
                 {
                     body.Add(line);
-                    hasContentLine = true;
+                    hasCurrentContentLine = true;
                 }
                 continue;
             }
             if (!ImportText.TryParseFlexibleTimestamp(header.Groups["time"].Value, out _)) throw new ImportFormatException(filePath, $"第 {index + 1} 个 TXT 消息时间无效");
             if (sender is not null && timestamp is not null)
             {
+                if (!hasCurrentContentLine) throw new ImportFormatException(filePath, $"第 {index + 1} 个 TXT 消息缺少正文");
                 yield return BuildMessage(filePath, conversation, index++, timestamp, sender, body);
                 body.Clear();
+                hasCurrentContentLine = false;
             }
             timestamp = header.Groups["time"].Value;
             sender = header.Groups["sender"].Value;
         }
-        if (sender is null || timestamp is null || !hasContentLine) throw new ImportFormatException(filePath, "未找到有效的 WeFlow TXT 消息");
+        if (sender is null || timestamp is null) throw new ImportFormatException(filePath, "未找到有效的 WeFlow TXT 消息");
+        if (!hasCurrentContentLine) throw new ImportFormatException(filePath, $"第 {index + 1} 个 TXT 消息缺少正文");
         yield return BuildMessage(filePath, conversation, index, timestamp, sender, body);
     }
 
