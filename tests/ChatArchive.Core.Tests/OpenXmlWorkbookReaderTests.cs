@@ -276,6 +276,70 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
         Assert.Contains("[Content_Types].xml", error.Message);
     }
 
+    [Theory]
+    [InlineData("xl/vbaProject.bin")]
+    [InlineData("xl/activeX/activeX1.bin")]
+    [InlineData("xl/embeddings/oleObject1.bin")]
+    public void OpenXmlReader_RejectsUndeclaredForbiddenPayloadEntry(string entryPath)
+    {
+        var path = NewPath($"undeclared-{Path.GetFileName(entryPath)}.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        AddTextEntry(path, entryPath, "not opened");
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+        Assert.Contains(entryPath, error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("禁止", error.Message);
+    }
+
+    [Theory]
+    [InlineData("xl/vbaProject.bin")]
+    [InlineData("xl/activeX/activeX1.bin")]
+    [InlineData("xl/embeddings/oleObject1.bin")]
+    public void OpenXmlReader_RejectsForbiddenPayloadEntryMislabeledAsOctetStream(string entryPath)
+    {
+        var path = NewPath($"mislabeled-{Path.GetFileName(entryPath)}.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        AddTextEntry(path, entryPath, "not opened");
+        RewriteEntry(path, "[Content_Types].xml", xml => InsertBeforeRequired(
+            xml,
+            "</Types>",
+            $"<Override PartName=\"/{entryPath}\" ContentType=\"application/octet-stream\" />"));
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+        Assert.Contains(entryPath, error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("禁止", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsForbiddenInternalRelationshipType()
+    {
+        var path = NewPath("forbidden-relationship-type.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/_rels/workbook.xml.rels", xml => InsertBeforeRequired(
+            xml,
+            "</Relationships>",
+            "<Relationship Id=\"rIdForbidden\" Type=\"http://schemas.microsoft.com/office/2006/relationships/vbaProject\" Target=\"worksheets/sheet1.xml\" />"));
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+        Assert.Contains("vbaProject", error.Message);
+        Assert.Contains("workbook.xml.rels", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsInternalRelationshipTargetingForbiddenPayloadPath()
+    {
+        var path = NewPath("forbidden-relationship-target.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/_rels/workbook.xml.rels", xml => InsertBeforeRequired(
+            xml,
+            "</Relationships>",
+            "<Relationship Id=\"rIdForbidden\" Type=\"urn:test\" Target=\"activeX/activeX1.bin\" />"));
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+        Assert.Contains("xl/activeX/activeX1.bin", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("workbook.xml.rels", error.Message);
+    }
+
     [Fact]
     public void OpenXmlReader_RejectsBinaryWorkbookContentType()
     {
@@ -485,6 +549,30 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
         using var workbook = OpenXmlWorkbookReader.Open(path);
         var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
         Assert.Equal("media/one.jpg", row.Cells[1].Hyperlink);
+    }
+
+    [Fact]
+    public void OpenXmlReader_AllowsExactlyTenThousandWorksheetRelationshipsWithoutHyperlinks()
+    {
+        var path = NewPath("ten-thousand-sheet-relationships.xlsx");
+        WriteWorkbookWithWorksheetRelationships(path, 10_000);
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+        Assert.Equal("one", row.Cells[1].Value);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsTenThousandAndFirstWorksheetRelationshipBeforeRetainingIt()
+    {
+        var path = NewPath("too-many-sheet-relationships.xlsx");
+        WriteWorkbookWithWorksheetRelationships(path, 10_001);
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var error = Assert.Throws<ImportFormatException>(
+            () => workbook.ReadRows(workbook.Sheets[0], CancellationToken.None).ToList());
+        Assert.Contains("10000", error.Message);
+        Assert.Contains("sheet1.xml.rels", error.Message);
     }
 
     [Fact]
@@ -838,6 +926,28 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
             xml,
             "<hyperlinks><hyperlink ref=\"A1\" r:id=\"rIdHyperlink1\" /></hyperlinks>",
             hyperlinks.ToString()));
+    }
+
+    private static void WriteWorkbookWithWorksheetRelationships(string filePath, int relationshipCount)
+    {
+        XlsxTestFile.Write(filePath, new XlsxTestSheet("聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        var relationships = new StringBuilder()
+            .Append("<?xml version=\"1.0\" encoding=\"utf-8\"?>")
+            .Append("<Relationships xmlns=\"")
+            .Append(PackageRelationshipNamespace)
+            .Append("\">");
+        for (var index = 1; index <= relationshipCount; index++)
+        {
+            relationships.Append("<Relationship Id=\"rId")
+                .Append(index)
+                .Append("\" Type=\"urn:test\" Target=\"../../unused.bin\" />");
+        }
+
+        relationships.Append("</Relationships>");
+        AddTextEntry(
+            filePath,
+            "xl/worksheets/_rels/sheet1.xml.rels",
+            relationships.ToString());
     }
 
     private static string ColumnReference(int columnIndex)

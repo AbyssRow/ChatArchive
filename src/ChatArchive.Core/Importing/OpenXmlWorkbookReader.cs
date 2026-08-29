@@ -513,7 +513,13 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         IReadOnlyDictionary<string, PackageRelationship>? relationships = null;
         if (_entries.ContainsKey(relationshipEntry))
         {
-            relationships = ReadRelationships(_entries, relationshipEntry, sheet.EntryPath, _filePath, token);
+            relationships = ReadRelationships(
+                _entries,
+                relationshipEntry,
+                sheet.EntryPath,
+                _filePath,
+                token,
+                MaximumHyperlinkDeclarations);
             foreach (var relationship in relationships.Values)
             {
                 token.ThrowIfCancellationRequested();
@@ -780,12 +786,19 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         string relationshipEntry,
         string ownerEntry,
         string filePath,
-        CancellationToken token)
+        CancellationToken token,
+        int? maximumRelationships = null)
     {
         return WithEntryFormatErrors(
             filePath,
             relationshipEntry,
-            () => ReadRelationshipsCore(entries, relationshipEntry, ownerEntry, filePath, token));
+            () => ReadRelationshipsCore(
+                entries,
+                relationshipEntry,
+                ownerEntry,
+                filePath,
+                token,
+                maximumRelationships));
     }
 
     private static IReadOnlyDictionary<string, PackageRelationship> ReadRelationshipsCore(
@@ -793,10 +806,12 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         string relationshipEntry,
         string ownerEntry,
         string filePath,
-        CancellationToken token)
+        CancellationToken token,
+        int? maximumRelationships)
     {
         var entry = RequireEntry(entries, relationshipEntry, filePath, relationshipEntry);
         var relationships = new Dictionary<string, PackageRelationship>(StringComparer.Ordinal);
+        var relationshipDeclarations = 0;
         using var stream = entry.Open();
         using var reader = CreateXmlReader(stream);
         var sawRelationships = false;
@@ -826,6 +841,16 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             }
 
             token.ThrowIfCancellationRequested();
+            if (maximumRelationships is int maximum
+                && relationshipDeclarations == maximum)
+            {
+                throw Error(
+                    filePath,
+                    relationshipEntry,
+                    $"每个工作表最多允许 {maximum} 个 Relationship 声明");
+            }
+
+            relationshipDeclarations++;
             var id = reader.GetAttribute("Id");
             var type = reader.GetAttribute("Type");
             var target = reader.GetAttribute("Target");
@@ -850,7 +875,16 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 throw Error(filePath, relationshipEntry, $"关系 {id} 是外部关系");
             }
 
-            _ = ResolvePackageTarget(ownerEntry, target, filePath, relationshipEntry);
+            if (IsForbiddenRelationshipType(type))
+            {
+                throw Error(filePath, relationshipEntry, $"关系 {id} 声明了禁止的宏或二进制类型：{type}");
+            }
+
+            var resolvedTarget = ResolvePackageTarget(ownerEntry, target, filePath, relationshipEntry);
+            if (IsForbiddenPayloadPath(resolvedTarget))
+            {
+                throw Error(filePath, relationshipEntry, $"关系 {id} 指向禁止的宏或二进制负载：{resolvedTarget}");
+            }
 
             if (!relationships.TryAdd(id, new PackageRelationship(id, type, target, isExternal)))
             {
@@ -988,6 +1022,28 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         {
             throw Error(filePath, ContentTypesEntry, $"禁止的宏或二进制 ContentType：{contentType}");
         }
+    }
+
+    private static bool IsForbiddenRelationshipType(string type)
+    {
+        var separator = type.LastIndexOf('/');
+        var name = separator >= 0 ? type[(separator + 1)..] : type;
+        return name.Equals("vbaProject", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("vbaProjectSignature", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("activeXControl", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("activeXControlBinary", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("oleObject", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("package", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("control", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsForbiddenPayloadPath(string path)
+    {
+        var fileName = path[(path.LastIndexOf('/') + 1)..];
+        return fileName.Equals("vbaProject.bin", StringComparison.OrdinalIgnoreCase)
+            || fileName.Equals("vbaProjectSignature.bin", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("xl/activeX/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("xl/embeddings/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static PackageRelationship? SingleRelationshipOfType(
@@ -1154,6 +1210,13 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             var path = entry.FullName;
             ValidateEntryPath(path, filePath);
             var identity = path.EndsWith("/", StringComparison.Ordinal) ? path[..^1] : path;
+            if (IsForbiddenPayloadPath(identity))
+            {
+                throw new ImportFormatException(
+                    filePath,
+                    $"XLSX 包含禁止的宏或二进制负载条目：{identity}");
+            }
+
             if (!entryNames.Add(identity))
             {
                 throw new ImportFormatException(filePath, $"XLSX 包含重复或歧义条目：{path}");
