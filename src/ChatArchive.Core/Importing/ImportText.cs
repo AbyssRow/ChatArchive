@@ -165,25 +165,65 @@ public static class ImportText
             return null;
         }
 
-        var root = Path.GetFullPath(exportRoot);
-        var parent = Path.GetDirectoryName(root);
-        if (parent is null)
+        try
+        {
+            var root = Path.GetFullPath(exportRoot);
+            var parent = Path.GetDirectoryName(root);
+            if (parent is null)
+            {
+                return null;
+            }
+
+            var relativeSegments = segments.Skip(1).ToArray();
+            var relative = Path.Combine(relativeSegments);
+            var candidate = SafeExportPath(parent, relative);
+            if (candidate is null || !IsRegularPathWithoutReparsePoints(parent, relativeSegments) || !File.Exists(candidate))
+            {
+                return null;
+            }
+
+            return candidate;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
         {
             return null;
         }
+    }
 
-        var relative = Path.Combine(segments.Skip(1).ToArray());
-        var candidate = SafeExportPath(parent, relative);
-        if (candidate is null || !File.Exists(candidate))
+    private static bool IsRegularPathWithoutReparsePoints(string parent, IEnumerable<string> relativeSegments)
+    {
+        try
         {
-            return null;
-        }
+            var current = parent;
+            var attributes = File.GetAttributes(current);
+            if (attributes.HasFlag(FileAttributes.ReparsePoint))
+            {
+                return false;
+            }
 
-        var attributes = File.GetAttributes(candidate);
-        return attributes.HasFlag(FileAttributes.Directory)
-            || attributes.HasFlag(FileAttributes.ReparsePoint)
-            ? null
-            : candidate;
+            foreach (var segment in relativeSegments)
+            {
+                current = Path.Combine(current, segment);
+                attributes = File.GetAttributes(current);
+                if (attributes.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    return false;
+                }
+            }
+
+            return !attributes.HasFlag(FileAttributes.Directory);
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsRootedOrUriLikeDeclaration(string declaredPath)
+    {
+        return declaredPath[0] is '/' or '\\'
+            || Path.IsPathRooted(declaredPath)
+            || Uri.TryCreate(declaredPath, UriKind.Absolute, out _);
     }
 
     /// <summary>
@@ -197,12 +237,12 @@ public static class ImportText
     /// </summary>
     public static string? SafeResolveMedia(string exportRoot, string declaredPath, string? sessionTitle = null)
     {
-        if (string.IsNullOrWhiteSpace(declaredPath))
+        if (string.IsNullOrWhiteSpace(declaredPath) || IsRootedOrUriLikeDeclaration(declaredPath))
         {
             return null;
         }
 
-        var normalized = declaredPath.Replace('\\', '/').TrimStart('/');
+        var normalized = declaredPath.Replace('\\', '/');
         if (string.IsNullOrWhiteSpace(normalized) || Path.IsPathRooted(normalized))
         {
             return null;

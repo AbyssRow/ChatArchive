@@ -107,6 +107,64 @@ public class MediaLocatorTests : IDisposable
     }
 
     [Theory]
+    [InlineData("images")]
+    [InlineData("voices")]
+    [InlineData("videos")]
+    [InlineData("emojis")]
+    [InlineData("file")]
+    public void SafeResolveMedia_AllowsNestedFilesInEveryWeFlowLayoutACategory(string category)
+    {
+        var texts = Path.Combine(_dir, "export", "texts");
+        var nested = Path.Combine(_dir, "export", category, "nested");
+        Directory.CreateDirectory(texts);
+        Directory.CreateDirectory(nested);
+        var media = Path.Combine(nested, "one.bin");
+        File.WriteAllText(media, category);
+
+        Assert.Equal(media, ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, $"../{category}/nested/one.bin"));
+    }
+
+    [Fact]
+    public void SafeResolveMedia_RejectsIntermediateDirectoryReparsePoints()
+    {
+        var texts = Path.Combine(_dir, "export", "texts");
+        var outside = Path.Combine(_dir, "outside");
+        var linkedImages = Path.Combine(_dir, "export", "images");
+        Directory.CreateDirectory(texts);
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "one.jpg"), "outside image");
+
+        try
+        {
+            Directory.CreateSymbolicLink(linkedImages, outside);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            Assert.Skip($"Directory symbolic links are unavailable on this platform: {ex.GetType().Name}");
+            return;
+        }
+
+        Assert.True(File.GetAttributes(linkedImages).HasFlag(FileAttributes.ReparsePoint));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/one.jpg"));
+    }
+
+    [Theory]
+    [InlineData("/image1.png")]
+    [InlineData("\\image1.png")]
+    [InlineData("\\\\server\\share\\image1.png")]
+    [InlineData("C:\\outside\\image1.png")]
+    [InlineData("https://example.test/image1.png")]
+    [InlineData("file:///outside/image1.png")]
+    public void SafeResolveMedia_RejectsRootedAndUriLikeDeclarations(string declaredPath)
+    {
+        var exportRoot = Path.Combine(_dir, "export");
+        Directory.CreateDirectory(exportRoot);
+        File.WriteAllText(Path.Combine(exportRoot, "image1.png"), "image");
+
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(exportRoot, declaredPath));
+    }
+
+    [Theory]
     [InlineData("../outside.png")]
     [InlineData("sub/../../outside.png")]
     [InlineData("a/b/../../../secret.txt")]

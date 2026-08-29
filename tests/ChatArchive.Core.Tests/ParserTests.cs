@@ -663,8 +663,8 @@ public class ParserTests : IDisposable
         var directFile = Path.Combine(exportRoot, "image1.png");
         File.WriteAllText(directFile, "img1");
         Assert.Equal(directFile, ImportText.SafeResolveMedia(exportRoot, "image1.png"));
-        Assert.Equal(directFile, ImportText.SafeResolveMedia(exportRoot, "/image1.png"));
-        Assert.Equal(directFile, ImportText.SafeResolveMedia(exportRoot, "\\image1.png"));
+        Assert.Null(ImportText.SafeResolveMedia(exportRoot, "/image1.png"));
+        Assert.Null(ImportText.SafeResolveMedia(exportRoot, "\\image1.png"));
 
         // 2. resources/ 子目录探测
         var resourcesDir = Path.Combine(exportRoot, "resources", "images");
