@@ -728,13 +728,13 @@ public class ImportServiceTests : IDisposable
             var qqChunk0 = """{"id":"qq_c1","timestamp":1700000400000,"sender":{"uid":"u_qq_friend","name":"QQ群友"},"content":{"type":"text","text":"来自QQ分块消息1"}}""" + "\n"
                          + """{"id":"qq_c2","timestamp":1700000410000,"sender":{"uid":"u_self","name":"我自己"},"content":{"type":"text","text":"来自QQ分块消息2"}}""" + "\n";
             File.WriteAllText(Path.Combine(qqChunksDir, "chunk_0.jsonl"), qqChunk0);
-// 7. WeClone CSV
-            var wecloneCsv = """
-                is_sender,sender_name,talker,time,type,content
-                0,CSV好友,wxid_csv_user,2023-11-15 10:00:00,1,来自WeClone CSV消息
-                1,我,wxid_self,2023-11-15 10:00:05,1,CSV回复消息
+            // 7. Current WeFlow CSV
+            var weflowCsv = """
+                id,MsgSvrID,type_name,is_sender,talker,msg,src,CreateTime
+                1,9001,text,0,CSV好友,来自WeFlow CSV消息,,2023-11-15T10:00:00.000Z
+                2,9002,text,1,我,CSV回复消息,,2023-11-15T10:00:05.000Z
                 """;
-            File.WriteAllText(Path.Combine(exportsDir, "07_weclone.csv"), wecloneCsv);
+            File.WriteAllText(Path.Combine(exportsDir, "07_weflow.csv"), weflowCsv);
 
             // 8. Markdown 导出
             var markdownExport = """
@@ -799,7 +799,7 @@ public class ImportServiceTests : IDisposable
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自ChatLab标准JSON消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自ChatLab JSONL流式消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自QQ分块消息1%'"));
-                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自WeClone CSV消息%'"));
+                Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自WeFlow CSV消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自Markdown导出的消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自TXT纯文本导出的消息%'"));
                 Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages WHERE content LIKE '%来自SQL导出消息1%'"));
@@ -815,9 +815,9 @@ public class ImportServiceTests : IDisposable
             Assert.NotEmpty(searchResult.Items);
             Assert.Contains(searchResult.Items, item => item.Snippet.Contains("ArkMe"));
 
-            var searchCsv = searchRepo.Search("WeClone");
+            var searchCsv = searchRepo.Search("WeFlow");
             Assert.NotEmpty(searchCsv.Items);
-            Assert.Contains(searchCsv.Items, item => item.Snippet.Contains("WeClone"));
+            Assert.Contains(searchCsv.Items, item => item.Snippet.Contains("WeFlow"));
 
             var searchMd = searchRepo.Search("Markdown");
             Assert.NotEmpty(searchMd.Items);

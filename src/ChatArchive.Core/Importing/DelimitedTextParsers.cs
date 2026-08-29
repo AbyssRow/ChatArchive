@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -96,43 +95,23 @@ public static class Rfc4180CsvReader
     }
 }
 
-/// <summary>
-/// WeClone CSV 格式解析器（平台：wechat）。
-/// </summary>
-public static class WeCloneCsvParser
+/// <summary>Current WeFlow WeClone CSV parser (platform: wechat).</summary>
+public static class WeFlowCsvParser
 {
-    private static readonly HashSet<string> RequiredHeaders = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "is_sender", "talker", "content"
-    };
+    private static readonly string[] CurrentHeaders =
+    [
+        "id", "MsgSvrID", "type_name", "is_sender", "talker", "msg", "src", "CreateTime"
+    ];
 
     public static bool Matches(string filePath)
     {
-        if (!string.Equals(Path.GetExtension(filePath), ".csv", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
+        if (!string.Equals(Path.GetExtension(filePath), ".csv", StringComparison.OrdinalIgnoreCase)) return false;
 
         try
         {
             using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-
-            var firstLine = reader.ReadLine();
-            if (string.IsNullOrWhiteSpace(firstLine))
-            {
-                return false;
-            }
-
-            using var stringReader = new StringReader(firstLine);
-            var records = Rfc4180CsvReader.ReadRecords(stringReader).FirstOrDefault();
-            if (records == null || records.Count == 0)
-            {
-                return false;
-            }
-
-            var headerSet = new HashSet<string>(records.Select(r => r.Trim()), StringComparer.OrdinalIgnoreCase);
-            return RequiredHeaders.IsSubsetOf(headerSet);
+            return HeadersMatch(Rfc4180CsvReader.ReadRecords(reader).FirstOrDefault());
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -142,201 +121,74 @@ public static class WeCloneCsvParser
 
     public static ParsedConversation ReadConversation(string filePath)
     {
-        try
-        {
-            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        if (!Matches(filePath)) throw new ImportFormatException(filePath, "不是当前 WeFlow CSV 导出");
 
-            var headers = Rfc4180CsvReader.ReadRecords(reader).FirstOrDefault();
-            if (headers == null)
-            {
-                throw new ImportFormatException(filePath, "WeClone CSV 缺少表头");
-            }
-
-            var colMap = MapHeaders(headers);
-            string? firstTalker = null;
-            string? firstPeerSenderName = null;
-
-            foreach (var row in Rfc4180CsvReader.ReadRecords(reader))
-            {
-                var talker = GetCol(row, colMap, "talker");
-                if (!string.IsNullOrEmpty(talker) && firstTalker == null)
-                {
-                    firstTalker = talker;
-                }
-
-                var isSenderStr = GetCol(row, colMap, "is_sender") ?? GetCol(row, colMap, "issend");
-                var isSender = isSenderStr == "1" || string.Equals(isSenderStr, "true", StringComparison.OrdinalIgnoreCase);
-                var senderName = GetCol(row, colMap, "sender_name") ?? GetCol(row, colMap, "sender");
-
-                if (!isSender && !string.IsNullOrEmpty(senderName) && firstPeerSenderName == null)
-                {
-                    firstPeerSenderName = senderName;
-                }
-
-                if (firstTalker != null && firstPeerSenderName != null)
-                {
-                    break;
-                }
-            }
-
-            var nativeId = firstTalker ?? Path.GetFileNameWithoutExtension(filePath);
-            var isGroup = nativeId.EndsWith("@chatroom", StringComparison.OrdinalIgnoreCase) || nativeId.Contains("群");
-            var kind = isGroup ? "group" : "private";
-            var title = firstPeerSenderName ?? nativeId;
-
-            return new ParsedConversation("wechat", "wechat-default", nativeId, kind, title);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            throw new ImportFormatException(filePath, $"读取失败（{ex.Message}）");
-        }
+        return new ParsedConversation(
+            "wechat", "wechat-default", ImportText.StableFileNativeId(filePath), "private", Path.GetFileNameWithoutExtension(filePath));
     }
 
-    public static IEnumerable<ParsedMessage> IterateMessages(
-        string filePath,
-        ParsedConversation conversation,
-        CancellationToken cancellationToken)
+    public static IEnumerable<ParsedMessage> IterateMessages(string filePath, ParsedConversation conversation, CancellationToken cancellationToken)
     {
+        var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 64 * 1024, FileOptions.SequentialScan);
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-
-        var headers = Rfc4180CsvReader.ReadRecords(reader).FirstOrDefault();
-        if (headers == null)
+        if (!HeadersMatch(Rfc4180CsvReader.ReadRecords(reader).FirstOrDefault()))
         {
-            yield break;
+            throw new ImportFormatException(filePath, "不是当前 WeFlow CSV 导出");
         }
 
-        var colMap = MapHeaders(headers);
-        var rowIndex = 0;
-
+        var rowNumber = 1;
         foreach (var row in Rfc4180CsvReader.ReadRecords(reader))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (row.Count == 0 || (row.Count == 1 && string.IsNullOrWhiteSpace(row[0])))
-            {
-                continue;
-            }
+            rowNumber++;
+            if (row.Count == 0 || (row.Count == 1 && string.IsNullOrWhiteSpace(row[0]))) continue;
 
-            var isSenderStr = GetCol(row, colMap, "is_sender") ?? GetCol(row, colMap, "issend");
-            var isSender = isSenderStr == "1" || string.Equals(isSenderStr, "true", StringComparison.OrdinalIgnoreCase);
-            var senderName = GetCol(row, colMap, "sender_name") ?? GetCol(row, colMap, "sender") ?? (isSender ? "我" : conversation.Title);
-            var talker = GetCol(row, colMap, "talker") ?? conversation.NativeId;
-            var timeStr = GetCol(row, colMap, "time") ?? GetCol(row, colMap, "create_time") ?? string.Empty;
-            var typeStr = GetCol(row, colMap, "type") ?? "1";
-            var content = GetCol(row, colMap, "content") ?? string.Empty;
-
-            var timestampMs = ParseTimestamp(timeStr);
-            var typeInt = int.TryParse(typeStr, out var parsedType) ? parsedType : 1;
-            var messageType = ResolveMessageType(typeInt);
-            var isSystem = typeInt == 10000 || messageType == "system";
-            var isRecalled = isSystem && content.Contains("撤回", StringComparison.Ordinal);
-            var direction = isSystem ? "system" : (isSender ? "outgoing" : "incoming");
-            var senderNative = isSender ? "wxid_self" : talker;
+            var values = new string[CurrentHeaders.Length];
+            for (var i = 0; i < values.Length && i < row.Count; i++) values[i] = row[i];
 
             var rawPayload = new JsonObject();
-            for (var i = 0; i < headers.Count && i < row.Count; i++)
-            {
-                rawPayload[headers[i]] = row[i];
-            }
+            for (var i = 0; i < CurrentHeaders.Length; i++) rawPayload[CurrentHeaders[i]] = values[i];
 
-            var semantic = new JsonObject
-            {
-                ["timestamp_ms"] = timestampMs,
-                ["sender"] = senderNative,
-                ["direction"] = direction,
-                ["message_type"] = messageType,
-                ["content"] = content,
-                ["search_text"] = content,
-            };
+            var messageType = MapType(values[2]);
+            var declaredPath = values[6];
+            var attachments = string.IsNullOrWhiteSpace(declaredPath)
+                ? Array.Empty<ParsedAttachment>()
+                : new[]
+                {
+                    new ParsedAttachment(0, AttachmentKind(messageType, declaredPath), Path.GetFileName(declaredPath), declaredPath,
+                        ImportText.SafeResolveMedia(exportRoot, declaredPath, conversation.Title), null, ImportText.GuessMime(declaredPath),
+                        null, null, null, new JsonObject())
+                };
 
-            var payloadHash = CanonicalJson.HashHex(semantic);
-            var semanticHash = CanonicalJson.HashHex(new JsonObject
-            {
-                ["timestamp_ms"] = timestampMs,
-                ["sender"] = senderNative,
-                ["direction"] = direction,
-            });
-
-            var senderAliases = new List<string>();
-            if (!string.IsNullOrEmpty(senderName))
-            {
-                senderAliases.Add(senderName);
-            }
-            if (!senderAliases.Contains(senderNative, StringComparer.OrdinalIgnoreCase))
-            {
-                senderAliases.Add(senderNative);
-            }
-
-            yield return new ParsedMessage(
-                NativeId: null,
-                LocalId: rowIndex.ToString(),
-                TimestampMs: timestampMs,
-                Sequence: null,
-                SenderNativeId: senderNative,
-                SenderName: senderName,
-                SenderAliases: senderAliases,
-                Direction: direction,
-                MessageType: messageType,
-                MediaType: messageType != "text" && messageType != "system" ? messageType : null,
-                Content: content,
-                SearchText: content,
-                IsRecalled: isRecalled,
-                IsSystem: isSystem,
-                ReplyToNativeId: null,
-                PayloadHash: payloadHash,
-                SemanticHash: semanticHash,
-                SourceLocator: $"row:{rowIndex}",
-                RawPayload: rawPayload,
-                Attachments: Array.Empty<ParsedAttachment>(),
-                CompatiblePayloadHashes: Array.Empty<string>());
-
-            rowIndex++;
+            var talker = values[4];
+            yield return FlatMessageFactory.Create(new FlatMessageData(
+                EmptyToNull(values[1]), EmptyToNull(values[0]), ImportText.ParseFlexibleTimestamp(values[7]), talker, talker,
+                values[3].Trim() == "1" ? "outgoing" : "incoming", messageType, values[5], $"row:{rowNumber}", rawPayload,
+                attachments, MediaType: messageType == "text" ? null : messageType));
         }
     }
 
-    private static Dictionary<string, int> MapHeaders(IReadOnlyList<string> headers)
-    {
-        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < headers.Count; i++)
-        {
-            var clean = headers[i].Trim();
-            if (!map.ContainsKey(clean))
-            {
-                map[clean] = i;
-            }
-        }
-        return map;
-    }
+    private static bool HeadersMatch(IReadOnlyList<string>? headers) => headers is not null
+        && headers.Count == CurrentHeaders.Length
+        && string.Equals(headers[0].TrimStart('\uFEFF'), CurrentHeaders[0], StringComparison.Ordinal)
+        && headers.Skip(1).SequenceEqual(CurrentHeaders.Skip(1), StringComparer.Ordinal);
 
-    private static string? GetCol(IReadOnlyList<string> row, Dictionary<string, int> map, string colName)
+    private static string MapType(string value) => value.Trim().ToLowerInvariant() switch
     {
-        if (map.TryGetValue(colName, out var idx) && idx < row.Count)
-        {
-            return row[idx];
-        }
-        return null;
-    }
+        "image" => "image", "sticker" => "emoji", "video" => "video", "voice" => "audio", "location" => "location", "file" => "file", _ => "text"
+    };
 
-    private static string ResolveMessageType(int type)
+    private static string AttachmentKind(string messageType, string declaredPath)
     {
-        return type switch
+        if (messageType != "text") return messageType;
+        return ImportText.GuessMime(declaredPath)?.Split('/')[0] switch
         {
-            1 => "text",
-            3 => "image",
-            34 => "audio",
-            43 => "video",
-            47 => "emoji",
-            49 => "link",
-            10000 => "system",
-            _ => "text"
+            "image" => "image", "video" => "video", "audio" => "audio", _ => "file"
         };
     }
 
-    public static long ParseTimestamp(string timeStr)
-    {
-        return ImportText.ParseFlexibleTimestamp(timeStr);
-    }
+    private static string? EmptyToNull(string value) => string.IsNullOrEmpty(value) ? null : value;
 }
 
 /// <summary>
@@ -487,7 +339,7 @@ public static class MarkdownChatParser
         string content,
         ParsedConversation conversation)
     {
-        var timestampMs = WeCloneCsvParser.ParseTimestamp(timeStr);
+        var timestampMs = ImportText.ParseFlexibleTimestamp(timeStr);
         var isSend = sender == "我"
             || string.Equals(sender, "me", StringComparison.OrdinalIgnoreCase)
             || string.Equals(sender, "self", StringComparison.OrdinalIgnoreCase);
@@ -703,7 +555,7 @@ public static class TextChatParser
         string content,
         ParsedConversation conversation)
     {
-        var timestampMs = WeCloneCsvParser.ParseTimestamp(timeStr);
+        var timestampMs = ImportText.ParseFlexibleTimestamp(timeStr);
         var isSend = sender == "我"
             || string.Equals(sender, "me", StringComparison.OrdinalIgnoreCase)
             || string.Equals(sender, "self", StringComparison.OrdinalIgnoreCase);

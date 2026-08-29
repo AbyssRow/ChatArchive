@@ -91,13 +91,13 @@ public class ImportDiscoveryTests : IDisposable
         var qqChunk0Path = Path.Combine(qqChunksSubdir, "chunk_0.jsonl");
         File.WriteAllText(qqChunk0Path, """{"id":"q1","timestamp":1700000000,"sender":{"uid":"u_self","name":"我自己"},"content":{"type":"text","text":"分块内容"}}""" + "\n");
 
-        // 5. csv_export/records.csv (WeClone CSV)
+        // 5. csv_export/records.csv (current WeFlow CSV)
         var csvDir = Path.Combine(_tempDir, "csv_export");
         Directory.CreateDirectory(csvDir);
         var csvPath = Path.Combine(csvDir, "records.csv");
         File.WriteAllText(csvPath, """
-            is_sender,sender_name,talker,time,type,content
-            0,张三,wxid_zhang,2023-11-15 10:00:00,1,hello csv
+            id,MsgSvrID,type_name,is_sender,talker,msg,src,CreateTime
+            1,9001,text,0,张三,hello csv,,2023-11-15T10:00:00.000Z
             """);
 
         // 6. md_export/notes.md (Markdown 聊天记录)

@@ -647,22 +647,22 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
     }
 }
 
-/// <summary>WeClone CSV 格式适配器。</summary>
-public sealed class WeCloneCsvExportFormat : IChatExportFormat
+/// <summary>Current WeFlow CSV export adapter.</summary>
+public sealed class WeFlowCsvExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
     public bool Matches(string filePath)
     {
-        return WeCloneCsvParser.Matches(filePath);
+        return WeFlowCsvParser.Matches(filePath);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var conversation = WeCloneCsvParser.ReadConversation(filePath);
+        var conversation = WeFlowCsvParser.ReadConversation(filePath);
         return new ExportFile(
             conversation,
-            token => WeCloneCsvParser.IterateMessages(filePath, conversation, token));
+            token => WeFlowCsvParser.IterateMessages(filePath, conversation, token));
     }
 }
 
@@ -737,7 +737,7 @@ public static class ExportFormats
         new CipherTalkDetailedJsonFormat(),
         new ChatLabJsonExportFormat(),
         new ChatLabJsonlExportFormat(),
-        new WeCloneCsvExportFormat(),
+        new WeFlowCsvExportFormat(),
         new ChatMarkdownExportFormat(),
         new ChatTextExportFormat(),
         new ChatSqlExportFormat(),

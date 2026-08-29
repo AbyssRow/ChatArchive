@@ -1103,44 +1103,13 @@ public class ParserTests : IDisposable
         Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(pathValidJsonl) && d.Platform == "wechat");
     }
     [Fact]
-    public void WeCloneCsvExportFormat_ParsesCsvExports_Correctly()
+    public void Rfc4180CsvReader_ParsesQuotedCommasEscapedQuotesAndNewlines()
     {
-        var csv = """
-            is_sender,sender_name,talker,time,type,content
-            0,好友小王,wxid_wang,2023-11-15 10:00:00,1,你好呀
-            1,我,wxid_self,2023-11-15 10:00:05,1,在的
-            """;
-        var path = Path.Combine(_dir, "weclone.csv");
-        File.WriteAllText(path, csv);
+        using var reader = new StringReader("id,msg\r\n1,\"first, \"\"quoted\"\"\r\nsecond\"\r\n");
+        var records = Rfc4180CsvReader.ReadRecords(reader).ToList();
 
-        var format = new WeCloneCsvExportFormat();
-        Assert.True(format.Matches(path));
-
-        using var exportFile = format.Open(path);
-        Assert.Equal("wechat", exportFile.Conversation.Platform);
-        Assert.Equal("wxid_wang", exportFile.Conversation.NativeId);
-        Assert.Equal("好友小王", exportFile.Conversation.Title);
-
-        var messages = exportFile.EnumerateMessages().ToList();
-        Assert.Equal(2, messages.Count);
-
-        var msg0 = messages[0];
-        Assert.Equal("incoming", msg0.Direction);
-        Assert.Equal("好友小王", msg0.SenderName);
-        Assert.Equal("你好呀", msg0.Content);
-        Assert.Equal("text", msg0.MessageType);
-        Assert.False(string.IsNullOrEmpty(msg0.PayloadHash));
-        Assert.False(string.IsNullOrEmpty(msg0.SemanticHash));
-        var expectedTs0 = DateTimeOffset.Parse("2023-11-15 10:00:00").ToUnixTimeMilliseconds();
-        Assert.Equal(expectedTs0, msg0.TimestampMs);
-
-        var msg1 = messages[1];
-        Assert.Equal("outgoing", msg1.Direction);
-        Assert.Equal("我", msg1.SenderName);
-        Assert.Equal("在的", msg1.Content);
-        Assert.Equal("text", msg1.MessageType);
-        var expectedTs1 = DateTimeOffset.Parse("2023-11-15 10:00:05").ToUnixTimeMilliseconds();
-        Assert.Equal(expectedTs1, msg1.TimestampMs);
+        Assert.Equal(new[] { "id", "msg" }, records[0]);
+        Assert.Equal(new[] { "1", "first, \"quoted\"\r\nsecond" }, records[1]);
     }
 
     [Fact]
@@ -1233,39 +1202,9 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
-    public void DelimitedAndSqlParsers_EdgeCases_AndDiscovery()
+    public void SqlScriptParser_EdgeCases_AndDiscovery()
     {
-        // 1. WeClone CSV with quoted newlines, commas, and group chat
-        var complexCsv = """
-            is_sender,sender_name,talker,time,type,content
-            0,"群友""小李"", 华东",group123@chatroom,2023-11-15 12:30:00,1,"第一行,
-            第二行 ""带引号""
-            第三行"
-            1,我,group123@chatroom,2023-11-15 12:31:00,10000,你撤回了一条消息
-            """;
-        var csvPath = Path.Combine(_dir, "complex.csv");
-        File.WriteAllText(csvPath, complexCsv);
-
-        var csvFormat = new WeCloneCsvExportFormat();
-        Assert.True(csvFormat.Matches(csvPath));
-        using (var exportFile = csvFormat.Open(csvPath))
-        {
-            Assert.Equal("group", exportFile.Conversation.Kind);
-            Assert.Equal("group123@chatroom", exportFile.Conversation.NativeId);
-            Assert.Equal("群友\"小李\", 华东", exportFile.Conversation.Title);
-
-            var msgs = exportFile.EnumerateMessages().ToList();
-            Assert.Equal(2, msgs.Count);
-
-            Assert.Contains("第二行 \"带引号\"", msgs[0].Content);
-            Assert.Equal("incoming", msgs[0].Direction);
-
-            Assert.True(msgs[1].IsSystem);
-            Assert.True(msgs[1].IsRecalled);
-            Assert.Equal("system", msgs[1].Direction);
-        }
-
-        // 2. Multi-row SQL script with comments and escapes
+        // Multi-row SQL script with comments and escapes
         var multiSql = """
             -- SQL Chat Export Dump
             /* Multiple line comments */
@@ -1294,9 +1233,8 @@ public class ParserTests : IDisposable
             Assert.Equal("Hi! Welcome back.", msgs[1].Content);
         }
 
-        // 3. Discovery finds CSV, MD, TXT, and SQL exports
+        // Discovery finds the SQL export.
         var discovered = ImportDiscovery.Discover(new[] { _dir });
-        Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(csvPath) && d.Platform == "wechat");
         Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(sqlPath) && d.Platform == "sql");
     }
 
