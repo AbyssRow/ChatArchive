@@ -28,7 +28,7 @@ public sealed class WeFlowExcelFormatTests : IDisposable
         var message = Assert.Single(export.EnumerateMessages());
         Assert.Equal(1700000123000, message.TimestampMs);
         Assert.Equal("image", message.MessageType);
-        Assert.Equal("正文", message.Content);
+        Assert.Equal(layout == "group" ? "../images/one.jpg" : "正文", message.Content);
 
         if (layout == "group")
         {
@@ -36,11 +36,25 @@ public sealed class WeFlowExcelFormatTests : IDisposable
             Assert.Equal("../images/one.jpg", attachment.DeclaredPath);
             Assert.Equal(Path.Combine(_directory, "images", "one.jpg"), attachment.SourcePath);
             Assert.Equal("wxid_sender", message.SenderNativeId);
+            Assert.Equal("incoming", message.Direction);
         }
         else if (layout == "compact")
         {
             Assert.StartsWith("synthetic:", message.SenderNativeId, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void WeFlowExcel_GroupMemberNamed我_RemainsIncoming()
+    {
+        var path = CreateWeFlowWorkbook("group", senderIdentity: "我");
+        using var export = new WeFlowExcelExportFormat().Open(path);
+
+        var message = Assert.Single(export.EnumerateMessages());
+
+        Assert.Equal("我", message.RawPayload["发送者身份"]?.GetValue<string>());
+        Assert.Equal("wxid_sender", message.SenderNativeId);
+        Assert.Equal("incoming", message.Direction);
     }
 
     [Fact]
@@ -67,7 +81,8 @@ public sealed class WeFlowExcelFormatTests : IDisposable
     private string CreateWeFlowWorkbook(
         string layout,
         string generator = "WeFlow",
-        bool streamingMetadata = false)
+        bool streamingMetadata = false,
+        string senderIdentity = "对方")
     {
         var exportDirectory = Path.Combine(_directory, layout);
         Directory.CreateDirectory(exportDirectory);
@@ -84,9 +99,9 @@ public sealed class WeFlowExcelFormatTests : IDisposable
         var messageRow = headerRow + 1;
         var messageValues = layout switch
         {
-            "compact" => new[] { "1", "2023-11-15 06:15:23", "对方", "图片消息", "正文" },
-            "private" => new[] { "1", "2023-11-15 06:15:23", "昵称", "wxid_sender", "发送者备注", "对方", "图片消息", "正文" },
-            "group" => new[] { "1", "2023-11-15 06:15:23", "昵称", "wxid_sender", "发送者备注", "群昵称", "对方", "图片消息", "正文" },
+            "compact" => new[] { "1", "2023-11-15 06:15:23", senderIdentity, "图片消息", "正文" },
+            "private" => new[] { "1", "2023-11-15 06:15:23", "昵称", "wxid_sender", "发送者备注", senderIdentity, "图片消息", "正文" },
+            "group" => new[] { "1", "2023-11-15 06:15:23", "昵称", "wxid_sender", "发送者备注", "群昵称", senderIdentity, "图片消息", "../images/one.jpg" },
             _ => throw new ArgumentOutOfRangeException(nameof(layout)),
         };
 

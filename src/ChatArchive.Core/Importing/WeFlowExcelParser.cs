@@ -124,7 +124,7 @@ internal static class WeFlowExcelParser
                 TimestampMs: timestampMs,
                 SenderNativeId: senderNativeId,
                 SenderName: senderName,
-                Direction: isSystem ? "system" : senderIdentity == "我" ? "outgoing" : "incoming",
+                Direction: isSystem ? "system" : conversation.Kind == "private" && senderIdentity == "我" ? "outgoing" : "incoming",
                 MessageType: messageType,
                 Content: values["内容"],
                 SourceLocator: $"聊天记录:{row.RowIndex}",
