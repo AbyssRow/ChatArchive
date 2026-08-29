@@ -736,12 +736,18 @@ public class ImportServiceTests : IDisposable
                 """;
             File.WriteAllText(Path.Combine(exportsDir, "07_weflow.csv"), weflowCsv);
 
-            // 8. SQL 导出
+            // 8. Current WeFlow SQL export
             var sqlExport = """
-                CREATE TABLE IF NOT EXISTS weflow_messages (local_id TEXT, talker TEXT, create_time INTEGER, is_send INTEGER, type INTEGER, content TEXT);
-                INSERT INTO weflow_messages (local_id, talker, create_time, is_send, type, content) VALUES
-                  ('sql_1', 'wxid_sql_user', 1700000600, 0, 1, '来自SQL导出消息1'),
-                  ('sql_2', 'wxid_sql_user', 1700000610, 1, 1, '来自SQL导出消息2');
+                CREATE TABLE IF NOT EXISTS weflow_messages (
+                  session_id TEXT NOT NULL, local_id TEXT, message_id TEXT,
+                  create_time BIGINT NOT NULL, sender TEXT, is_send BOOLEAN NOT NULL,
+                  local_type INTEGER, media_type TEXT, content TEXT, media_path TEXT
+                );
+                INSERT INTO weflow_messages
+                  (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path)
+                VALUES
+                  ('wxid_sql_user', 'sql_1', 'sql_msg_1', 1700000600, 'wxid_sql_user', FALSE, 1, NULL, '来自SQL导出消息1', NULL),
+                  ('wxid_sql_user', 'sql_2', 'sql_msg_2', 1700000610, 'wxid_self', TRUE, 1, NULL, '来自SQL导出消息2', NULL);
                 """;
             File.WriteAllText(Path.Combine(exportsDir, "10_chat_dump.sql"), sqlExport);
 

@@ -1113,67 +1113,139 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
-    public void ChatSqlExportFormat_ParsesSqlDumps_Correctly()
+    public void WeFlowSql_MapsCurrentTableAndMedia()
     {
-        var sql = """
-            CREATE TABLE messages (id TEXT, talker TEXT, create_time INTEGER, is_send INTEGER, type INTEGER, content TEXT);
-            INSERT INTO messages (id, talker, create_time, is_send, type, content) VALUES ('m_1', 'wxid_bob', 1700000000, 0, 1, '测试SQL内容');
-            """;
-        var sqlPath = Path.Combine(_dir, "dump.sql");
-        File.WriteAllText(sqlPath, sql);
+        Directory.CreateDirectory(Path.Combine(_dir, "images"));
+        var image = Path.Combine(_dir, "images", "one.jpg");
+        File.WriteAllText(image, "image");
+        var path = Path.Combine(_dir, "weflow.sql");
+        File.WriteAllText(path, """
+            BEGIN;
+            CREATE TABLE IF NOT EXISTS weflow_messages (
+              session_id TEXT NOT NULL, local_id TEXT, message_id TEXT,
+              create_time BIGINT NOT NULL, sender TEXT, is_send BOOLEAN NOT NULL,
+              local_type INTEGER, media_type TEXT, content TEXT, media_path TEXT
+            );
+            INSERT INTO weflow_messages
+              (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path)
+            VALUES ('group@chatroom', '1', '9001', 1700000123, 'wxid_alice', FALSE, 3, 'image', '图片', 'images/one.jpg');
+            COMMIT;
+            """);
 
-        var format = new ChatSqlExportFormat();
-        Assert.True(format.Matches(sqlPath));
-
-        using var exportFile = format.Open(sqlPath);
-        Assert.Equal("sql", exportFile.Conversation.Platform);
-        Assert.Equal("wxid_bob", exportFile.Conversation.NativeId);
-
-        var messages = exportFile.EnumerateMessages().ToList();
-        var msg = Assert.Single(messages);
-        Assert.Equal("m_1", msg.NativeId);
-        Assert.Equal("wxid_bob", msg.SenderNativeId);
-        Assert.Equal(1700000000000L, msg.TimestampMs);
-        Assert.Equal("incoming", msg.Direction);
-        Assert.Equal("text", msg.MessageType);
-        Assert.Equal("测试SQL内容", msg.Content);
+        var format = new WeFlowSqlExportFormat();
+        Assert.True(format.Matches(path));
+        using var export = format.Open(path);
+        Assert.Equal("wechat", export.Conversation.Platform);
+        Assert.Equal("wechat-default", export.Conversation.AccountId);
+        Assert.Equal("group@chatroom", export.Conversation.NativeId);
+        Assert.Equal("group", export.Conversation.Kind);
+        Assert.Equal("group@chatroom", export.Conversation.Title);
+        var message = Assert.Single(export.EnumerateMessages());
+        Assert.Equal("9001", message.NativeId);
+        Assert.Equal("1", message.LocalId);
+        Assert.Equal(1700000123000L, message.TimestampMs);
+        Assert.Equal("wxid_alice", message.SenderNativeId);
+        Assert.Equal("incoming", message.Direction);
+        Assert.Equal("image", message.MessageType);
+        Assert.Equal(image, Assert.Single(message.Attachments).SourcePath);
     }
 
     [Fact]
-    public void SqlScriptParser_EdgeCases_AndDiscovery()
+    public void CipherTalkSql_UsesSessionSenderTypeAndReplyColumns()
     {
-        // Multi-row SQL script with comments and escapes
-        var multiSql = """
-            -- SQL Chat Export Dump
-            /* Multiple line comments */
-            CREATE TABLE IF NOT EXISTS `chat_messages` (`msg_id` TEXT, `talker` TEXT, `createtime` INTEGER, `issend` INTEGER, `msg_type` INTEGER, `msg_content` TEXT);
-            INSERT INTO `chat_messages` (`msg_id`, `talker`, `createtime`, `issend`, `msg_type`, `msg_content`) VALUES
-              ('s_1', 'wxid_alice', 1700000100, 1, 1, 'Hello Alice! I\'m here.'),
-              ('s_2', 'wxid_alice', 1700000110, 0, 1, 'Hi! Welcome back.');
-            """;
-        var sqlPath = Path.Combine(_dir, "multi.sql");
-        File.WriteAllText(sqlPath, multiSql);
+        var path = Path.Combine(_dir, "ciphertalk.sql");
+        File.WriteAllText(path, """
+            -- 密语 CipherTalk - 聊天记录导出
+            CREATE TABLE IF NOT EXISTS sessions (
+              wxid TEXT PRIMARY KEY, display_name TEXT NOT NULL, session_type TEXT NOT NULL,
+              owner_id TEXT, message_count INTEGER, first_message_time BIGINT,
+              last_message_time BIGINT, exported_at BIGINT
+            );
+            CREATE TABLE IF NOT EXISTS messages (
+              id SERIAL PRIMARY KEY, session_wxid TEXT NOT NULL, local_id INTEGER,
+              create_time BIGINT NOT NULL, formatted_time TEXT, msg_type TEXT, content TEXT,
+              is_send SMALLINT, sender_username TEXT, sender_display_name TEXT,
+              group_nickname TEXT, reply_to_message_id TEXT
+            );
+            INSERT INTO sessions
+              (wxid, display_name, session_type, owner_id, message_count, first_message_time, last_message_time, exported_at)
+            VALUES ('group@chatroom', '项目群', 'group', 'wxid_self', 1, 1700000123, 1700000123, 1700000200);
+            INSERT INTO messages
+              (session_wxid, local_id, create_time, formatted_time, msg_type, content, is_send, sender_username, sender_display_name, group_nickname, reply_to_message_id)
+            VALUES ('group@chatroom', 7, 1700000123, '2023-11-15 06:15:23', '图片消息', '图片', 0, 'wxid_alice', 'Alice', '群名片', '8999');
+            """);
 
-        var sqlFormat = new ChatSqlExportFormat();
-        Assert.True(sqlFormat.Matches(sqlPath));
-        using (var exportFile = sqlFormat.Open(sqlPath))
-        {
-            Assert.Equal("wxid_alice", exportFile.Conversation.NativeId);
-            var msgs = exportFile.EnumerateMessages().ToList();
-            Assert.Equal(2, msgs.Count);
+        var format = new CipherTalkSqlExportFormat();
+        Assert.True(format.Matches(path));
+        using var export = format.Open(path);
+        Assert.Equal("wechat", export.Conversation.Platform);
+        Assert.Equal("wxid_self", export.Conversation.AccountId);
+        Assert.Equal("group@chatroom", export.Conversation.NativeId);
+        Assert.Equal("项目群", export.Conversation.Title);
+        Assert.Equal("group", export.Conversation.Kind);
+        var message = Assert.Single(export.EnumerateMessages());
+        Assert.Equal("7", message.LocalId);
+        Assert.Equal("wxid_alice", message.SenderNativeId);
+        Assert.Equal("Alice", message.SenderName);
+        Assert.Equal("image", message.MessageType);
+        Assert.Equal("8999", message.ReplyToNativeId);
+    }
 
-            Assert.Equal("s_1", msgs[0].NativeId);
-            Assert.Equal("outgoing", msgs[0].Direction);
-            Assert.Equal("Hello Alice! I'm here.", msgs[0].Content);
+    [Fact]
+    public void WeFlowSql_PreservesWriterContentWhitespaceAndQuotes()
+    {
+        var path = Path.Combine(_dir, "weflow_content.sql");
+        File.WriteAllText(path, """
+            INSERT INTO weflow_messages
+              (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path)
+            VALUES ('wxid_friend', '1', '2', 0, 'wxid_friend', FALSE, 1, NULL, '  It''s; (x,y)  ', NULL);
+            """);
 
-            Assert.Equal("s_2", msgs[1].NativeId);
-            Assert.Equal("incoming", msgs[1].Direction);
-            Assert.Equal("Hi! Welcome back.", msgs[1].Content);
-        }
+        using var export = new WeFlowSqlExportFormat().Open(path);
+        var message = Assert.Single(export.EnumerateMessages());
 
-        // Discovery finds the SQL export.
+        Assert.Equal("  It's; (x,y)  ", message.Content);
+        Assert.Equal(0, message.TimestampMs);
+    }
+
+    [Fact]
+    public void CipherTalkSql_RejectsMessagesForADifferentSessionWithoutEmptyImport()
+    {
+        var path = Path.Combine(_dir, "ciphertalk_mismatch.sql");
+        File.WriteAllText(path, """
+            INSERT INTO sessions
+              (wxid, display_name, session_type, owner_id, message_count, first_message_time, last_message_time, exported_at)
+            VALUES ('session-a', 'A', 'private', NULL, 1, 0, 0, 0);
+            INSERT INTO messages
+              (session_wxid, local_id, create_time, formatted_time, msg_type, content, is_send, sender_username, sender_display_name, group_nickname, reply_to_message_id)
+            VALUES ('session-b', 7, 0, '1970-01-01 00:00:00', '文本消息', 'x', 0, NULL, 'Alice', NULL, NULL);
+            """);
+
+        var format = new CipherTalkSqlExportFormat();
+        Assert.False(format.Matches(path));
+        using var export = format.Open(path);
+        var error = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
+
+        Assert.Contains(path, error.Message);
+        Assert.Contains("messages", error.Message);
+        Assert.Contains("session-a", error.Message);
+    }
+
+    [Fact]
+    public void SqlFormats_RejectAnUnrelatedMessagesTableAndNearMissProfiles()
+    {
+        var generic = Path.Combine(_dir, "generic.sql");
+        File.WriteAllText(generic, "CREATE TABLE messages(id INT, content TEXT); INSERT INTO messages (id, content) VALUES (1, 'x');");
+        var nearWeFlow = Path.Combine(_dir, "near_weflow.sql");
+        File.WriteAllText(nearWeFlow, "INSERT INTO weflow_messages (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content) VALUES ('x', '1', '2', 0, 's', TRUE, 1, NULL, 'x');");
+
+        Assert.False(new WeFlowSqlExportFormat().Matches(generic));
+        Assert.False(new CipherTalkSqlExportFormat().Matches(generic));
+        Assert.False(new WeFlowSqlExportFormat().Matches(nearWeFlow));
+        Assert.False(new CipherTalkSqlExportFormat().Matches(nearWeFlow));
+
         var discovered = ImportDiscovery.Discover(new[] { _dir });
-        Assert.Contains(discovered, d => d.FilePath == Path.GetFullPath(sqlPath) && d.Platform == "sql");
+        Assert.DoesNotContain(discovered, d => d.FilePath == Path.GetFullPath(generic));
     }
 
     [Theory]
@@ -1209,30 +1281,22 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
-    public void SqlScriptParser_Handles_NullLiteral_And_Multiline_Comments()
+    public void WeFlowSql_InvalidRequiredTimestampReportsPathTableAndRow()
     {
-        var sqlContent = """
-            -- Top comment
-            INSERT INTO `chat_messages` (`msg_id`, `talker`, `createtime`, `issend`, `msg_type`, `msg_content`) VALUES
-              ('s_1', 'user1', 1700000100, 1, 1, 'NULL'),
-              ('s_2', 'user1', 1700000110, 0, 1, NULL),
-              ('s_3', 'user1', 1700000120, 1, 1, 'Line 1
-            -- this is not a comment
-            /* neither is this */
-            Line 2');
-            """;
-        var sqlPath = Path.Combine(_dir, "null_and_comments.sql");
-        File.WriteAllText(sqlPath, sqlContent);
+        var path = Path.Combine(_dir, "invalid_weflow.sql");
+        File.WriteAllText(path, """
+            INSERT INTO weflow_messages
+              (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path)
+            VALUES ('wxid_friend', '1', '2', 'not-a-time', 'wxid_friend', FALSE, 1, NULL, 'x', NULL);
+            """);
 
-        var format = new ChatSqlExportFormat();
-        using var exportFile = format.Open(sqlPath);
-        var msgs = exportFile.EnumerateMessages().ToList();
-
-        Assert.Equal(3, msgs.Count);
-        Assert.Equal("NULL", msgs[0].Content);
-        Assert.Equal(string.Empty, msgs[1].Content);
-        Assert.Contains("-- this is not a comment", msgs[2].Content);
-        Assert.Contains("/* neither is this */", msgs[2].Content);
+        var format = new WeFlowSqlExportFormat();
+        Assert.True(format.Matches(path));
+        using var export = format.Open(path);
+        var error = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
+        Assert.Contains(path, error.Message);
+        Assert.Contains("weflow_messages", error.Message);
+        Assert.Contains("1", error.Message);
     }
 
     [Fact]
@@ -1254,26 +1318,22 @@ public class ParserTests : IDisposable
     [Fact]
     public void ExportFormats_Register_Preserves_Default_Formats()
     {
-        var dummyFormat = new ChatSqlExportFormat();
+        var dummyFormat = new NeverMatchesExportFormat();
         ExportFormats.Register(dummyFormat);
-        Assert.True(ExportFormats.Default.Count >= 11);
+        Assert.True(ExportFormats.Default.Count >= 12);
     }
 
     [Fact]
-    public void SqlScriptParser_HandlesMultiLineCommentsAndDialects()
+    public void SqlFormats_AreRegisteredInDisjointOrder()
     {
-        var sql = """
-            /*
-             * MySQL Dump Header
-             * Host: localhost; Database: test;
-             */
-            INSERT IGNORE INTO `db`.`messages` (`id`, `content`) VALUES (1, 'hello; world');
-            """;
-        using var reader = new StringReader(sql);
-        var rows = SqlScriptParser.EnumerateRows(reader).ToList();
-        Assert.Single(rows);
-        Assert.Equal("1", rows[0]["id"]);
-        Assert.Equal("hello; world", rows[0]["content"]);
+        var formats = ExportFormats.Default.ToList();
+        var weFlow = formats.FindIndex(format => format is WeFlowSqlExportFormat);
+        var cipherTalk = formats.FindIndex(format => format is CipherTalkSqlExportFormat);
+
+        Assert.True(weFlow >= 0);
+        Assert.Equal(weFlow + 1, cipherTalk);
+        Assert.Equal("wechat", formats[weFlow].Platform);
+        Assert.Equal("wechat", formats[cipherTalk].Platform);
     }
 
     [Fact]
@@ -1451,5 +1511,15 @@ public class ParserTests : IDisposable
         catch (IOException)
         {
         }
+    }
+
+    private sealed class NeverMatchesExportFormat : IChatExportFormat
+    {
+        public string Platform => "test";
+
+        public bool Matches(string filePath) => false;
+
+        public ExportFile Open(string filePath, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 }

@@ -723,25 +723,6 @@ public sealed class WeFlowTextExportFormat : IChatExportFormat
     }
 }
 
-/// <summary>SQL 脚本转储格式适配器。</summary>
-public sealed class ChatSqlExportFormat : IChatExportFormat
-{
-    public string Platform => "sql";
-
-    public bool Matches(string filePath)
-    {
-        return SqlScriptParser.Matches(filePath);
-    }
-
-    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
-    {
-        var conversation = SqlScriptParser.ReadConversation(filePath);
-        return new ExportFile(
-            conversation,
-            token => SqlScriptParser.IterateMessages(filePath, conversation, token));
-    }
-}
-
 /// <summary>注册表：新增导出格式时在此追加实例。</summary>
 public static class ExportFormats
 {
@@ -760,7 +741,8 @@ public static class ExportFormats
         new WeFlowMarkdownExportFormat(),
         new QqTextExportFormat(),
         new WeFlowTextExportFormat(),
-        new ChatSqlExportFormat(),
+        new WeFlowSqlExportFormat(),
+        new CipherTalkSqlExportFormat(),
     };
 
     public static IReadOnlyList<IChatExportFormat> Default => _formats;

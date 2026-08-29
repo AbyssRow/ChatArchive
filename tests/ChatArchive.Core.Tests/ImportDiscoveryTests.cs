@@ -126,13 +126,19 @@ public class ImportDiscoveryTests : IDisposable
             总计导出 1 条消息
             """);
 
-        // 7. sql_dump/backup.sql (SQL 导出的 messages)
+        // 7. sql_dump/backup.sql (current WeFlow SQL export)
         var sqlDir = Path.Combine(_tempDir, "sql_dump");
         Directory.CreateDirectory(sqlDir);
         var sqlPath = Path.Combine(sqlDir, "backup.sql");
         File.WriteAllText(sqlPath, """
-            CREATE TABLE messages (id TEXT, talker TEXT, create_time INTEGER, is_send INTEGER, type INTEGER, content TEXT);
-            INSERT INTO messages (id, talker, create_time, is_send, type, content) VALUES ('m_1', 'wxid_sql', 1700000000, 0, 1, 'hello sql');
+            CREATE TABLE IF NOT EXISTS weflow_messages (
+              session_id TEXT NOT NULL, local_id TEXT, message_id TEXT,
+              create_time BIGINT NOT NULL, sender TEXT, is_send BOOLEAN NOT NULL,
+              local_type INTEGER, media_type TEXT, content TEXT, media_path TEXT
+            );
+            INSERT INTO weflow_messages
+              (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path)
+            VALUES ('wxid_sql', '1', 'm_1', 1700000000, 'wxid_sql', FALSE, 1, NULL, 'hello sql', NULL);
             """);
 
         // 10. 媒体子目录与无关子目录，放置格式文件/垃圾文件，测试是否全部被跳过
@@ -179,7 +185,7 @@ public class ImportDiscoveryTests : IDisposable
         Assert.Equal("qq", discoveredDict[Path.GetFullPath(qqManifestPath)]);
         Assert.Equal("wechat", discoveredDict[Path.GetFullPath(csvPath)]);
         Assert.Equal("qq", discoveredDict[Path.GetFullPath(qqTextPath)]);
-        Assert.Equal("sql", discoveredDict[Path.GetFullPath(sqlPath)]);
+        Assert.Equal("wechat", discoveredDict[Path.GetFullPath(sqlPath)]);
 
         // 确保 chunk_0.jsonl 未被当作独立导出识别
         Assert.DoesNotContain(Path.GetFullPath(qqChunk0Path), discoveredDict.Keys);
