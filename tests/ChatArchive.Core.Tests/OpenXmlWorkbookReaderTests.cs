@@ -9,6 +9,7 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
 {
     private const string SpreadsheetNamespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
     private const string PackageRelationshipNamespace = "http://schemas.openxmlformats.org/package/2006/relationships";
+    private const string HyperlinkRelationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
     private const string WorkbookContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
     private const string WorksheetContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
     private const string SharedStringsContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml";
@@ -77,11 +78,72 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
     }
 
     [Fact]
-    public void OpenXmlReader_RejectsExternalRelationship()
+    public void OpenXmlReader_ReadsExcelJsExternalRelativeMediaHyperlinkWithoutPackageEntry()
     {
-        var path = NewPath("external.xlsx");
+        var path = NewPath("exceljs-relative-media.xlsx");
         XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录",
-        [[new XlsxTestCell("A1", "click", Hyperlink: "https://example.invalid", ExternalHyperlink: true)]]));
+        [[new XlsxTestCell("A1", "[image]", Hyperlink: "../images/one.jpg", ExternalHyperlink: true)]]));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+
+        Assert.Equal("[image]", row.Cells[1].Value);
+        Assert.Equal("../images/one.jpg", row.Cells[1].Hyperlink);
+        using var archive = ZipFile.OpenRead(path);
+        Assert.DoesNotContain(archive.Entries, entry => entry.FullName == "images/one.jpg");
+    }
+
+    [Theory]
+    [InlineData("https://example.invalid/card")]
+    [InlineData("/images/one.jpg")]
+    [InlineData("C:/images/one.jpg")]
+    [InlineData("\\\\server\\share\\one.jpg")]
+    [InlineData("images\\one.jpg")]
+    [InlineData("../images/one.jpg?download=1")]
+    [InlineData("../images/one.jpg#preview")]
+    [InlineData("../images/\none.jpg")]
+    public void OpenXmlReader_IgnoresUnsafeExternalHyperlinkButReadsCellText(string target)
+    {
+        var path = NewPath("unsafe-external-link.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录",
+        [[new XlsxTestCell("A1", "link card", Hyperlink: target, ExternalHyperlink: true)]]));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+
+        Assert.Equal("link card", row.Cells[1].Value);
+        Assert.Null(row.Cells[1].Hyperlink);
+    }
+
+    [Fact]
+    public void OpenXmlReader_IgnoresUnreferencedExternalHyperlinkWithoutPackageTarget()
+    {
+        var path = NewPath("unreferenced-external-hyperlink.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        AddTextEntry(path, "xl/worksheets/_rels/sheet1.xml.rels", $$"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Relationships xmlns="{{PackageRelationshipNamespace}}">
+              <Relationship Id="rIdUnused" Type="{{HyperlinkRelationship}}" Target="../images/missing.jpg" TargetMode="External" />
+            </Relationships>
+            """);
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+
+        Assert.Equal("one", row.Cells[1].Value);
+        Assert.Null(row.Cells[1].Hyperlink);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsExternalRelationshipWhoseTypeOnlyCaseMatchesHyperlink()
+    {
+        var path = NewPath("non-exact-external-hyperlink-type.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录",
+        [[new XlsxTestCell("A1", "one", Hyperlink: "../images/one.jpg", ExternalHyperlink: true)]]));
+        RewriteEntry(
+            path,
+            "xl/worksheets/_rels/sheet1.xml.rels",
+            xml => ReplaceRequired(xml, HyperlinkRelationship, $"{HyperlinkRelationship[..^9]}Hyperlink"));
 
         using var workbook = OpenXmlWorkbookReader.Open(path);
         var error = Assert.Throws<ImportFormatException>(

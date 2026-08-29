@@ -523,7 +523,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             foreach (var relationship in relationships.Values)
             {
                 token.ThrowIfCancellationRequested();
-                if (relationship.Type == HyperlinkRelationship)
+                if (relationship.Type == HyperlinkRelationship && !relationship.IsExternal)
                 {
                     _ = ResolveRelationship(
                         relationship,
@@ -559,9 +559,22 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 throw CellError(_filePath, sheet.EntryPath, reference, $"关系 {relationshipId} 不是超链接关系");
             }
 
-            result.Add(
-                reference,
-                ResolveRelationship(relationship, sheet.EntryPath, _entries, _filePath, relationshipEntry));
+            if (relationship.IsExternal)
+            {
+                if (IsSafeExternalHyperlinkTarget(relationship.Target))
+                {
+                    result.Add(reference, relationship.Target);
+                }
+
+                continue;
+            }
+
+            result.Add(reference, ResolveRelationship(
+                relationship,
+                sheet.EntryPath,
+                _entries,
+                _filePath,
+                relationshipEntry));
         }
 
         return result;
@@ -870,7 +883,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 throw Error(filePath, relationshipEntry, $"关系 {id} 的 TargetMode 无效：{targetMode}");
             }
 
-            if (isExternal)
+            if (isExternal && type != HyperlinkRelationship)
             {
                 throw Error(filePath, relationshipEntry, $"关系 {id} 是外部关系");
             }
@@ -880,10 +893,13 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 throw Error(filePath, relationshipEntry, $"关系 {id} 声明了禁止的宏或二进制类型：{type}");
             }
 
-            var resolvedTarget = ResolvePackageTarget(ownerEntry, target, filePath, relationshipEntry);
-            if (IsForbiddenPayloadPath(resolvedTarget))
+            if (!isExternal)
             {
-                throw Error(filePath, relationshipEntry, $"关系 {id} 指向禁止的宏或二进制负载：{resolvedTarget}");
+                var resolvedTarget = ResolvePackageTarget(ownerEntry, target, filePath, relationshipEntry);
+                if (IsForbiddenPayloadPath(resolvedTarget))
+                {
+                    throw Error(filePath, relationshipEntry, $"关系 {id} 指向禁止的宏或二进制负载：{resolvedTarget}");
+                }
             }
 
             if (!relationships.TryAdd(id, new PackageRelationship(id, type, target, isExternal)))
@@ -1044,6 +1060,32 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             || fileName.Equals("vbaProjectSignature.bin", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("xl/activeX/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("xl/embeddings/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSafeExternalHyperlinkTarget(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target)
+            || target.Length != target.Trim().Length
+            || target[0] == '/'
+            || target.Contains('\\')
+            || target.Contains('?')
+            || target.Contains('#')
+            || Path.IsPathRooted(target)
+            || IsDrivePath(target)
+            || Uri.TryCreate(target, UriKind.Absolute, out _))
+        {
+            return false;
+        }
+
+        foreach (var character in target)
+        {
+            if (char.IsControl(character))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static PackageRelationship? SingleRelationshipOfType(
