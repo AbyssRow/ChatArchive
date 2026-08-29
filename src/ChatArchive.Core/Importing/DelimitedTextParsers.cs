@@ -144,8 +144,13 @@ public static class WeFlowCsvParser
             rowNumber++;
             if (row.Count == 0 || (row.Count == 1 && string.IsNullOrWhiteSpace(row[0]))) continue;
 
+            if (row.Count != CurrentHeaders.Length)
+            {
+                throw new ImportFormatException(filePath, $"第 {rowNumber} 行 CSV 列数必须为 {CurrentHeaders.Length}，实际为 {row.Count}");
+            }
+
             var values = new string[CurrentHeaders.Length];
-            for (var i = 0; i < values.Length && i < row.Count; i++) values[i] = row[i];
+            for (var i = 0; i < values.Length; i++) values[i] = row[i];
 
             var rawPayload = new JsonObject();
             for (var i = 0; i < CurrentHeaders.Length; i++) rawPayload[CurrentHeaders[i]] = values[i];
@@ -162,8 +167,15 @@ public static class WeFlowCsvParser
                 };
 
             var talker = values[4];
+            var timestampMs = ImportText.ParseFlexibleTimestamp(values[7]);
+            if (string.IsNullOrWhiteSpace(values[7]) || timestampMs == 0)
+            {
+                throw new ImportFormatException(filePath, $"第 {rowNumber} 行 CreateTime 无效");
+            }
+
             yield return FlatMessageFactory.Create(new FlatMessageData(
-                EmptyToNull(values[1]), EmptyToNull(values[0]), ImportText.ParseFlexibleTimestamp(values[7]), talker, talker,
+                EmptyToNull(values[1]), EmptyToNull(values[0]), timestampMs,
+                FlatMessageFactory.SyntheticSenderNativeId(conversation.NativeId, talker), talker,
                 values[3].Trim() == "1" ? "outgoing" : "incoming", messageType, values[5], $"row:{rowNumber}", rawPayload,
                 attachments, MediaType: messageType == "text" ? null : messageType));
         }
@@ -171,7 +183,7 @@ public static class WeFlowCsvParser
 
     private static bool HeadersMatch(IReadOnlyList<string>? headers) => headers is not null
         && headers.Count == CurrentHeaders.Length
-        && string.Equals(headers[0].TrimStart('\uFEFF'), CurrentHeaders[0], StringComparison.Ordinal)
+        && string.Equals(headers[0], CurrentHeaders[0], StringComparison.Ordinal)
         && headers.Skip(1).SequenceEqual(CurrentHeaders.Skip(1), StringComparer.Ordinal);
 
     private static string MapType(string value) => value.Trim().ToLowerInvariant() switch

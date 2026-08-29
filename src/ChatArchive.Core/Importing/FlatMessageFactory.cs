@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
 
 namespace ChatArchive.Core.Importing;
@@ -22,6 +24,18 @@ internal sealed record FlatMessageData(
 
 internal static class FlatMessageFactory
 {
+    internal static string SyntheticSenderNativeId(string conversationNativeId, string senderName)
+    {
+        var normalizedName = senderName.Trim();
+        if (normalizedName.Length == 0)
+        {
+            normalizedName = "unknown";
+        }
+
+        var value = string.Concat(conversationNativeId, "\0", normalizedName);
+        return "synthetic:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    }
+
     public static ParsedMessage Create(FlatMessageData data)
     {
         var aliases = new List<string>();
