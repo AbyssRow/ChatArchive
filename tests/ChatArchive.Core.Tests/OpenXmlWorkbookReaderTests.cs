@@ -429,10 +429,15 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
     {
         var path = NewPath("forbidden-relationship-type.xlsx");
         XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        AddTextEntry(path, "xl/custom/forbidden.bin", "unused");
+        RewriteEntry(path, "[Content_Types].xml", xml => InsertBeforeRequired(
+            xml,
+            "</Types>",
+            "<Override PartName=\"/xl/custom/forbidden.bin\" ContentType=\"application/octet-stream\" />"));
         RewriteEntry(path, "xl/_rels/workbook.xml.rels", xml => InsertBeforeRequired(
             xml,
             "</Relationships>",
-            "<Relationship Id=\"rIdForbidden\" Type=\"http://schemas.microsoft.com/office/2006/relationships/vbaProject\" Target=\"worksheets/sheet1.xml\" />"));
+            "<Relationship Id=\"rIdForbidden\" Type=\"http://schemas.microsoft.com/office/2006/relationships/vbaProject\" Target=\"custom/forbidden.bin\" />"));
 
         var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
         Assert.Contains("vbaProject", error.Message);
@@ -615,6 +620,42 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
         var path = NewPath("broken.xlsx");
         File.WriteAllText(path, "not a zip");
         Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsNonXlsxExtensionThroughFacade()
+    {
+        var path = NewPath("renamed.xlsm");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        OpenXmlWorkbookReader? opened = null;
+
+        try
+        {
+            var error = Assert.Throws<ImportFormatException>(
+                () => opened = OpenXmlWorkbookReader.Open(path));
+            Assert.Contains(".xlsx", error.Message);
+        }
+        finally
+        {
+            opened?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void OpenXmlReader_FailedSdkOpenReleasesWorkbookFile()
+    {
+        var path = NewPath("failed-sdk-open-release.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/workbook.xml", _ => "<broken>");
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+        Assert.Equal(path, error.FilePath);
+        Assert.Contains("xl/workbook.xml", error.Message);
+
+        using var exclusive = File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        Assert.True(exclusive.CanWrite);
     }
 
     [Fact]
@@ -1062,6 +1103,11 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
             filePath,
             "xl/worksheets/_rels/sheet1.xml.rels",
             relationships.ToString());
+        AddTextEntry(filePath, "unused.bin", "unused");
+        RewriteEntry(filePath, "[Content_Types].xml", xml => InsertBeforeRequired(
+            xml,
+            "</Types>",
+            "<Override PartName=\"/unused.bin\" ContentType=\"application/octet-stream\" />"));
     }
 
     private static string ColumnReference(int columnIndex)
