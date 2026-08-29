@@ -68,7 +68,7 @@ internal static class QqExcelParser
         foreach (var row in workbook.ReadRows(profile.MessageSheet, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (row.RowIndex <= 1 || IsBlank(row))
+            if (row.RowIndex <= 1 || OpenXmlRowSupport.IsBlank(row))
             {
                 continue;
             }
@@ -122,7 +122,7 @@ internal static class QqExcelParser
         foreach (var row in workbook.ReadRows(profile.MessageSheet, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (row.RowIndex <= 1 || IsBlank(row))
+            if (row.RowIndex <= 1 || OpenXmlRowSupport.IsBlank(row))
             {
                 continue;
             }
@@ -160,12 +160,12 @@ internal static class QqExcelParser
         foreach (var row in workbook.ReadRows(profile.ResourceSheet, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (row.RowIndex <= 1 || IsBlank(row))
+            if (row.RowIndex <= 1 || OpenXmlRowSupport.IsBlank(row))
             {
                 continue;
             }
 
-            var values = ReadValues(row, profile.ResourceHeaders);
+            var values = OpenXmlRowSupport.ReadValues(row, profile.ResourceHeaders);
             var key = JoinKey(values["时间"], values["发送者QQ号"], values["发送者"]);
             if (!keyCounts.TryGetValue(key, out var occurrences) || occurrences != 1)
             {
@@ -179,27 +179,38 @@ internal static class QqExcelParser
             }
 
             var url = values["URL"];
-            var localPath = IsRelativeLocalPath(url) ? url : null;
+            var location = ClassifyResourceLocation(exportRoot, url);
+            var localPath = location.LocalPath;
             var size = ParseSize(values["大小(字节)"], filePath, row.RowIndex);
             var filename = NullIfEmpty(values["文件名"])
                 ?? (localPath is null ? null : Path.GetFileName(localPath));
+            var metadata = new JsonObject
+            {
+                ["resourceType"] = values["资源类型"],
+                ["resourceNumber"] = values["序号"],
+            };
+            if (location.HttpUrl is not null)
+            {
+                metadata["url"] = location.HttpUrl;
+            }
+
             list.Add(new ParsedAttachment(
                 Ordinal: list.Count,
                 Kind: MapResourceKind(values["资源类型"]),
                 Filename: filename,
                 DeclaredPath: localPath,
-                SourcePath: localPath is null ? null : ImportText.SafeResolveMedia(exportRoot, localPath),
+                SourcePath: localPath is null
+                    ? null
+                    : ImportText.SafeResolveMedia(
+                        exportRoot,
+                        localPath,
+                        policy: MediaResolutionPolicy.Strict),
                 DeclaredSize: size,
                 MimeType: ImportText.GuessMime(localPath, filename),
                 Width: null,
                 Height: null,
                 Duration: null,
-                Metadata: new JsonObject
-                {
-                    ["resourceType"] = values["资源类型"],
-                    ["url"] = url,
-                    ["resourceNumber"] = values["序号"],
-                }));
+                Metadata: metadata));
         }
 
         return result.ToDictionary(
@@ -278,9 +289,9 @@ internal static class QqExcelParser
 
         foreach (var candidate in candidates)
         {
-            if (HasExactHeaders(rows.Current, candidate))
+            if (OpenXmlRowSupport.HasExactHeaders(rows.Current, candidate))
             {
-                return HeaderMap(candidate);
+                return OpenXmlRowSupport.HeaderMap(candidate);
             }
         }
 
@@ -292,7 +303,7 @@ internal static class QqExcelParser
         IReadOnlyDictionary<string, int> headers,
         string filePath)
     {
-        var values = ReadValues(row, headers);
+        var values = OpenXmlRowSupport.ReadValues(row, headers);
         var time = values["时间"];
         if (!ImportText.TryParseFlexibleTimestamp(time, out var timestampMs))
         {
@@ -304,7 +315,7 @@ internal static class QqExcelParser
             time,
             values["发送者"],
             values["发送者QQ号"],
-            Value(values, "群头衔"),
+            OpenXmlRowSupport.Value(values, "群头衔"),
             values["消息类型"],
             values["消息内容"],
             values["是否撤回"] == "是",
@@ -342,14 +353,34 @@ internal static class QqExcelParser
         _ => "file",
     };
 
-    private static bool IsRelativeLocalPath(string value)
+    private static ResourceLocation ClassifyResourceLocation(string exportRoot, string value)
     {
-        if (value.Length == 0 || value[0] is '/' or '\\' || Path.IsPathRooted(value))
+        if (value.Length == 0)
         {
-            return false;
+            return default;
         }
 
-        return !Uri.TryCreate(value, UriKind.Absolute, out _);
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return uri.Scheme is "http" or "https"
+                ? new ResourceLocation(null, value)
+                : default;
+        }
+
+        if (value[0] is '/' or '\\' || Path.IsPathRooted(value))
+        {
+            return default;
+        }
+
+        var normalized = value.Replace('\\', '/');
+        var segments = normalized.Split('/');
+        if (segments.Any(segment => segment.Length == 0 || segment is "." or "..")
+            || ImportText.SafeExportPath(exportRoot, normalized) is null)
+        {
+            return default;
+        }
+
+        return new ResourceLocation(value, null);
     }
 
     private static long? ParseSize(string value, string filePath, uint rowIndex)
@@ -369,18 +400,6 @@ internal static class QqExcelParser
         throw new ImportFormatException(filePath, $"资源列表第 {rowIndex} 行大小无效：{value}");
     }
 
-    private static IReadOnlyDictionary<string, int> HeaderMap(IReadOnlyList<string> headers) =>
-        headers.Select((header, index) => new KeyValuePair<string, int>(header, index + 1))
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-
-    private static Dictionary<string, string> ReadValues(
-        OpenXmlRow row,
-        IReadOnlyDictionary<string, int> headers) =>
-        headers.ToDictionary(
-            pair => pair.Key,
-            pair => CellValue(row, pair.Value),
-            StringComparer.Ordinal);
-
     private static JsonObject RawPayload(IReadOnlyDictionary<string, string> values)
     {
         var raw = new JsonObject();
@@ -391,35 +410,6 @@ internal static class QqExcelParser
 
         return raw;
     }
-
-    private static bool HasExactHeaders(OpenXmlRow row, IReadOnlyList<string> expected)
-    {
-        if (row.Cells.Values.Any(cell =>
-            cell.ColumnIndex > expected.Count && ImportText.Clean(cell.Value).Length > 0))
-        {
-            return false;
-        }
-
-        for (var index = 0; index < expected.Count; index++)
-        {
-            if (!row.Cells.TryGetValue(index + 1, out var cell)
-                || !string.Equals(ImportText.Clean(cell.Value), expected[index], StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool IsBlank(OpenXmlRow row) =>
-        row.Cells.Values.All(cell => ImportText.Clean(cell.Value).Length == 0);
-
-    private static string CellValue(OpenXmlRow row, int column) =>
-        row.Cells.TryGetValue(column, out var cell) ? ImportText.Clean(cell.Value) : string.Empty;
-
-    private static string Value(IReadOnlyDictionary<string, string> values, string key) =>
-        values.TryGetValue(key, out var value) ? value : string.Empty;
 
     private static string FirstNonEmpty(params string[] values) =>
         values.FirstOrDefault(value => value.Length > 0) ?? string.Empty;
@@ -445,4 +435,6 @@ internal static class QqExcelParser
     {
         internal long TimestampMs { get; init; }
     }
+
+    private readonly record struct ResourceLocation(string? LocalPath, string? HttpUrl);
 }

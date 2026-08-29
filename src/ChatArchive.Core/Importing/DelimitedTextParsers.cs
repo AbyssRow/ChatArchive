@@ -109,7 +109,12 @@ public static class WeFlowCsvParser
             var declaredPath = values[6];
             var attachments = string.IsNullOrWhiteSpace(declaredPath) ? Array.Empty<ParsedAttachment>() :
             [new ParsedAttachment(0, AttachmentKind(messageType, declaredPath), Path.GetFileName(declaredPath), declaredPath,
-                ImportText.SafeResolveMedia(exportRoot, declaredPath, conversation.Title), null, ImportText.GuessMime(declaredPath), null, null, null, new JsonObject())];
+                ImportText.SafeResolveMedia(
+                    exportRoot,
+                    declaredPath,
+                    conversation.Title,
+                    MediaResolutionPolicy.WeFlowLayoutA),
+                null, ImportText.GuessMime(declaredPath), null, null, null, new JsonObject())];
             var sender = values[4];
             yield return FlatMessageFactory.Create(new FlatMessageData(
                 string.IsNullOrEmpty(values[1]) ? null : values[1], string.IsNullOrEmpty(values[0]) ? null : values[0], timestampMs,
@@ -263,7 +268,12 @@ public static class WeFlowMarkdownParser
                 : mime?.StartsWith("video/", StringComparison.Ordinal) == true ? "video"
                 : mime?.StartsWith("audio/", StringComparison.Ordinal) == true ? "audio" : "file";
             attachments.Add(new ParsedAttachment(attachments.Count, kind, label.Length > 0 ? label : Path.GetFileName(declaredPath), declaredPath,
-                ImportText.SafeResolveMedia(exportRoot, declaredPath, title), null, mime, null, null, null, new JsonObject()));
+                ImportText.SafeResolveMedia(
+                    exportRoot,
+                    declaredPath,
+                    title,
+                    MediaResolutionPolicy.WeFlowLayoutA),
+                null, mime, null, null, null, new JsonObject()));
         }
         return attachments;
     }

@@ -103,7 +103,11 @@ internal static class WeFlowExcelParser
                     Kind: AttachmentKind(messageType),
                     Filename: Path.GetFileName(declaredPath),
                     DeclaredPath: declaredPath,
-                    SourcePath: ImportText.SafeResolveMedia(exportRoot, declaredPath, conversation.Title),
+                    SourcePath: ImportText.SafeResolveMedia(
+                        exportRoot,
+                        declaredPath,
+                        conversation.Title,
+                        MediaResolutionPolicy.WeFlowLayoutA),
                     DeclaredSize: null,
                     MimeType: ImportText.GuessMime(declaredPath),
                     Width: null,

@@ -275,14 +275,22 @@ public static class ChatLabParser
         ParsedConversation conversation,
         string? selfSender,
         string filePath,
-        IReadOnlyList<JsonObject>? members = null)
+        IReadOnlyList<JsonObject>? members = null,
+        MediaResolutionPolicy mediaResolutionPolicy = MediaResolutionPolicy.Strict)
     {
         var memberDict = BuildMemberDictionary(members);
         var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
         var index = 0;
         foreach (var raw in messages)
         {
-            yield return ParseMessage(raw, index++, conversation, selfSender, exportRoot, memberDict);
+            yield return ParseMessage(
+                raw,
+                index++,
+                conversation,
+                selfSender,
+                exportRoot,
+                memberDict,
+                mediaResolutionPolicy);
         }
     }
 
@@ -291,7 +299,8 @@ public static class ChatLabParser
         ParsedConversation conversation,
         string? selfSender,
         CancellationToken cancellationToken = default,
-        Dictionary<string, JsonObject>? initialMembers = null)
+        Dictionary<string, JsonObject>? initialMembers = null,
+        MediaResolutionPolicy mediaResolutionPolicy = MediaResolutionPolicy.Strict)
     {
         var memberDict = initialMembers ?? new Dictionary<string, JsonObject>(StringComparer.OrdinalIgnoreCase);
         var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
@@ -342,7 +351,14 @@ public static class ChatLabParser
                 continue;
             }
 
-            yield return ParseMessage(raw, index++, conversation, selfSender, exportRoot, memberDict);
+            yield return ParseMessage(
+                raw,
+                index++,
+                conversation,
+                selfSender,
+                exportRoot,
+                memberDict,
+                mediaResolutionPolicy);
         }
     }
 
@@ -352,7 +368,8 @@ public static class ChatLabParser
         ParsedConversation conversation,
         string? selfSender,
         string exportRoot,
-        IReadOnlyDictionary<string, JsonObject>? memberDict)
+        IReadOnlyDictionary<string, JsonObject>? memberDict,
+        MediaResolutionPolicy mediaResolutionPolicy)
     {
         var rawContent = OrEmpty(ImportText.Clean(TryGetRaw(raw, "content")), "[空消息]");
         var exportedSender = ImportText.Clean(FirstNonEmpty(
@@ -435,7 +452,13 @@ public static class ChatLabParser
         var messageType = xmlMessageType ?? baseMessageType;
 
         var (declaredPath, sourcePath, filename) = ExtractMediaReference(
-            raw, content, rawContent, exportRoot, messageType, conversation.Title);
+            raw,
+            content,
+            rawContent,
+            exportRoot,
+            messageType,
+            conversation.Title,
+            mediaResolutionPolicy);
 
         var attachments = new List<ParsedAttachment>();
         if (declaredPath is not null || sourcePath is not null)
@@ -621,7 +644,8 @@ public static class ChatLabParser
         string rawContent,
         string exportRoot,
         string messageType,
-        string? sessionTitle)
+        string? sessionTitle,
+        MediaResolutionPolicy mediaResolutionPolicy)
     {
         var candidatePaths = new List<string>();
 
@@ -692,7 +716,11 @@ public static class ChatLabParser
                 if (extension.Length > 0 && extension.All(char.IsAsciiLetterOrDigit))
                 {
                     var declared = $"media/files/{extension}/{fileCandidate}";
-                    var resolved = ImportText.SafeResolveMedia(exportRoot, declared, sessionTitle);
+                    var resolved = ImportText.SafeResolveMedia(
+                        exportRoot,
+                        declared,
+                        sessionTitle,
+                        mediaResolutionPolicy);
                     if (resolved != null && File.Exists(resolved))
                     {
                         return (declared, resolved, fileCandidate);
@@ -712,7 +740,11 @@ public static class ChatLabParser
             }
 
             var filename = Path.GetFileName(normalized);
-            var resolved = ImportText.SafeResolveMedia(exportRoot, normalized, sessionTitle);
+            var resolved = ImportText.SafeResolveMedia(
+                exportRoot,
+                normalized,
+                sessionTitle,
+                mediaResolutionPolicy);
             if (resolved != null && File.Exists(resolved))
             {
                 return (normalized, resolved, filename.Length > 0 ? filename : null);
@@ -728,7 +760,11 @@ public static class ChatLabParser
             }
 
             var filename = Path.GetFileName(normalized);
-            var resolved = ImportText.SafeResolveMedia(exportRoot, normalized, sessionTitle);
+            var resolved = ImportText.SafeResolveMedia(
+                exportRoot,
+                normalized,
+                sessionTitle,
+                mediaResolutionPolicy);
             return (normalized, resolved, filename.Length > 0 ? filename : null);
         }
 

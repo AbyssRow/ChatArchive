@@ -112,7 +112,11 @@ public sealed class WeFlowSqlExportFormat : IChatExportFormat
                         SqlExportSupport.AttachmentKind(messageType, mediaPath),
                         Path.GetFileName(mediaPath),
                         mediaPath,
-                        ImportText.SafeResolveMedia(exportRoot, mediaPath, conversation.Title),
+                        ImportText.SafeResolveMedia(
+                            exportRoot,
+                            mediaPath,
+                            conversation.Title,
+                            MediaResolutionPolicy.WeFlowLayoutA),
                         null,
                         ImportText.GuessMime(mediaPath),
                         null,

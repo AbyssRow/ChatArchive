@@ -72,6 +72,7 @@ public sealed class QqExcelFormatTests : IDisposable
         Assert.Equal("media/one.jpg", attachment.DeclaredPath);
         Assert.Equal(localPath, attachment.SourcePath);
         Assert.Equal(42, attachment.DeclaredSize);
+        Assert.False(attachment.Metadata.ContainsKey("url"));
         Assert.Empty(messages[1].Attachments);
     }
 
@@ -97,21 +98,103 @@ public sealed class QqExcelFormatTests : IDisposable
         Assert.All(parsed, message => Assert.Equal("1", message.RawPayload["资源数量"]?.GetValue<string>()));
     }
 
-    [Fact]
-    public void QqExcel_PreservesHttpResourceAsMetadataWithoutSourcePath()
+    [Theory]
+    [InlineData("http://cdn.example.test/remote.jpg")]
+    [InlineData("https://cdn.example.test/remote.jpg")]
+    public void QqExcel_PreservesOnlyHttpResourcesAsUrlMetadata(string url)
     {
         var path = WriteWorkbook(
-            "remote.xlsx",
+            $"remote-{Uri.EscapeDataString(url)}.xlsx",
             includeTitle: false,
             [new("2023-11-15 06:15:23", "Alice", "10002", "图片", "first", false, "", 1)],
-            [new("2023-11-15 06:15:23", "Alice", "10002", "image", "remote.jpg", 99, "https://cdn.example.test/remote.jpg")]);
+            [new("2023-11-15 06:15:23", "Alice", "10002", "image", "remote.jpg", 99, url)]);
 
         using var export = new QqExcelExportFormat().Open(path);
         var attachment = Assert.Single(Assert.Single(export.EnumerateMessages()).Attachments);
 
         Assert.Null(attachment.DeclaredPath);
         Assert.Null(attachment.SourcePath);
-        Assert.Equal("https://cdn.example.test/remote.jpg", attachment.Metadata["url"]?.GetValue<string>());
+        Assert.Equal(url, attachment.Metadata["url"]?.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("/rooted/file.jpg")]
+    [InlineData("\\rooted\\file.jpg")]
+    [InlineData("C:\\outside\\file.jpg")]
+    [InlineData("\\\\server\\share\\file.jpg")]
+    [InlineData("file:///outside/file.jpg")]
+    [InlineData("ftp://cdn.example.test/file.jpg")]
+    public void QqExcel_DoesNotExposeInvalidResourceLocation(string url)
+    {
+        var path = WriteWorkbook(
+            $"invalid-{Guid.NewGuid():N}.xlsx",
+            includeTitle: false,
+            [new("2023-11-15 06:15:23", "Alice", "10002", "文件", "first", false, "", 1)],
+            [new("2023-11-15 06:15:23", "Alice", "10002", "file", "original.bin", 123, url)]);
+
+        using var export = new QqExcelExportFormat().Open(path);
+        var attachment = Assert.Single(Assert.Single(export.EnumerateMessages()).Attachments);
+
+        Assert.Null(attachment.DeclaredPath);
+        Assert.Null(attachment.SourcePath);
+        Assert.False(attachment.Metadata.ContainsKey("url"));
+        Assert.Equal("original.bin", attachment.Filename);
+        Assert.Equal("file", attachment.Kind);
+        Assert.Equal(123, attachment.DeclaredSize);
+    }
+
+    [Fact]
+    public void QqExcel_RejectsParentTraversalEvenWhenWeFlowLayoutAFileExists()
+    {
+        var images = Path.Combine(_directory, "images");
+        Directory.CreateDirectory(images);
+        File.WriteAllText(Path.Combine(images, "one.jpg"), "image");
+        var path = WriteWorkbook(
+            "texts/parent.xlsx",
+            includeTitle: false,
+            [new("2023-11-15 06:15:23", "Alice", "10002", "图片", "first", false, "", 1)],
+            [new("2023-11-15 06:15:23", "Alice", "10002", "image", "one.jpg", 42, "../images/one.jpg")]);
+
+        using var export = new QqExcelExportFormat().Open(path);
+        var attachment = Assert.Single(Assert.Single(export.EnumerateMessages()).Attachments);
+
+        Assert.Null(attachment.DeclaredPath);
+        Assert.Null(attachment.SourcePath);
+        Assert.False(attachment.Metadata.ContainsKey("url"));
+    }
+
+    [Fact]
+    public void QqExcel_RejectsIntermediateInRootReparseEscape()
+    {
+        var workbookDirectory = Path.Combine(_directory, "workbooks");
+        var outside = Path.Combine(_directory, "outside");
+        Directory.CreateDirectory(workbookDirectory);
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "one.jpg"), "outside image");
+        var linkedMedia = Path.Combine(workbookDirectory, "media");
+        try
+        {
+            Directory.CreateSymbolicLink(linkedMedia, outside);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            Assert.Skip($"Directory symbolic links are unavailable on this platform: {ex.GetType().Name}");
+            return;
+        }
+
+        var path = WriteWorkbook(
+            "workbooks/reparse.xlsx",
+            includeTitle: false,
+            [new("2023-11-15 06:15:23", "Alice", "10002", "图片", "first", false, "", 1)],
+            [new("2023-11-15 06:15:23", "Alice", "10002", "image", "one.jpg", 42, "media/one.jpg")]);
+
+        using var export = new QqExcelExportFormat().Open(path);
+        var attachment = Assert.Single(Assert.Single(export.EnumerateMessages()).Attachments);
+
+        Assert.Equal("media/one.jpg", attachment.DeclaredPath);
+        Assert.Null(attachment.SourcePath);
+        Assert.False(attachment.Metadata.ContainsKey("url"));
     }
 
     [Fact]
@@ -223,6 +306,7 @@ public sealed class QqExcelFormatTests : IDisposable
         messageHeaders ??= includeTitle ? TitledMessageHeaders : MessageHeaders;
         resourceHeaders ??= ResourceHeaders;
         var path = Path.Combine(_directory, filename);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var messageRows = new List<IReadOnlyList<XlsxTestCell>>
         {
             Cells(messageHeaders, 1, header => header),

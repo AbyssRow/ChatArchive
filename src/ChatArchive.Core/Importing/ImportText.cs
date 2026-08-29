@@ -15,6 +15,12 @@ public sealed class ImportFormatException : Exception
     }
 }
 
+public enum MediaResolutionPolicy
+{
+    Strict,
+    WeFlowLayoutA,
+}
+
 /// <summary>导入器共享的文本/路径工具，行为对齐旧版 Python。</summary>
 public static class ImportText
 {
@@ -156,11 +162,11 @@ public static class ImportText
 
     private static string? ResolveWeFlowParentMedia(string exportRoot, string normalized)
     {
-        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var segments = normalized.Split('/');
         if (segments.Length < 3
             || segments[0] != ".."
             || !WeFlowParentMediaDirectories.Contains(segments[1])
-            || segments.Skip(2).Any(segment => segment is "." or ".."))
+            || segments.Skip(2).Any(segment => segment.Length == 0 || segment is "." or ".."))
         {
             return null;
         }
@@ -176,13 +182,7 @@ public static class ImportText
 
             var relativeSegments = segments.Skip(1).ToArray();
             var relative = Path.Combine(relativeSegments);
-            var candidate = SafeExportPath(parent, relative);
-            if (candidate is null || !IsRegularPathWithoutReparsePoints(parent, relativeSegments) || !File.Exists(candidate))
-            {
-                return null;
-            }
-
-            return candidate;
+            return ResolveExistingRegularFile(parent, relative, out _);
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
         {
@@ -190,31 +190,105 @@ public static class ImportText
         }
     }
 
-    private static bool IsRegularPathWithoutReparsePoints(string parent, IEnumerable<string> relativeSegments)
+    private static string? ResolveExistingRegularFile(
+        string root,
+        string relativePath,
+        out bool unsafeExistingCandidate)
+    {
+        var candidate = SafeExportPath(root, relativePath);
+        var exists = candidate is not null && File.Exists(candidate);
+        unsafeExistingCandidate = exists
+            && !HasSafePathComponents(root, candidate!, requireExistingRegularFile: true);
+        return exists && !unsafeExistingCandidate
+            ? candidate
+            : null;
+    }
+
+    private static bool HasSafePathComponents(
+        string root,
+        string candidate,
+        bool requireExistingRegularFile)
     {
         try
         {
-            var current = parent;
-            var attributes = File.GetAttributes(current);
-            if (attributes.HasFlag(FileAttributes.ReparsePoint))
+            var rootFull = Path.GetFullPath(root);
+            if (!TryGetPathAttributes(rootFull, out var rootAttributes, out var rootExists)
+                || !rootExists
+                || rootAttributes.HasFlag(FileAttributes.ReparsePoint)
+                || !rootAttributes.HasFlag(FileAttributes.Directory))
             {
                 return false;
             }
 
-            foreach (var segment in relativeSegments)
+            var relative = Path.GetRelativePath(rootFull, Path.GetFullPath(candidate));
+            var segments = relative.Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length == 0 || segments.Any(segment => segment is "." or ".."))
             {
-                current = Path.Combine(current, segment);
-                attributes = File.GetAttributes(current);
+                return false;
+            }
+
+            var current = rootFull;
+            for (var index = 0; index < segments.Length; index++)
+            {
+                current = Path.Combine(current, segments[index]);
+                if (!TryGetPathAttributes(current, out var attributes, out var exists))
+                {
+                    return false;
+                }
+
+                if (!exists)
+                {
+                    return !requireExistingRegularFile;
+                }
+
                 if (attributes.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    return false;
+                }
+
+                var isLast = index == segments.Length - 1;
+                if (isLast)
+                {
+                    return !attributes.HasFlag(FileAttributes.Directory);
+                }
+
+                if (!attributes.HasFlag(FileAttributes.Directory))
                 {
                     return false;
                 }
             }
 
-            return !attributes.HasFlag(FileAttributes.Directory);
+            return false;
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
         {
+            return false;
+        }
+    }
+
+    private static bool TryGetPathAttributes(
+        string path,
+        out FileAttributes attributes,
+        out bool exists)
+    {
+        try
+        {
+            attributes = File.GetAttributes(path);
+            exists = true;
+            return true;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            attributes = default;
+            exists = false;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            attributes = default;
+            exists = false;
             return false;
         }
     }
@@ -227,15 +301,20 @@ public static class ImportText
     }
 
     /// <summary>
-    /// 安全解析媒体文件路径，支持多级 fallback 探测：
+    /// 安全解析媒体文件路径。默认拒绝父目录；只有显式 WeFlow policy 允许受限 layout-A 父目录。
+    /// 普通相对路径支持多级 fallback 探测：
     /// 1) exportRoot 下同级
     /// 2) exportRoot/resources/
     /// 3) exportRoot/media/
     /// 4) exportRoot 上级目录 parentDir 及 parentDir/media/<sessionTitle>/
-    /// 如果任何一个路径存在于磁盘（File.Exists），立即返回该有效物理路径。
-    /// 若均未在磁盘发现，返回 SafeExportPath(exportRoot, normalized)（保持原语义）。
+    /// 任何已存在候选都必须是普通文件，且根目录和每个已存在路径组件都不能是 reparse point。
+    /// 若没有已存在候选，安全的同级声明仍返回 SafeExportPath(exportRoot, normalized)。
     /// </summary>
-    public static string? SafeResolveMedia(string exportRoot, string declaredPath, string? sessionTitle = null)
+    public static string? SafeResolveMedia(
+        string exportRoot,
+        string declaredPath,
+        string? sessionTitle = null,
+        MediaResolutionPolicy policy = MediaResolutionPolicy.Strict)
     {
         if (string.IsNullOrWhiteSpace(declaredPath) || IsRootedOrUriLikeDeclaration(declaredPath))
         {
@@ -250,7 +329,9 @@ public static class ImportText
 
         if (normalized.StartsWith("../", StringComparison.Ordinal))
         {
-            return ResolveWeFlowParentMedia(exportRoot, normalized);
+            return policy == MediaResolutionPolicy.WeFlowLayoutA
+                ? ResolveWeFlowParentMedia(exportRoot, normalized)
+                : null;
         }
 
         if (normalized.Split('/').Any(segment => segment == ".."))
@@ -259,19 +340,30 @@ public static class ImportText
         }
 
         var direct = SafeExportPath(exportRoot, normalized);
-        if (direct != null && File.Exists(direct))
+        var unsafeExistingCandidate = false;
+        var existingDirect = ResolveExistingRegularFile(exportRoot, normalized, out var unsafeDirect);
+        unsafeExistingCandidate |= unsafeDirect;
+        if (existingDirect is not null)
         {
-            return direct;
+            return existingDirect;
         }
 
-        var inResources = SafeExportPath(exportRoot, Path.Combine("resources", normalized));
-        if (inResources != null && File.Exists(inResources))
+        var inResources = ResolveExistingRegularFile(
+            exportRoot,
+            Path.Combine("resources", normalized),
+            out var unsafeResources);
+        unsafeExistingCandidate |= unsafeResources;
+        if (inResources is not null)
         {
             return inResources;
         }
 
-        var inMedia = SafeExportPath(exportRoot, Path.Combine("media", normalized));
-        if (inMedia != null && File.Exists(inMedia))
+        var inMedia = ResolveExistingRegularFile(
+            exportRoot,
+            Path.Combine("media", normalized),
+            out var unsafeMedia);
+        unsafeExistingCandidate |= unsafeMedia;
+        if (inMedia is not null)
         {
             return inMedia;
         }
@@ -284,8 +376,12 @@ public static class ImportText
                 var cleanTitle = SanitizeSessionTitle(sessionTitle);
                 if (!string.IsNullOrWhiteSpace(cleanTitle))
                 {
-                    var inParentMediaSession = SafeExportPath(parentDir, Path.Combine("media", cleanTitle, normalized));
-                    if (inParentMediaSession != null && File.Exists(inParentMediaSession))
+                    var inParentMediaSession = ResolveExistingRegularFile(
+                        parentDir,
+                        Path.Combine("media", cleanTitle, normalized),
+                        out var unsafeSharedMedia);
+                    unsafeExistingCandidate |= unsafeSharedMedia;
+                    if (inParentMediaSession is not null)
                     {
                         return inParentMediaSession;
                     }
@@ -297,7 +393,11 @@ public static class ImportText
             // Ignore path resolution errors when probing parent directory
         }
 
-        return direct;
+        return !unsafeExistingCandidate
+            && direct is not null
+            && HasSafePathComponents(exportRoot, direct, requireExistingRegularFile: false)
+                ? direct
+                : null;
     }
 
     public static string SanitizeSessionTitle(string? title)

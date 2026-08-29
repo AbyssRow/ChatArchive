@@ -88,7 +88,7 @@ public class MediaLocatorTests : IDisposable
     }
 
     [Fact]
-    public void SafeResolveMedia_AllowsOnlyExistingWeFlowLayoutAFile()
+    public void SafeResolveMedia_StrictDefaultRejectsWeFlowLayoutAParentFile()
     {
         var texts = Path.Combine(_dir, "export", "texts");
         var images = Path.Combine(_dir, "export", "images");
@@ -97,13 +97,104 @@ public class MediaLocatorTests : IDisposable
         var image = Path.Combine(images, "one.jpg");
         File.WriteAllText(image, "image");
 
-        Assert.Equal(image, ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/one.jpg"));
-        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/missing.jpg"));
-        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../private.txt"));
-        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/../../private.txt"));
-        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../../images/one.jpg"));
-        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../image/one.jpg"));
-        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images"));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/one.jpg"));
+        Assert.Equal(
+            image,
+            ChatArchive.Core.Importing.ImportText.SafeResolveMedia(
+                texts,
+                "../images/one.jpg",
+                policy: ChatArchive.Core.Importing.MediaResolutionPolicy.WeFlowLayoutA));
+    }
+
+    [Theory]
+    [InlineData("root")]
+    [InlineData("direct")]
+    [InlineData("resources")]
+    [InlineData("media")]
+    [InlineData("shared")]
+    public void SafeResolveMedia_RejectsReparseEscapesFromEveryExistingCandidate(string layout)
+    {
+        var caseRoot = Path.Combine(_dir, $"reparse-{layout}");
+        var exportRoot = Path.Combine(caseRoot, "export");
+        var outside = Path.Combine(caseRoot, "outside");
+        Directory.CreateDirectory(caseRoot);
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "one.jpg"), "outside image");
+
+        string link;
+        string declaredPath;
+        string? sessionTitle = null;
+        if (layout == "root")
+        {
+            link = exportRoot;
+            declaredPath = "one.jpg";
+        }
+        else
+        {
+            Directory.CreateDirectory(exportRoot);
+            (link, declaredPath, sessionTitle) = layout switch
+            {
+                "direct" => (Path.Combine(exportRoot, "linked"), "linked/one.jpg", null),
+                "resources" => (Path.Combine(exportRoot, "resources", "images"), "images/one.jpg", null),
+                "media" => (Path.Combine(exportRoot, "media"), "one.jpg", null),
+                "shared" => (Path.Combine(caseRoot, "media", "Session"), "one.jpg", "Session"),
+                _ => throw new ArgumentOutOfRangeException(nameof(layout)),
+            };
+            Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+        }
+
+        try
+        {
+            Directory.CreateSymbolicLink(link, outside);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            Assert.Skip($"Directory symbolic links are unavailable on this platform: {ex.GetType().Name}");
+            return;
+        }
+
+        Assert.True(File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(exportRoot, declaredPath, sessionTitle));
+    }
+
+    [Fact]
+    public void SafeResolveMedia_DoesNotReturnUnsafeExistingDirectCandidateAsLexicalFallback()
+    {
+        var caseRoot = Path.Combine(_dir, "unsafe-direct-fallback");
+        var exportRoot = Path.Combine(caseRoot, "export");
+        var outside = Path.Combine(caseRoot, "outside");
+        Directory.CreateDirectory(exportRoot);
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "one.jpg"), "outside image");
+        var link = Path.Combine(exportRoot, "linked");
+
+        try
+        {
+            Directory.CreateSymbolicLink(link, outside);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            Assert.Skip($"Directory symbolic links are unavailable on this platform: {ex.GetType().Name}");
+            return;
+        }
+
+        Assert.True(File.Exists(Path.Combine(link, "one.jpg")));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(exportRoot, "linked/one.jpg"));
+    }
+
+    [Fact]
+    public void SafeResolveMedia_WeFlowParentWhitelistStillRejectsUnknownOrMissingTargets()
+    {
+        var texts = Path.Combine(_dir, "export-negative", "texts");
+        Directory.CreateDirectory(texts);
+
+        var policy = ChatArchive.Core.Importing.MediaResolutionPolicy.WeFlowLayoutA;
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/missing.jpg", policy: policy));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../private.txt", policy: policy));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/../../private.txt", policy: policy));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../../images/one.jpg", policy: policy));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../image/one.jpg", policy: policy));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images", policy: policy));
     }
 
     [Theory]
@@ -121,7 +212,12 @@ public class MediaLocatorTests : IDisposable
         var media = Path.Combine(nested, "one.bin");
         File.WriteAllText(media, category);
 
-        Assert.Equal(media, ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, $"../{category}/nested/one.bin"));
+        Assert.Equal(
+            media,
+            ChatArchive.Core.Importing.ImportText.SafeResolveMedia(
+                texts,
+                $"../{category}/nested/one.bin",
+                policy: ChatArchive.Core.Importing.MediaResolutionPolicy.WeFlowLayoutA));
     }
 
     [Fact]
@@ -145,7 +241,10 @@ public class MediaLocatorTests : IDisposable
         }
 
         Assert.True(File.GetAttributes(linkedImages).HasFlag(FileAttributes.ReparsePoint));
-        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(texts, "../images/one.jpg"));
+        Assert.Null(ChatArchive.Core.Importing.ImportText.SafeResolveMedia(
+            texts,
+            "../images/one.jpg",
+            policy: ChatArchive.Core.Importing.MediaResolutionPolicy.WeFlowLayoutA));
     }
 
     [Theory]

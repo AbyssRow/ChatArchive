@@ -644,7 +644,14 @@ public static class WeFlowParser
             }
 
             var declaredPath = $"media/files/{extension}/{filename}";
-            return new MediaRef(filename, declaredPath, ImportText.SafeResolveMedia(exportRoot, declaredPath, sessionTitle));
+            return new MediaRef(
+                filename,
+                declaredPath,
+                ImportText.SafeResolveMedia(
+                    exportRoot,
+                    declaredPath,
+                    sessionTitle,
+                    MediaResolutionPolicy.WeFlowLayoutA));
         }
 
         if (!string.IsNullOrEmpty(mediaType)
@@ -659,7 +666,14 @@ public static class WeFlowParser
                 filename = null;
             }
 
-            return new MediaRef(filename, content, ImportText.SafeResolveMedia(exportRoot, content, sessionTitle));
+            return new MediaRef(
+                filename,
+                content,
+                ImportText.SafeResolveMedia(
+                    exportRoot,
+                    content,
+                    sessionTitle,
+                    MediaResolutionPolicy.WeFlowLayoutA));
         }
 
         return null;

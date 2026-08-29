@@ -439,6 +439,12 @@ public sealed class ChatLabJsonExportFormat : IChatExportFormat
         }
 
         var conversation = ChatLabParser.ReadConversation(meta, filePath, members);
+        var mediaResolutionPolicy = string.Equals(
+            ImportText.Clean(chatlab["generator"]),
+            "WeFlow",
+            StringComparison.Ordinal)
+                ? MediaResolutionPolicy.WeFlowLayoutA
+                : MediaResolutionPolicy.Strict;
 
         var ownerId = ImportText.Clean(FirstNonEmpty(
             ImportText.Clean(meta["ownerId"]),
@@ -461,7 +467,8 @@ public sealed class ChatLabJsonExportFormat : IChatExportFormat
                 conversation,
                 selfSender,
                 filePath,
-                members));
+                members,
+                mediaResolutionPolicy));
     }
 
     private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
@@ -616,6 +623,12 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
 
         var meta = header["meta"] as JsonObject ?? header;
         var conversation = ChatLabParser.ReadConversation(meta, filePath, members);
+        var mediaResolutionPolicy = string.Equals(
+            ImportText.Clean(chatlab["generator"]),
+            "WeFlow",
+            StringComparison.Ordinal)
+                ? MediaResolutionPolicy.WeFlowLayoutA
+                : MediaResolutionPolicy.Strict;
 
         var ownerId = ImportText.Clean(FirstNonEmpty(
             ImportText.Clean(meta["ownerId"]),
@@ -628,7 +641,13 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
 
         return new ExportFile(
             conversation,
-            token => ChatLabParser.IterateJsonlMessages(filePath, conversation, selfSender, token, memberDict));
+            token => ChatLabParser.IterateJsonlMessages(
+                filePath,
+                conversation,
+                selfSender,
+                token,
+                memberDict,
+                mediaResolutionPolicy));
     }
 
     private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";

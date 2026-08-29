@@ -60,12 +60,12 @@ internal static class CipherTalkExcelParser
         foreach (var row in workbook.ReadRows(profile.Sheet, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (row.RowIndex <= 1 || IsBlank(row))
+            if (row.RowIndex <= 1 || OpenXmlRowSupport.IsBlank(row))
             {
                 continue;
             }
 
-            var values = ReadValues(row, profile.Headers);
+            var values = OpenXmlRowSupport.ReadValues(row, profile.Headers);
             if (!TryReadTimestamp(values["时间戳"], values["时间"], out var timestampMs))
             {
                 throw new ImportFormatException(
@@ -79,7 +79,7 @@ internal static class CipherTalkExcelParser
                 FlatMessageFactory.SyntheticSenderNativeId(conversation.NativeId, senderName));
             var messageType = MapType(values["原始类型代码"], values["消息类型"]);
             var content = values["消息内容"];
-            var details = Value(values, "聊天记录详情");
+            var details = OpenXmlRowSupport.Value(values, "聊天记录详情");
             if (details.Length > 0)
             {
                 content = content.Length == 0 ? details : string.Concat(content, "\n", details);
@@ -145,12 +145,12 @@ internal static class CipherTalkExcelParser
 
             foreach (var headers in AllowedHeaders)
             {
-                if (!HasExactHeaders(rows.Current, headers))
+                if (!OpenXmlRowSupport.HasExactHeaders(rows.Current, headers))
                 {
                     continue;
                 }
 
-                profile = new Profile(sheet, HeaderMap(headers));
+                profile = new Profile(sheet, OpenXmlRowSupport.HeaderMap(headers));
                 return true;
             }
         }
@@ -210,47 +210,6 @@ internal static class CipherTalkExcelParser
             _ => "other",
         };
     }
-
-    private static IReadOnlyDictionary<string, int> HeaderMap(IReadOnlyList<string> headers) =>
-        headers.Select((header, index) => new KeyValuePair<string, int>(header, index + 1))
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-
-    private static Dictionary<string, string> ReadValues(
-        OpenXmlRow row,
-        IReadOnlyDictionary<string, int> headers) =>
-        headers.ToDictionary(
-            pair => pair.Key,
-            pair => CellValue(row, pair.Value),
-            StringComparer.Ordinal);
-
-    private static bool HasExactHeaders(OpenXmlRow row, IReadOnlyList<string> expected)
-    {
-        if (row.Cells.Values.Any(cell =>
-            cell.ColumnIndex > expected.Count && ImportText.Clean(cell.Value).Length > 0))
-        {
-            return false;
-        }
-
-        for (var index = 0; index < expected.Count; index++)
-        {
-            if (!row.Cells.TryGetValue(index + 1, out var cell)
-                || !string.Equals(ImportText.Clean(cell.Value), expected[index], StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool IsBlank(OpenXmlRow row) =>
-        row.Cells.Values.All(cell => ImportText.Clean(cell.Value).Length == 0);
-
-    private static string CellValue(OpenXmlRow row, int column) =>
-        row.Cells.TryGetValue(column, out var cell) ? ImportText.Clean(cell.Value) : string.Empty;
-
-    private static string Value(IReadOnlyDictionary<string, string> values, string key) =>
-        values.TryGetValue(key, out var value) ? value : string.Empty;
 
     private static string FirstNonEmpty(params string[] values) =>
         values.FirstOrDefault(value => value.Length > 0) ?? string.Empty;
