@@ -173,37 +173,8 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
 
         try
         {
-            var foundSession = false;
-            var foundMessage = false;
-            var malformedIdentity = false;
-            var sessionIds = new HashSet<string>(StringComparer.Ordinal);
-            var messageSessionIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var row in SqlExportSupport.ReadRows(filePath, CancellationToken.None))
-            {
-                if (string.Equals(row.Table, SessionsTable, StringComparison.OrdinalIgnoreCase)
-                    && SqlExportSupport.HasExactColumns(row, SessionColumns))
-                {
-                    foundSession = true;
-                    var wxid = SqlExportSupport.Value(row, "wxid");
-                    if (wxid is null) malformedIdentity = true;
-                    else sessionIds.Add(wxid);
-                }
-                else if (string.Equals(row.Table, MessagesTable, StringComparison.OrdinalIgnoreCase)
-                    && SqlExportSupport.HasExactColumns(row, MessageColumns))
-                {
-                    foundMessage = true;
-                    var sessionWxid = SqlExportSupport.Value(row, "session_wxid");
-                    if (sessionWxid is null) malformedIdentity = true;
-                    else messageSessionIds.Add(sessionWxid);
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            return foundSession
-                && foundMessage
-                && (malformedIdentity || sessionIds.Overlaps(messageSessionIds));
+            _ = ReadProfile(filePath, CancellationToken.None);
+            return true;
         }
         catch (Exception ex) when (SqlExportSupport.IsMatchFailure(ex))
         {
@@ -213,34 +184,16 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        SqlInsertRow? session = null;
-        var sessionRowNumber = 0;
-        foreach (var row in SqlExportSupport.ReadRows(filePath, cancellationToken))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!string.Equals(row.Table, SessionsTable, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-            sessionRowNumber++;
-            SqlExportSupport.RequireProfile(row, SessionsTable, SessionColumns, filePath, sessionRowNumber);
-            session = row;
-            break;
-        }
-
-        if (session is null)
-        {
-            throw new ImportFormatException(filePath, "未找到当前 CipherTalk sessions INSERT 数据");
-        }
-
-        var wxid = SqlExportSupport.Required(session, "wxid", filePath, SessionsTable, sessionRowNumber);
-        var title = SqlExportSupport.Required(session, "display_name", filePath, SessionsTable, sessionRowNumber);
-        var sessionType = SqlExportSupport.Required(session, "session_type", filePath, SessionsTable, sessionRowNumber);
+        var profile = ReadProfile(filePath, cancellationToken);
+        var session = profile.Session;
+        var wxid = SqlExportSupport.Required(session, "wxid", filePath, SessionsTable, 1);
+        var title = SqlExportSupport.Required(session, "display_name", filePath, SessionsTable, 1);
+        var sessionType = SqlExportSupport.Required(session, "session_type", filePath, SessionsTable, 1);
         var kind = sessionType switch
         {
             "group" => "group",
             "private" => "private",
-            _ => throw SqlExportSupport.RowError(filePath, SessionsTable, sessionRowNumber, "session_type 无效")
+            _ => throw SqlExportSupport.RowError(filePath, SessionsTable, 1, "session_type 无效")
         };
         var owner = SqlExportSupport.Value(session, "owner_id") ?? "wechat-default";
         var conversation = new ParsedConversation("wechat", owner, wxid, kind, title);
@@ -255,12 +208,19 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
         CancellationToken cancellationToken)
     {
         var rowNumber = 0;
-        var selectedCount = 0;
+        var sessionCount = 0;
         foreach (var row in SqlExportSupport.ReadRows(filePath, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (string.Equals(row.Table, SessionsTable, StringComparison.OrdinalIgnoreCase))
             {
+                sessionCount++;
+                SqlExportSupport.RequireProfile(row, SessionsTable, SessionColumns, filePath, sessionCount);
+                var wxid = SqlExportSupport.Required(row, "wxid", filePath, SessionsTable, sessionCount);
+                if (sessionCount != 1 || !string.Equals(wxid, conversation.NativeId, StringComparison.Ordinal))
+                {
+                    throw SqlExportSupport.RowError(filePath, SessionsTable, sessionCount, "必须且只能包含当前会话行");
+                }
                 continue;
             }
 
@@ -269,7 +229,11 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
             var sessionWxid = SqlExportSupport.Required(row, "session_wxid", filePath, MessagesTable, rowNumber);
             if (!string.Equals(sessionWxid, conversation.NativeId, StringComparison.Ordinal))
             {
-                continue;
+                throw SqlExportSupport.RowError(
+                    filePath,
+                    MessagesTable,
+                    rowNumber,
+                    $"session_wxid “{sessionWxid}” 与会话 “{conversation.NativeId}” 不一致");
             }
 
             var timestampText = SqlExportSupport.Required(row, "create_time", filePath, MessagesTable, rowNumber);
@@ -293,7 +257,6 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
                 null);
             var content = SqlExportSupport.RawValue(row, "content") ?? string.Empty;
             var isSystem = messageType == "system";
-            selectedCount++;
 
             yield return FlatMessageFactory.Create(new FlatMessageData(
                 null,
@@ -311,7 +274,11 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
                 MediaType: messageType is "text" or "system" ? null : messageType));
         }
 
-        if (selectedCount == 0)
+        if (sessionCount != 1)
+        {
+            throw new ImportFormatException(filePath, "CipherTalk SQL 必须包含且只包含一个 sessions 行");
+        }
+        if (rowNumber == 0)
         {
             throw SqlExportSupport.RowError(
                 filePath,
@@ -320,6 +287,90 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
                 $"未找到与会话 “{conversation.NativeId}” 关联的消息");
         }
     }
+
+    private static CipherProfile ReadProfile(string filePath, CancellationToken cancellationToken)
+    {
+        SqlInsertRow? session = null;
+        string? sessionId = null;
+        string? messageSessionId = null;
+        var sessionCount = 0;
+        var messageCount = 0;
+
+        foreach (var row in SqlExportSupport.ReadRows(filePath, cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.Equals(row.Table, SessionsTable, StringComparison.OrdinalIgnoreCase))
+            {
+                sessionCount++;
+                SqlExportSupport.RequireProfile(row, SessionsTable, SessionColumns, filePath, sessionCount);
+                if (sessionCount != 1)
+                {
+                    throw SqlExportSupport.RowError(filePath, SessionsTable, sessionCount, "当前 CipherTalk 文件只能包含一个会话行");
+                }
+                session = row;
+                sessionId = SqlExportSupport.Required(row, "wxid", filePath, SessionsTable, sessionCount);
+                if (messageSessionId is not null
+                    && !string.Equals(messageSessionId, sessionId, StringComparison.Ordinal))
+                {
+                    throw SqlExportSupport.RowError(
+                        filePath,
+                        MessagesTable,
+                        messageCount,
+                        $"session_wxid “{messageSessionId}” 与会话 “{sessionId}” 不一致");
+                }
+                continue;
+            }
+
+            messageCount++;
+            SqlExportSupport.RequireProfile(row, MessagesTable, MessageColumns, filePath, messageCount);
+            var currentSessionId = SqlExportSupport.Required(
+                row,
+                "session_wxid",
+                filePath,
+                MessagesTable,
+                messageCount);
+            if (messageSessionId is null)
+            {
+                messageSessionId = currentSessionId;
+            }
+            else if (!string.Equals(messageSessionId, currentSessionId, StringComparison.Ordinal))
+            {
+                throw SqlExportSupport.RowError(
+                    filePath,
+                    MessagesTable,
+                    messageCount,
+                    $"session_wxid “{currentSessionId}” 与先前消息不一致");
+            }
+            if (sessionId is not null && !string.Equals(sessionId, currentSessionId, StringComparison.Ordinal))
+            {
+                throw SqlExportSupport.RowError(
+                    filePath,
+                    MessagesTable,
+                    messageCount,
+                    $"session_wxid “{currentSessionId}” 与会话 “{sessionId}” 不一致");
+            }
+        }
+
+        if (sessionCount != 1 || session is null || sessionId is null)
+        {
+            throw new ImportFormatException(filePath, "CipherTalk SQL 必须包含且只包含一个 sessions 行");
+        }
+        if (messageCount == 0)
+        {
+            throw new ImportFormatException(filePath, "CipherTalk SQL 必须包含至少一个 messages 行");
+        }
+        if (!string.Equals(sessionId, messageSessionId, StringComparison.Ordinal))
+        {
+            throw SqlExportSupport.RowError(
+                filePath,
+                MessagesTable,
+                1,
+                $"消息不属于会话 “{sessionId}”");
+        }
+        return new CipherProfile(session);
+    }
+
+    private sealed record CipherProfile(SqlInsertRow Session);
 }
 
 internal static class SqlExportSupport

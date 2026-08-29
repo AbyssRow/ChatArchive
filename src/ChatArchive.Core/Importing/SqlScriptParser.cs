@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -8,513 +9,661 @@ internal sealed record SqlInsertRow(
     IReadOnlyDictionary<string, string?> Values);
 
 /// <summary>
-/// Reads data-only INSERT rows from SQL writer output. SQL is never executed and
-/// scalar expressions are returned as inert text.
+/// Reads the inert, data-only SQL subset emitted by the current WeFlow and
+/// CipherTalk writers. SQL is never executed or evaluated.
 /// </summary>
 internal static class SqlInsertReader
 {
-    private static readonly Regex InsertHeaderRegex = new(
-        @"^\s*INSERT\s+INTO\s+(?:(?:\""[^\""\r\n]+\""|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?(?<table>\""[^\""\r\n]+\""|[A-Za-z_][A-Za-z0-9_]*)\s*(?:\((?<columns>[^)]*)\))?\s+VALUES\b",
+    private const int MaxIdentifierLength = 128;
+    private const int MaxColumns = 256;
+    private const int MaxFramingLength = 64 * 1024;
+
+    private static readonly Regex NumericLiteralRegex = new(
+        @"^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex CreateTableRegex = new(
+        @"^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(?<table>[A-Za-z_][A-Za-z0-9_]*)\s*\((?<body>[\s\S]*)\)\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    private static readonly Regex CreateTablePrefixRegex = new(
-        @"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(?:\""[^\""\r\n]+\""|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?(?<table>\""[^\""\r\n]+\""|[A-Za-z_][A-Za-z0-9_]*)\s*\(",
+    private static readonly Regex CreateIndexRegex = new(
+        @"^CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s+ON\s+(?<table>weflow_messages|messages)\s*\((?<columns>\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*\s*)\)\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex DeleteRegex = new(
+        @"^DELETE\s+FROM\s+(?<table>messages|sessions)\s+WHERE\s+(?<column>session_wxid|wxid)\s*=\s*'(?:[^']|'')*'\s*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly IReadOnlyDictionary<string, string[]> CreateTableColumns =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["weflow_messages"] =
+            [
+                "session_id", "local_id", "message_id", "create_time", "sender",
+                "is_send", "local_type", "media_type", "content", "media_path"
+            ],
+            ["sessions"] =
+            [
+                "wxid", "display_name", "session_type", "owner_id", "message_count",
+                "first_message_time", "last_message_time", "exported_at"
+            ],
+            ["messages"] =
+            [
+                "id", "session_wxid", "local_id", "create_time", "formatted_time",
+                "msg_type", "content", "is_send", "sender_username",
+                "sender_display_name", "group_nickname", "reply_to_message_id"
+            ]
+        };
+
+    private static readonly IReadOnlyDictionary<string, (string Table, string[] Columns)> CreateIndexes =
+        new Dictionary<string, (string Table, string[] Columns)>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["idx_weflow_messages_session_time"] = ("weflow_messages", ["session_id", "create_time"]),
+            ["idx_messages_session"] = ("messages", ["session_wxid"]),
+            ["idx_messages_create_time"] = ("messages", ["create_time"]),
+            ["idx_messages_sender"] = ("messages", ["sender_username"])
+        };
 
     internal static IEnumerable<SqlInsertRow> Enumerate(
         TextReader reader,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(reader);
+        var source = new CharacterSource(reader, cancellationToken);
 
-        var statement = new StringBuilder();
-        var tableSchemas = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
-        var inQuote = false;
-        var quote = '\0';
-        var inBlockComment = false;
-        string? line;
-
-        while ((line = reader.ReadLine()) is not null)
+        while (true)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            for (var i = 0; i < line.Length; i++)
+            source.SkipTrivia();
+            if (source.Peek() < 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var current = line[i];
+                yield break;
+            }
 
-                if (inBlockComment)
-                {
-                    if (current == '*' && i + 1 < line.Length && line[i + 1] == '/')
-                    {
-                        inBlockComment = false;
-                        i++;
-                        statement.Append(' ');
-                    }
-                    continue;
-                }
-
-                if (inQuote)
-                {
-                    statement.Append(current);
-                    if (current == quote)
-                    {
-                        if (i + 1 < line.Length && line[i + 1] == quote)
-                        {
-                            statement.Append(line[++i]);
-                        }
-                        else
-                        {
-                            inQuote = false;
-                        }
-                    }
-                    continue;
-                }
-
-                if (current == '/' && i + 1 < line.Length && line[i + 1] == '*')
-                {
-                    inBlockComment = true;
-                    i++;
-                    statement.Append(' ');
-                }
-                else if (current == '-' && i + 1 < line.Length && line[i + 1] == '-')
-                {
+            var keyword = source.ReadIdentifier("statement keyword");
+            switch (keyword.ToUpperInvariant())
+            {
+                case "BEGIN":
+                case "COMMIT":
+                    source.ExpectStatementEnd(keyword);
                     break;
-                }
-                else if (current == '#')
-                {
+                case "CREATE":
+                    ValidateCreate(source.ReadFramingStatement("CREATE"));
                     break;
-                }
-                else if (current is '\'' or '\"' or '`')
-                {
-                    inQuote = true;
-                    quote = current;
-                    statement.Append(current);
-                }
-                else if (current == ';')
-                {
-                    foreach (var row in ProcessStatement(statement.ToString(), tableSchemas, cancellationToken))
+                case "DELETE":
+                    ValidateDelete(source.ReadFramingStatement("DELETE"));
+                    break;
+                case "INSERT":
+                    foreach (var row in ReadInsert(source))
                     {
                         yield return row;
                     }
-                    statement.Clear();
-                }
-                else
-                {
-                    statement.Append(current);
-                }
-            }
-
-            if (!inBlockComment && statement.Length > 0)
-            {
-                statement.Append('\n');
-            }
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        if (inQuote || inBlockComment)
-        {
-            throw new FormatException("SQL contains an unterminated quote or block comment.");
-        }
-
-        if (!string.IsNullOrWhiteSpace(statement.ToString()))
-        {
-            foreach (var row in ProcessStatement(statement.ToString(), tableSchemas, cancellationToken))
-            {
-                yield return row;
+                    break;
+                default:
+                    throw new FormatException($"Unsupported SQL statement {keyword}.");
             }
         }
     }
 
-    private static IEnumerable<SqlInsertRow> ProcessStatement(
-        string statement,
-        IDictionary<string, IReadOnlyList<string>> tableSchemas,
-        CancellationToken cancellationToken)
+    private static IEnumerable<SqlInsertRow> ReadInsert(CharacterSource source)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var create = MatchCreateTable(statement, cancellationToken);
-        if (create is not null)
+        source.ExpectKeyword("INTO");
+        var table = source.ReadIdentifier("INSERT table");
+        if (!CreateTableColumns.ContainsKey(table))
         {
-            var (createdTable, body) = create.Value;
-            var createdColumns = ParseCreateTableColumns(body, cancellationToken);
-            if (createdColumns.Count > 0)
+            throw new FormatException($"Unsupported INSERT table {table}.");
+        }
+
+        source.SkipTrivia();
+        if (source.Read() != '(')
+        {
+            throw new FormatException($"INSERT INTO {table} requires an explicit column list.");
+        }
+
+        var columns = ReadColumns(source, table);
+        source.ExpectKeyword("VALUES");
+        var rowNumber = 0;
+
+        while (true)
+        {
+            source.SkipTrivia();
+            if (source.Read() != '(')
             {
-                tableSchemas[createdTable] = createdColumns;
-            }
-            yield break;
-        }
-
-        var match = InsertHeaderRegex.Match(statement);
-        if (!match.Success)
-        {
-            yield break;
-        }
-
-        var table = UnquoteIdentifier(match.Groups["table"].Value);
-        IReadOnlyList<string>? columns = null;
-        var explicitColumns = match.Groups["columns"];
-        if (explicitColumns.Success)
-        {
-            columns = ParseInsertColumns(explicitColumns.Value);
-        }
-        else if (tableSchemas.TryGetValue(table, out var schemaColumns))
-        {
-            columns = schemaColumns;
-        }
-
-        if (columns is null || columns.Count == 0)
-        {
-            throw new FormatException($"INSERT INTO {table} has no usable column list.");
-        }
-
-        var tuples = ParseValueTuples(statement[(match.Index + match.Length)..], cancellationToken);
-        foreach (var tuple in tuples)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (tuple.Count != columns.Count)
-            {
-                throw new FormatException(
-                    $"INSERT INTO {table} has {tuple.Count} values for {columns.Count} columns.");
+                throw new FormatException($"INSERT INTO {table} requires a VALUES tuple.");
             }
 
-            var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-            for (var index = 0; index < columns.Count; index++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!values.TryAdd(columns[index], DecodeScalar(tuple[index])))
-                {
-                    throw new FormatException($"INSERT INTO {table} repeats column {columns[index]}.");
-                }
-            }
+            rowNumber++;
+            var values = ReadTuple(source, table, columns, rowNumber);
             yield return new SqlInsertRow(table, values);
-        }
-    }
 
-    private static (string Table, string Body)? MatchCreateTable(
-        string statement,
-        CancellationToken cancellationToken)
-    {
-        var match = CreateTablePrefixRegex.Match(statement);
-        if (!match.Success)
-        {
-            return null;
-        }
-
-        var open = statement.IndexOf('(', match.Index + match.Length - 1);
-        var depth = 0;
-        var inQuote = false;
-        var quote = '\0';
-        for (var index = open; index < statement.Length; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var current = statement[index];
-            if (inQuote)
-            {
-                if (current == quote)
-                {
-                    if (index + 1 < statement.Length && statement[index + 1] == quote)
-                    {
-                        index++;
-                    }
-                    else
-                    {
-                        inQuote = false;
-                    }
-                }
-                continue;
-            }
-
-            if (current is '\'' or '\"' or '`')
-            {
-                inQuote = true;
-                quote = current;
-            }
-            else if (current == '(')
-            {
-                depth++;
-            }
-            else if (current == ')' && --depth == 0)
-            {
-                return (
-                    UnquoteIdentifier(match.Groups["table"].Value),
-                    statement[(open + 1)..index]);
-            }
-        }
-
-        throw new FormatException("CREATE TABLE contains an unterminated column list.");
-    }
-
-    private static IReadOnlyList<string> ParseCreateTableColumns(
-        string body,
-        CancellationToken cancellationToken)
-    {
-        var columns = new List<string>();
-        foreach (var item in SplitTopLevel(body, cancellationToken))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var trimmed = item.Trim();
-            if (trimmed.Length == 0 || IsTableConstraint(trimmed))
+            source.SkipTrivia();
+            var separator = source.Read();
+            if (separator == ',')
             {
                 continue;
             }
-
-            var identifier = ReadLeadingIdentifier(trimmed);
-            if (identifier.Length > 0)
+            if (separator == ';')
             {
-                columns.Add(identifier);
+                yield break;
             }
+            if (separator < 0)
+            {
+                throw new FormatException($"INSERT INTO {table} is missing its terminating semicolon.");
+            }
+            throw new FormatException($"INSERT INTO {table} has unexpected data after row {rowNumber}.");
         }
-        return columns;
     }
 
-    private static IReadOnlyList<string> ParseInsertColumns(string text)
+    private static IReadOnlyList<string> ReadColumns(CharacterSource source, string table)
     {
         var columns = new List<string>();
-        foreach (var item in text.Split(','))
+        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (true)
         {
-            var column = UnquoteIdentifier(item.Trim());
-            if (column.Length == 0 || !IsIdentifier(column))
+            source.SkipTrivia();
+            if (source.Peek() is ',' or ')')
             {
-                throw new FormatException("INSERT contains an invalid column name.");
+                throw new FormatException($"INSERT INTO {table} contains an empty column name.");
+            }
+
+            var column = source.ReadIdentifier($"INSERT INTO {table} column");
+            if (!unique.Add(column))
+            {
+                throw new FormatException($"INSERT INTO {table} repeats column {column}.");
             }
             columns.Add(column);
+            if (columns.Count > MaxColumns)
+            {
+                throw new FormatException($"INSERT INTO {table} has too many columns.");
+            }
+
+            source.SkipTrivia();
+            var separator = source.Read();
+            if (separator == ',')
+            {
+                continue;
+            }
+            if (separator == ')')
+            {
+                return columns;
+            }
+            throw new FormatException($"INSERT INTO {table} has a malformed column list.");
         }
-        return columns;
     }
 
-    private static IReadOnlyList<IReadOnlyList<string>> ParseValueTuples(
-        string text,
-        CancellationToken cancellationToken)
+    private static IReadOnlyDictionary<string, string?> ReadTuple(
+        CharacterSource source,
+        string table,
+        IReadOnlyList<string> columns,
+        int rowNumber)
     {
-        var tuples = new List<IReadOnlyList<string>>();
-        var tuple = new List<string>();
-        var field = new StringBuilder();
-        var depth = 0;
-        var inQuote = false;
-        var quote = '\0';
-        var needTupleAfterComma = false;
-
-        for (var index = 0; index < text.Length; index++)
+        var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < columns.Count; index++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var current = text[index];
-            if (inQuote)
-            {
-                field.Append(current);
-                if (current == quote)
-                {
-                    if (index + 1 < text.Length && text[index + 1] == quote)
-                    {
-                        field.Append(text[++index]);
-                    }
-                    else
-                    {
-                        inQuote = false;
-                    }
-                }
-                continue;
-            }
+            source.CancellationToken.ThrowIfCancellationRequested();
+            var column = columns[index];
+            values[column] = ReadScalar(source, table, rowNumber, column);
 
-            if (depth > 0)
+            source.SkipTrivia();
+            var separator = source.Read();
+            if (index + 1 < columns.Count)
             {
-                if (current is '\'' or '\"')
+                if (separator != ',')
                 {
-                    inQuote = true;
-                    quote = current;
-                    field.Append(current);
-                }
-                else if (current == '(')
-                {
-                    depth++;
-                    field.Append(current);
-                }
-                else if (current == ')')
-                {
-                    depth--;
-                    if (depth == 0)
-                    {
-                        tuple.Add(field.ToString());
-                        field.Clear();
-                        tuples.Add(tuple);
-                        tuple = new List<string>();
-                        needTupleAfterComma = false;
-                    }
-                    else
-                    {
-                        field.Append(current);
-                    }
-                }
-                else if (current == ',' && depth == 1)
-                {
-                    tuple.Add(field.ToString());
-                    field.Clear();
-                }
-                else
-                {
-                    field.Append(current);
-                }
-                continue;
-            }
-
-            if (char.IsWhiteSpace(current))
-            {
-                continue;
-            }
-            if (current == ',' && tuples.Count > 0 && !needTupleAfterComma)
-            {
-                needTupleAfterComma = true;
-                continue;
-            }
-            if (current == '(' && (tuples.Count == 0 || needTupleAfterComma))
-            {
-                depth = 1;
-                needTupleAfterComma = false;
-                continue;
-            }
-
-            throw new FormatException("INSERT VALUES contains unexpected data outside a tuple.");
-        }
-
-        if (inQuote || depth != 0 || needTupleAfterComma || tuples.Count == 0)
-        {
-            throw new FormatException("INSERT VALUES contains a malformed tuple list.");
-        }
-        return tuples;
-    }
-
-    private static IReadOnlyList<string> SplitTopLevel(
-        string text,
-        CancellationToken cancellationToken)
-    {
-        var values = new List<string>();
-        var value = new StringBuilder();
-        var depth = 0;
-        var inQuote = false;
-        var quote = '\0';
-        for (var index = 0; index < text.Length; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var current = text[index];
-            if (inQuote)
-            {
-                value.Append(current);
-                if (current == quote)
-                {
-                    if (index + 1 < text.Length && text[index + 1] == quote)
-                    {
-                        value.Append(text[++index]);
-                    }
-                    else
-                    {
-                        inQuote = false;
-                    }
+                    throw new FormatException(
+                        $"INSERT INTO {table} row {rowNumber} has fewer values than columns.");
                 }
             }
-            else if (current is '\'' or '\"' or '`')
+            else if (separator != ')')
             {
-                inQuote = true;
-                quote = current;
-                value.Append(current);
-            }
-            else if (current == '(')
-            {
-                depth++;
-                value.Append(current);
-            }
-            else if (current == ')')
-            {
-                depth--;
-                value.Append(current);
-            }
-            else if (current == ',' && depth == 0)
-            {
-                values.Add(value.ToString());
-                value.Clear();
-            }
-            else
-            {
-                value.Append(current);
+                throw new FormatException(
+                    $"INSERT INTO {table} row {rowNumber} has more values than columns or is malformed.");
             }
         }
-        values.Add(value.ToString());
         return values;
     }
 
-    private static string? DecodeScalar(string raw)
+    private static string? ReadScalar(
+        CharacterSource source,
+        string table,
+        int rowNumber,
+        string column)
     {
-        var trimmed = raw.Trim();
-        if (string.Equals(trimmed, "NULL", StringComparison.OrdinalIgnoreCase))
+        source.SkipTrivia();
+        var first = source.Read();
+        if (first < 0 || first is ',' or ')')
+        {
+            if (first >= 0)
+            {
+                source.Unread(first);
+            }
+            throw ScalarError(table, rowNumber, column, "empty value");
+        }
+
+        if (first == '\'')
+        {
+            return ReadQuotedString(source, table, rowNumber, column);
+        }
+
+        var token = new StringBuilder();
+        token.Append((char)first);
+        while (true)
+        {
+            source.CancellationToken.ThrowIfCancellationRequested();
+            var current = source.Read();
+            if (current < 0)
+            {
+                break;
+            }
+            if (char.IsWhiteSpace((char)current) || current is ',' or ')')
+            {
+                source.Unread(current);
+                break;
+            }
+            token.Append((char)current);
+        }
+
+        var raw = token.ToString();
+        if (string.Equals(raw, "NULL", StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
-        if (trimmed.Length >= 2 && trimmed[0] == '\'' && trimmed[^1] == '\'')
+        if (string.Equals(raw, "TRUE", StringComparison.OrdinalIgnoreCase))
         {
-            var decoded = new StringBuilder(trimmed.Length - 2);
-            for (var index = 1; index < trimmed.Length - 1; index++)
+            return "TRUE";
+        }
+        if (string.Equals(raw, "FALSE", StringComparison.OrdinalIgnoreCase))
+        {
+            return "FALSE";
+        }
+        if (NumericLiteralRegex.IsMatch(raw)
+            && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+            && double.IsFinite(number))
+        {
+            return raw;
+        }
+
+        throw ScalarError(table, rowNumber, column, $"unsupported scalar {raw}");
+    }
+
+    private static string ReadQuotedString(
+        CharacterSource source,
+        string table,
+        int rowNumber,
+        string column)
+    {
+        var value = new StringBuilder();
+        while (true)
+        {
+            source.CancellationToken.ThrowIfCancellationRequested();
+            var current = source.Read();
+            if (current < 0)
             {
-                var current = trimmed[index];
-                if (current == '\'' && index + 1 < trimmed.Length - 1 && trimmed[index + 1] == '\'')
-                {
-                    decoded.Append('\'');
-                    index++;
-                }
-                else if (current == '\'')
-                {
-                    return trimmed;
-                }
-                else
-                {
-                    decoded.Append(current);
-                }
+                throw ScalarError(table, rowNumber, column, "unterminated quoted string");
             }
-            return decoded.ToString();
+            if (current != '\'')
+            {
+                value.Append((char)current);
+                continue;
+            }
+
+            var next = source.Read();
+            if (next == '\'')
+            {
+                value.Append('\'');
+                continue;
+            }
+            if (next >= 0)
+            {
+                source.Unread(next);
+            }
+            return value.ToString();
         }
-        return trimmed;
     }
 
-    private static bool IsTableConstraint(string text)
+    private static void ValidateCreate(string statement)
     {
-        var first = ReadLeadingIdentifier(text);
-        return first.Equals("PRIMARY", StringComparison.OrdinalIgnoreCase)
-            || first.Equals("FOREIGN", StringComparison.OrdinalIgnoreCase)
-            || first.Equals("UNIQUE", StringComparison.OrdinalIgnoreCase)
-            || first.Equals("CONSTRAINT", StringComparison.OrdinalIgnoreCase)
-            || first.Equals("CHECK", StringComparison.OrdinalIgnoreCase)
-            || first.Equals("EXCLUDE", StringComparison.OrdinalIgnoreCase)
-            || first.Equals("KEY", StringComparison.OrdinalIgnoreCase)
-            || first.Equals("INDEX", StringComparison.OrdinalIgnoreCase);
+        var indexMatch = CreateIndexRegex.Match(statement);
+        if (indexMatch.Success)
+        {
+            var name = indexMatch.Groups["name"].Value;
+            var indexTable = indexMatch.Groups["table"].Value;
+            var columns = indexMatch.Groups["columns"].Value
+                .Split(',')
+                .Select(column => column.Trim())
+                .ToArray();
+            if (CreateIndexes.TryGetValue(name, out var expectedIndex)
+                && string.Equals(indexTable, expectedIndex.Table, StringComparison.OrdinalIgnoreCase)
+                && columns.SequenceEqual(expectedIndex.Columns, StringComparer.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            throw new FormatException("CREATE INDEX does not match a current writer index.");
+        }
+
+        var match = CreateTableRegex.Match(statement);
+        if (!match.Success)
+        {
+            throw new FormatException("Unsupported or malformed CREATE statement.");
+        }
+
+        var table = match.Groups["table"].Value;
+        if (!CreateTableColumns.TryGetValue(table, out var expected))
+        {
+            throw new FormatException($"Unsupported CREATE TABLE {table}.");
+        }
+
+        var actual = ReadCreateColumnNames(match.Groups["body"].Value);
+        if (!actual.SequenceEqual(expected, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new FormatException($"CREATE TABLE {table} does not match the current writer schema.");
+        }
     }
 
-    private static string ReadLeadingIdentifier(string text)
+    private static IReadOnlyList<string> ReadCreateColumnNames(string body)
     {
-        var trimmed = text.TrimStart();
-        if (trimmed.Length == 0)
+        var columns = new List<string>();
+        var item = new StringBuilder();
+        var depth = 0;
+        var quote = '\0';
+        for (var index = 0; index < body.Length; index++)
         {
-            return string.Empty;
+            var current = body[index];
+            if (quote != '\0')
+            {
+                item.Append(current);
+                if (current == quote)
+                {
+                    if (index + 1 < body.Length && body[index + 1] == quote)
+                    {
+                        item.Append(body[++index]);
+                    }
+                    else
+                    {
+                        quote = '\0';
+                    }
+                }
+                continue;
+            }
+
+            if (current is '\'' or '\"')
+            {
+                quote = current;
+                item.Append(current);
+            }
+            else if (current == '(')
+            {
+                depth++;
+                item.Append(current);
+            }
+            else if (current == ')')
+            {
+                if (depth == 0)
+                {
+                    throw new FormatException("CREATE TABLE has unbalanced parentheses.");
+                }
+                depth--;
+                item.Append(current);
+            }
+            else if (current == ',' && depth == 0)
+            {
+                columns.Add(ReadDefinitionIdentifier(item.ToString()));
+                item.Clear();
+            }
+            else
+            {
+                item.Append(current);
+            }
         }
-        if (trimmed[0] is '\"' or '`')
+
+        if (quote != '\0' || depth != 0)
         {
-            var end = trimmed.IndexOf(trimmed[0], 1);
-            return end > 1 ? trimmed[1..end] : string.Empty;
+            throw new FormatException("CREATE TABLE has an unterminated quote or parentheses.");
         }
+        columns.Add(ReadDefinitionIdentifier(item.ToString()));
+        return columns;
+    }
+
+    private static string ReadDefinitionIdentifier(string definition)
+    {
+        var trimmed = definition.TrimStart();
         var length = 0;
-        while (length < trimmed.Length && (char.IsLetterOrDigit(trimmed[length]) || trimmed[length] == '_'))
+        while (length < trimmed.Length
+               && (char.IsLetterOrDigit(trimmed[length]) || trimmed[length] == '_'))
         {
             length++;
+        }
+        if (length == 0)
+        {
+            throw new FormatException("CREATE TABLE contains an invalid column definition.");
         }
         return trimmed[..length];
     }
 
-    private static string UnquoteIdentifier(string value)
+    private static void ValidateDelete(string statement)
     {
-        var trimmed = value.Trim();
-        return trimmed.Length >= 2
-            && ((trimmed[0] == '\"' && trimmed[^1] == '\"') || (trimmed[0] == '`' && trimmed[^1] == '`'))
-            ? trimmed[1..^1]
-            : trimmed;
+        var match = DeleteRegex.Match(statement);
+        if (!match.Success)
+        {
+            throw new FormatException("Unsupported or malformed DELETE statement.");
+        }
+
+        var table = match.Groups["table"].Value;
+        var column = match.Groups["column"].Value;
+        if ((table.Equals("messages", StringComparison.OrdinalIgnoreCase)
+             && column.Equals("session_wxid", StringComparison.OrdinalIgnoreCase))
+            || (table.Equals("sessions", StringComparison.OrdinalIgnoreCase)
+                && column.Equals("wxid", StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+        throw new FormatException("DELETE table and identity column do not match current CipherTalk output.");
     }
 
-    private static bool IsIdentifier(string value) =>
-        value.Length > 0
-        && (char.IsLetter(value[0]) || value[0] == '_')
-        && value.Skip(1).All(character => char.IsLetterOrDigit(character) || character == '_');
+    private static FormatException ScalarError(
+        string table,
+        int rowNumber,
+        string column,
+        string message) =>
+        new($"INSERT INTO {table} row {rowNumber} column {column}: {message}.");
+
+    private sealed class CharacterSource(TextReader reader, CancellationToken cancellationToken)
+    {
+        private readonly Stack<int> _pushback = new();
+
+        internal CancellationToken CancellationToken { get; } = cancellationToken;
+
+        internal int Read()
+        {
+            CancellationToken.ThrowIfCancellationRequested();
+            return _pushback.Count > 0 ? _pushback.Pop() : reader.Read();
+        }
+
+        internal int Peek()
+        {
+            var value = Read();
+            if (value >= 0)
+            {
+                Unread(value);
+            }
+            return value;
+        }
+
+        internal void Unread(int value)
+        {
+            if (value >= 0)
+            {
+                _pushback.Push(value);
+            }
+        }
+
+        internal void SkipTrivia()
+        {
+            while (true)
+            {
+                CancellationToken.ThrowIfCancellationRequested();
+                var first = Read();
+                if (first < 0)
+                {
+                    return;
+                }
+                if (char.IsWhiteSpace((char)first))
+                {
+                    continue;
+                }
+                if (first is not ('-' or '/'))
+                {
+                    Unread(first);
+                    return;
+                }
+
+                var second = Read();
+                if (first == '-' && second == '-')
+                {
+                    SkipLineComment();
+                    continue;
+                }
+                if (first == '/' && second == '*')
+                {
+                    SkipBlockComment();
+                    continue;
+                }
+                Unread(second);
+                Unread(first);
+                return;
+            }
+        }
+
+        internal string ReadIdentifier(string description)
+        {
+            SkipTrivia();
+            var value = new StringBuilder();
+            var first = Read();
+            if (first < 0 || !(char.IsLetter((char)first) || first == '_'))
+            {
+                throw new FormatException($"Expected {description}.");
+            }
+            value.Append((char)first);
+            while (true)
+            {
+                CancellationToken.ThrowIfCancellationRequested();
+                var current = Read();
+                if (current < 0)
+                {
+                    break;
+                }
+                if (!(char.IsLetterOrDigit((char)current) || current == '_'))
+                {
+                    Unread(current);
+                    break;
+                }
+                value.Append((char)current);
+                if (value.Length > MaxIdentifierLength)
+                {
+                    throw new FormatException($"{description} is too long.");
+                }
+            }
+            return value.ToString();
+        }
+
+        internal void ExpectKeyword(string expected)
+        {
+            var actual = ReadIdentifier(expected);
+            if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new FormatException($"Expected {expected}, found {actual}.");
+            }
+        }
+
+        internal void ExpectStatementEnd(string statement)
+        {
+            SkipTrivia();
+            if (Read() != ';')
+            {
+                throw new FormatException($"{statement} must end with a semicolon.");
+            }
+        }
+
+        internal string ReadFramingStatement(string firstKeyword)
+        {
+            var statement = new StringBuilder(firstKeyword);
+            var quote = '\0';
+            while (true)
+            {
+                CancellationToken.ThrowIfCancellationRequested();
+                var current = Read();
+                if (current < 0)
+                {
+                    throw new FormatException($"{firstKeyword} statement is missing its terminating semicolon.");
+                }
+
+                if (quote != '\0')
+                {
+                    statement.Append((char)current);
+                    if (current == quote)
+                    {
+                        var next = Read();
+                        if (next == quote)
+                        {
+                            statement.Append((char)next);
+                        }
+                        else
+                        {
+                            quote = '\0';
+                            Unread(next);
+                        }
+                    }
+                }
+                else if (current is '\'' or '\"')
+                {
+                    quote = (char)current;
+                    statement.Append((char)current);
+                }
+                else if (current == ';')
+                {
+                    return statement.ToString();
+                }
+                else
+                {
+                    statement.Append((char)current);
+                }
+
+                if (statement.Length > MaxFramingLength)
+                {
+                    throw new FormatException($"{firstKeyword} framing statement is too large.");
+                }
+            }
+        }
+
+        private void SkipLineComment()
+        {
+            while (true)
+            {
+                CancellationToken.ThrowIfCancellationRequested();
+                var current = Read();
+                if (current < 0 || current is '\r' or '\n')
+                {
+                    return;
+                }
+            }
+        }
+
+        private void SkipBlockComment()
+        {
+            var previous = -1;
+            while (true)
+            {
+                CancellationToken.ThrowIfCancellationRequested();
+                var current = Read();
+                if (current < 0)
+                {
+                    throw new FormatException("Unterminated SQL block comment.");
+                }
+                if (previous == '*' && current == '/')
+                {
+                    return;
+                }
+                previous = current;
+            }
+        }
+    }
 }

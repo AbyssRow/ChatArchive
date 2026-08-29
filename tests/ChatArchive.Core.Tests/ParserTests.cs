@@ -1156,6 +1156,8 @@ public class ParserTests : IDisposable
         var path = Path.Combine(_dir, "ciphertalk.sql");
         File.WriteAllText(path, """
             -- 密语 CipherTalk - 聊天记录导出
+            DELETE FROM messages WHERE session_wxid = 'group@chatroom';
+            DELETE FROM sessions WHERE wxid = 'group@chatroom';
             CREATE TABLE IF NOT EXISTS sessions (
               wxid TEXT PRIMARY KEY, display_name TEXT NOT NULL, session_type TEXT NOT NULL,
               owner_id TEXT, message_count INTEGER, first_message_time BIGINT,
@@ -1167,6 +1169,9 @@ public class ParserTests : IDisposable
               is_send SMALLINT, sender_username TEXT, sender_display_name TEXT,
               group_nickname TEXT, reply_to_message_id TEXT
             );
+            CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_wxid);
+            CREATE INDEX IF NOT EXISTS idx_messages_create_time ON messages(create_time);
+            CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_username);
             INSERT INTO sessions
               (wxid, display_name, session_type, owner_id, message_count, first_message_time, last_message_time, exported_at)
             VALUES ('group@chatroom', '项目群', 'group', 'wxid_self', 1, 1700000123, 1700000123, 1700000200);
@@ -1223,12 +1228,59 @@ public class ParserTests : IDisposable
 
         var format = new CipherTalkSqlExportFormat();
         Assert.False(format.Matches(path));
-        using var export = format.Open(path);
-        var error = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
+        var error = Assert.Throws<ImportFormatException>(() => format.Open(path));
 
         Assert.Contains(path, error.Message);
         Assert.Contains("messages", error.Message);
         Assert.Contains("session-a", error.Message);
+    }
+
+    [Fact]
+    public void CipherTalkSql_RejectsCombinedSessionRows()
+    {
+        var path = Path.Combine(_dir, "ciphertalk_combined.sql");
+        File.WriteAllText(path, """
+            INSERT INTO sessions
+              (wxid, display_name, session_type, owner_id, message_count, first_message_time, last_message_time, exported_at)
+            VALUES
+              ('session-a', 'A', 'private', NULL, 1, 0, 0, 0),
+              ('session-b', 'B', 'private', NULL, 1, 0, 0, 0);
+            INSERT INTO messages
+              (session_wxid, local_id, create_time, formatted_time, msg_type, content, is_send, sender_username, sender_display_name, group_nickname, reply_to_message_id)
+            VALUES ('session-a', 1, 0, '1970-01-01 00:00:00', '文本消息', 'a', 0, NULL, 'Alice', NULL, NULL);
+            """);
+
+        var format = new CipherTalkSqlExportFormat();
+        Assert.False(format.Matches(path));
+        var error = Assert.Throws<ImportFormatException>(() => format.Open(path));
+
+        Assert.Contains(path, error.Message);
+        Assert.Contains("sessions", error.Message);
+        Assert.Contains("2", error.Message);
+    }
+
+    [Fact]
+    public void CipherTalkSql_RejectsMixedMessageSessions()
+    {
+        var path = Path.Combine(_dir, "ciphertalk_mixed.sql");
+        File.WriteAllText(path, """
+            INSERT INTO sessions
+              (wxid, display_name, session_type, owner_id, message_count, first_message_time, last_message_time, exported_at)
+            VALUES ('session-a', 'A', 'private', NULL, 2, 0, 0, 0);
+            INSERT INTO messages
+              (session_wxid, local_id, create_time, formatted_time, msg_type, content, is_send, sender_username, sender_display_name, group_nickname, reply_to_message_id)
+            VALUES
+              ('session-a', 1, 0, '1970-01-01 00:00:00', '文本消息', 'a', 0, NULL, 'Alice', NULL, NULL),
+              ('session-b', 2, 1, '1970-01-01 00:00:01', '文本消息', 'b', 0, NULL, 'Bob', NULL, NULL);
+            """);
+
+        var format = new CipherTalkSqlExportFormat();
+        Assert.False(format.Matches(path));
+        var error = Assert.Throws<ImportFormatException>(() => format.Open(path));
+
+        Assert.Contains(path, error.Message);
+        Assert.Contains("messages", error.Message);
+        Assert.Contains("2", error.Message);
     }
 
     [Fact]
