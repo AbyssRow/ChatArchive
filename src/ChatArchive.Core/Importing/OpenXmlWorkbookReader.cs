@@ -1,6 +1,4 @@
 using System.Globalization;
-using System.Text;
-using System.Xml;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
@@ -18,7 +16,6 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 {
     private const string WorkbookEntry = "xl/workbook.xml";
     private const string SpreadsheetNamespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-    private const string OfficeRelationshipNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private const string WorksheetRelationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
     private const string SharedStringsRelationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings";
     private const string HyperlinkRelationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
@@ -146,19 +143,18 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     private IEnumerable<OpenXmlRow> ReadRowsCore(OpenXmlSheet sheet, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var hyperlinks = ReadHyperlinks(sheet, token);
         var worksheetPart = _worksheetParts[sheet];
-        using var stream = worksheetPart.GetStream(FileMode.Open, FileAccess.Read);
-        using var reader = CreateXmlReader(stream);
+        var hyperlinks = ReadHyperlinks(sheet, worksheetPart, token);
+        using var reader = SdkOpenXmlReader.Create(worksheetPart);
         var sawWorksheet = false;
         var sawSheetData = false;
         var insideSheetData = false;
         uint previousRowIndex = 0;
         while (reader.Read())
         {
-            if (reader.NodeType == XmlNodeType.Element && reader.Depth == 0)
+            if (reader.IsStartElement && reader.Depth == 0)
             {
-                if (reader.LocalName != "worksheet" || reader.NamespaceURI != SpreadsheetNamespace)
+                if (!IsSpreadsheetElement(reader, "worksheet"))
                 {
                     throw Error(_filePath, sheet.EntryPath, "worksheet 根元素无效");
                 }
@@ -167,9 +163,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 continue;
             }
 
-            if (reader.NodeType == XmlNodeType.Element
-                && reader.LocalName == "sheetData"
-                && reader.NamespaceURI == SpreadsheetNamespace)
+            if (reader.IsStartElement && IsSpreadsheetElement(reader, "sheetData"))
             {
                 if (reader.Depth != 1 || sawSheetData)
                 {
@@ -177,29 +171,24 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 }
 
                 sawSheetData = true;
-                insideSheetData = !reader.IsEmptyElement;
+                insideSheetData = true;
                 continue;
             }
 
-            if (reader.NodeType == XmlNodeType.EndElement
+            if (reader.IsEndElement
                 && reader.Depth == 1
-                && reader.LocalName == "sheetData"
-                && reader.NamespaceURI == SpreadsheetNamespace)
+                && IsSpreadsheetElement(reader, "sheetData"))
             {
                 insideSheetData = false;
                 continue;
             }
 
-            if (reader.NodeType == XmlNodeType.Element
-                && reader.LocalName == "c"
-                && reader.NamespaceURI == SpreadsheetNamespace)
+            if (reader.IsStartElement && IsSpreadsheetElement(reader, "c"))
             {
                 throw Error(_filePath, sheet.EntryPath, "c 必须是 row 的直接子元素");
             }
 
-            if (reader.NodeType != XmlNodeType.Element
-                || reader.LocalName != "row"
-                || reader.NamespaceURI != SpreadsheetNamespace)
+            if (!reader.IsStartElement || !IsSpreadsheetElement(reader, "row"))
             {
                 continue;
             }
@@ -210,7 +199,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             }
 
             token.ThrowIfCancellationRequested();
-            var rowText = reader.GetAttribute("r");
+            var rowText = GetAttribute(reader, "r", string.Empty);
             if (!uint.TryParse(rowText, NumberStyles.None, CultureInfo.InvariantCulture, out var rowIndex)
                 || rowIndex is 0 or > MaximumRowIndex)
             {
@@ -226,52 +215,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             }
 
             previousRowIndex = rowIndex;
-
-            var cells = new Dictionary<int, OpenXmlCell>();
-            using (var rowReader = reader.ReadSubtree())
-            {
-                rowReader.Read();
-                while (rowReader.Read())
-                {
-                    if (rowReader.NodeType == XmlNodeType.Element
-                        && rowReader.LocalName == "row"
-                        && rowReader.NamespaceURI == SpreadsheetNamespace)
-                    {
-                        throw Error(
-                            _filePath,
-                            sheet.EntryPath,
-                            $"行 {rowIndex} 中 row 不能嵌套，row 必须是 sheetData 的直接子元素");
-                    }
-
-                    if (rowReader.NodeType != XmlNodeType.Element
-                        || rowReader.LocalName != "c"
-                        || rowReader.NamespaceURI != SpreadsheetNamespace)
-                    {
-                        continue;
-                    }
-
-                    if (rowReader.Depth != 1)
-                    {
-                        throw Error(
-                            _filePath,
-                            sheet.EntryPath,
-                            $"行 {rowIndex} 中 c 必须是 row 的直接子元素");
-                    }
-
-                    token.ThrowIfCancellationRequested();
-                    var cell = ReadCell(rowReader, sheet.EntryPath, rowIndex, hyperlinks, token);
-                    if (!cells.TryAdd(cell.ColumnIndex, cell))
-                    {
-                        throw CellError(
-                            _filePath,
-                            sheet.EntryPath,
-                            cell.Reference,
-                            $"第 {cell.ColumnIndex} 列重复");
-                    }
-                }
-            }
-
-            yield return new OpenXmlRow(rowIndex, cells);
+            yield return ReadRow(reader, sheet.EntryPath, rowIndex, hyperlinks, token);
         }
 
         if (!sawWorksheet)
@@ -280,60 +224,175 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         }
     }
 
-    private OpenXmlCell ReadCell(
-        XmlReader cellReader,
+    private OpenXmlRow ReadRow(
+        SdkOpenXmlReader reader,
         string entryPath,
         uint rowIndex,
         IReadOnlyDictionary<string, string> hyperlinks,
         CancellationToken token)
     {
-        var reference = cellReader.GetAttribute("r") ?? string.Empty;
+        var rowDepth = reader.Depth;
+        var cells = new Dictionary<int, OpenXmlCell>();
+        while (reader.Read())
+        {
+            if (reader.IsEndElement
+                && reader.Depth == rowDepth
+                && IsSpreadsheetElement(reader, "row"))
+            {
+                return new OpenXmlRow(rowIndex, cells);
+            }
+
+            if (!reader.IsStartElement)
+            {
+                continue;
+            }
+
+            if (IsSpreadsheetElement(reader, "row"))
+            {
+                throw Error(
+                    _filePath,
+                    entryPath,
+                    $"行 {rowIndex} 中 row 不能嵌套，row 必须是 sheetData 的直接子元素");
+            }
+
+            if (!IsSpreadsheetElement(reader, "c"))
+            {
+                if (IsSpreadsheetElement(reader, "v")
+                    || IsSpreadsheetElement(reader, "f")
+                    || IsSpreadsheetElement(reader, "is")
+                    || IsSpreadsheetElement(reader, "t"))
+                {
+                    throw Error(
+                        _filePath,
+                        entryPath,
+                        $"行 {rowIndex} 中 {reader.LocalName} 必须位于 c 元素内");
+                }
+
+                continue;
+            }
+
+            if (reader.Depth != rowDepth + 1)
+            {
+                throw Error(
+                    _filePath,
+                    entryPath,
+                    $"行 {rowIndex} 中 c 必须是 row 的直接子元素");
+            }
+
+            token.ThrowIfCancellationRequested();
+            var element = reader.LoadCurrentElement() as Cell
+                ?? throw Error(_filePath, entryPath, $"行 {rowIndex} 中 c 元素无效");
+            var cell = ReadCell(element, entryPath, rowIndex, hyperlinks);
+            if (!cells.TryAdd(cell.ColumnIndex, cell))
+            {
+                throw CellError(
+                    _filePath,
+                    entryPath,
+                    cell.Reference,
+                    $"第 {cell.ColumnIndex} 列重复");
+            }
+        }
+
+        throw Error(_filePath, entryPath, $"行 {rowIndex} 未正常结束");
+    }
+
+    private OpenXmlCell ReadCell(
+        Cell cell,
+        string entryPath,
+        uint rowIndex,
+        IReadOnlyDictionary<string, string> hyperlinks)
+    {
+        var reference = cell.GetAttribute("r", string.Empty).Value ?? string.Empty;
         var (columnIndex, referencedRow, normalizedReference) = ParseCellReference(reference, entryPath);
         if (referencedRow != rowIndex)
         {
             throw CellError(_filePath, entryPath, reference, $"引用行 {referencedRow} 与所在行 {rowIndex} 不一致");
         }
 
-        var type = cellReader.GetAttribute("t");
+        var type = cell.GetAttribute("t", string.Empty).Value;
         var hasFormula = false;
-        var hasCachedValue = false;
-        var cachedValue = string.Empty;
-        var inlineText = new StringBuilder();
-        using (var contents = cellReader.ReadSubtree())
+        var cachedValues = new List<OpenXmlElement>();
+        var inlineText = new List<string>();
+        foreach (var element in cell.Descendants())
         {
-            contents.Read();
-            while (contents.Read())
+            if (IsSpreadsheetElement(element, "c"))
             {
-                token.ThrowIfCancellationRequested();
-                if (contents.NodeType != XmlNodeType.Element || contents.NamespaceURI != SpreadsheetNamespace)
+                throw CellError(_filePath, entryPath, reference, "c 不能嵌套");
+            }
+
+            if (IsSpreadsheetElement(element, "row")
+                || IsSpreadsheetElement(element, "sheetData")
+                || IsSpreadsheetElement(element, "hyperlink")
+                || IsSpreadsheetElement(element, "hyperlinks"))
+            {
+                throw CellError(
+                    _filePath,
+                    entryPath,
+                    reference,
+                    $"包含位置无效的 {element.LocalName} 元素");
+            }
+
+            if (IsSpreadsheetElement(element, "f"))
+            {
+                if (!ReferenceEquals(element.Parent, cell) || element.ChildElements.Count != 0)
                 {
-                    continue;
+                    throw CellError(_filePath, entryPath, reference, "f 必须是 c 的直接文本子元素");
                 }
 
-                switch (contents.LocalName)
-                {
-                    case "f":
-                        hasFormula = true;
-                        break;
-                    case "v":
-                        if (hasCachedValue)
-                        {
-                            throw CellError(_filePath, entryPath, reference, "包含重复缓存值");
-                        }
+                hasFormula = true;
+                continue;
+            }
 
-                        hasCachedValue = true;
-                        cachedValue = contents.ReadElementContentAsString();
-                        break;
-                    case "t" when type == "inlineStr":
-                        inlineText.Append(contents.ReadElementContentAsString());
-                        break;
+            if (IsSpreadsheetElement(element, "v"))
+            {
+                if (!ReferenceEquals(element.Parent, cell) || element.ChildElements.Count != 0)
+                {
+                    throw CellError(_filePath, entryPath, reference, "v 必须是 c 的直接文本子元素");
                 }
+
+                cachedValues.Add(element);
+                continue;
+            }
+
+            if (IsSpreadsheetElement(element, "is")
+                && !ReferenceEquals(element.Parent, cell))
+            {
+                throw CellError(_filePath, entryPath, reference, "is 必须是 c 的直接子元素");
+            }
+
+            if (!IsSpreadsheetElement(element, "t"))
+            {
+                continue;
+            }
+
+            if (element.ChildElements.Count != 0
+                || !HasDirectInlineStringAncestor(element, cell))
+            {
+                throw CellError(_filePath, entryPath, reference, "t 必须位于 c 的直接 is 子元素内");
+            }
+
+            if (type == "inlineStr")
+            {
+                inlineText.Add(element.InnerText);
             }
         }
 
+        if (cachedValues.Count > 1)
+        {
+            throw CellError(_filePath, entryPath, reference, "包含重复缓存值");
+        }
+
+        var hasCachedValue = cachedValues.Count == 1;
+        var cachedValue = hasCachedValue ? cachedValues[0].InnerText : string.Empty;
         var value = hasFormula && !hasCachedValue
             ? string.Empty
-            : ResolveCellValue(type, hasCachedValue, cachedValue, inlineText.ToString(), entryPath, reference);
+            : ResolveCellValue(
+                type,
+                hasCachedValue,
+                cachedValue,
+                string.Concat(inlineText),
+                entryPath,
+                reference);
         hyperlinks.TryGetValue(normalizedReference, out var hyperlink);
         return new OpenXmlCell(columnIndex, reference, value, hyperlink);
     }
@@ -379,22 +438,23 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         return _sharedStrings[index];
     }
 
-    private IReadOnlyDictionary<string, string> ReadHyperlinks(OpenXmlSheet sheet, CancellationToken token)
+    private IReadOnlyDictionary<string, string> ReadHyperlinks(
+        OpenXmlSheet sheet,
+        WorksheetPart worksheetPart,
+        CancellationToken token)
     {
         var hyperlinkRelationshipIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var hyperlinkDeclarations = 0;
-        var worksheetPart = _worksheetParts[sheet];
-        using (var stream = worksheetPart.GetStream(FileMode.Open, FileAccess.Read))
-        using (var reader = CreateXmlReader(stream))
+        using (var reader = SdkOpenXmlReader.Create(worksheetPart))
         {
             var sawWorksheet = false;
             var sawHyperlinks = false;
             var insideHyperlinks = false;
             while (reader.Read())
             {
-                if (reader.NodeType == XmlNodeType.Element && reader.Depth == 0)
+                if (reader.IsStartElement && reader.Depth == 0)
                 {
-                    if (reader.LocalName != "worksheet" || reader.NamespaceURI != SpreadsheetNamespace)
+                    if (!IsSpreadsheetElement(reader, "worksheet"))
                     {
                         throw Error(_filePath, sheet.EntryPath, "worksheet 根元素无效");
                     }
@@ -403,17 +463,14 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                     continue;
                 }
 
-                if (reader.NodeType == XmlNodeType.Element
-                    && reader.LocalName == "sheetData"
-                    && reader.NamespaceURI == SpreadsheetNamespace
+                if (reader.IsStartElement
+                    && IsSpreadsheetElement(reader, "sheetData")
                     && reader.Depth != 1)
                 {
                     throw Error(_filePath, sheet.EntryPath, "sheetData 必须是 worksheet 的直接子元素");
                 }
 
-                if (reader.NodeType == XmlNodeType.Element
-                    && reader.LocalName == "hyperlinks"
-                    && reader.NamespaceURI == SpreadsheetNamespace)
+                if (reader.IsStartElement && IsSpreadsheetElement(reader, "hyperlinks"))
                 {
                     if (reader.Depth != 1 || sawHyperlinks)
                     {
@@ -421,22 +478,19 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                     }
 
                     sawHyperlinks = true;
-                    insideHyperlinks = !reader.IsEmptyElement;
+                    insideHyperlinks = true;
                     continue;
                 }
 
-                if (reader.NodeType == XmlNodeType.EndElement
+                if (reader.IsEndElement
                     && reader.Depth == 1
-                    && reader.LocalName == "hyperlinks"
-                    && reader.NamespaceURI == SpreadsheetNamespace)
+                    && IsSpreadsheetElement(reader, "hyperlinks"))
                 {
                     insideHyperlinks = false;
                     continue;
                 }
 
-                if (reader.NodeType != XmlNodeType.Element
-                    || reader.LocalName != "hyperlink"
-                    || reader.NamespaceURI != SpreadsheetNamespace)
+                if (!reader.IsStartElement || !IsSpreadsheetElement(reader, "hyperlink"))
                 {
                     continue;
                 }
@@ -456,9 +510,19 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 }
 
                 hyperlinkDeclarations++;
-                var reference = reader.GetAttribute("ref") ?? string.Empty;
+                var hyperlink = reader.LoadCurrentElement() as Hyperlink
+                    ?? throw Error(_filePath, sheet.EntryPath, "hyperlink 元素无效");
+                if (hyperlink.Descendants().Any(IsForbiddenHyperlinkDescendant))
+                {
+                    throw Error(
+                        _filePath,
+                        sheet.EntryPath,
+                        "hyperlink 包含位置无效的工作表元素，必须是 hyperlinks 的直接空子元素");
+                }
+
+                var reference = hyperlink.Reference?.Value ?? string.Empty;
                 var (_, _, normalizedReference) = ParseCellReference(reference, sheet.EntryPath);
-                var relationshipId = reader.GetAttribute("id", OfficeRelationshipNamespace);
+                var relationshipId = hyperlink.Id?.Value;
                 if (string.IsNullOrWhiteSpace(relationshipId))
                 {
                     throw CellError(_filePath, sheet.EntryPath, reference, "超链接缺少关系 ID");
@@ -1203,16 +1267,44 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         return (columnIndex, rowIndex, normalized);
     }
 
-    private static XmlReader CreateXmlReader(Stream stream)
+    private static bool HasDirectInlineStringAncestor(OpenXmlElement element, Cell cell)
     {
-        return XmlReader.Create(stream, new XmlReaderSettings
+        for (var parent = element.Parent;
+             parent is not null && !ReferenceEquals(parent, cell);
+             parent = parent.Parent)
         {
-            CloseInput = false,
-            DtdProcessing = DtdProcessing.Prohibit,
-            XmlResolver = null,
-            IgnoreComments = true,
-            IgnoreProcessingInstructions = true,
-        });
+            if (IsSpreadsheetElement(parent, "is"))
+            {
+                return ReferenceEquals(parent.Parent, cell);
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsForbiddenHyperlinkDescendant(OpenXmlElement element) =>
+        element.NamespaceUri == SpreadsheetNamespace;
+
+    private static bool IsSpreadsheetElement(SdkOpenXmlReader reader, string localName) =>
+        reader.LocalName == localName && reader.NamespaceUri == SpreadsheetNamespace;
+
+    private static bool IsSpreadsheetElement(OpenXmlElement element, string localName) =>
+        element.LocalName == localName && element.NamespaceUri == SpreadsheetNamespace;
+
+    private static string? GetAttribute(
+        SdkOpenXmlReader reader,
+        string localName,
+        string namespaceUri)
+    {
+        foreach (var attribute in reader.Attributes)
+        {
+            if (attribute.LocalName == localName && attribute.NamespaceUri == namespaceUri)
+            {
+                return attribute.Value;
+            }
+        }
+
+        return null;
     }
 
     private static T WithEntryFormatErrors<T>(string filePath, string entryPath, Func<T> read)
@@ -1245,7 +1337,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         or InvalidDataException
         or InvalidOperationException
         or OpenXmlPackageException
-        or XmlException
+        or System.Xml.XmlException
         or ArgumentException
         or NotSupportedException;
 
