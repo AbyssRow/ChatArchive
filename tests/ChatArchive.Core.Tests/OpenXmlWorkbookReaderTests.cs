@@ -671,6 +671,79 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
         Assert.Contains("xl/workbook.xml", error.Message);
     }
 
+    [Theory]
+    [InlineData("<sheets />", "sheets")]
+    [InlineData("<workbook />", "workbook")]
+    [InlineData("<sheet />", "sheet")]
+    public void OpenXmlReader_RejectsStructureQNameHiddenInsideWorkbookSchemaLeaf(
+        string hiddenMarkup,
+        string hiddenLocalName)
+    {
+        var path = NewPath($"workbook-leaf-hidden-{hiddenLocalName}.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/workbook.xml", xml => ReplaceRequired(
+            xml,
+            "<sheets>",
+            $"<fileVersion appName=\"xl\">{hiddenMarkup}</fileVersion><sheets>",
+            replaceFirstOnly: true));
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+
+        Assert.Contains("xl/workbook.xml", error.Message);
+        Assert.Contains("fileVersion", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsStructureQNameHiddenInsideWorkbookTextLeaf()
+    {
+        var path = NewPath("workbook-text-leaf-hidden-sheets.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/workbook.xml", xml => InsertBeforeRequired(
+            xml,
+            "</workbook>",
+            "<definedNames><definedName name=\"Bad\"><sheets /></definedName></definedNames>"));
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+
+        Assert.Contains("xl/workbook.xml", error.Message);
+        Assert.Contains("definedName", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_AllowsEmptyWorkbookSchemaLeafWithAttributes()
+    {
+        var path = NewPath("empty-workbook-schema-leaf.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/workbook.xml", xml => ReplaceRequired(
+            xml,
+            "<sheets>",
+            "<fileVersion appName=\"xl\" /><sheets>",
+            replaceFirstOnly: true));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+
+        Assert.Equal("聊天记录", Assert.Single(workbook.Sheets).Name);
+    }
+
+    [Fact]
+    public void OpenXmlReader_AllowsWorkbookTextLeafWithMixedCharacterData()
+    {
+        var path = NewPath("workbook-text-leaf-mixed-character-data.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/workbook.xml", xml => InsertBeforeRequired(
+            xml,
+            "</workbook>",
+            "<definedNames><definedName name=\"Valid\">a&amp;<![CDATA[b]]>c</definedName></definedNames>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+
+        Assert.Equal("聊天记录", Assert.Single(workbook.Sheets).Name);
+    }
+
     [Fact]
     public void OpenXmlReader_RejectsSharedStringsNestedBelowWrongRoot()
     {
@@ -786,6 +859,45 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
 
         Assert.Equal("a&bc", row.Cells[1].Value);
         Assert.Equal("D & E F", row.Cells[2].Value);
+    }
+
+    [Theory]
+    [InlineData("<si><r><rPr><b><t>bad</t></b></rPr><t>good</t></r></si>", "b")]
+    [InlineData("<si><r><t>good</t></r><phoneticPr fontId=\"1\"><t>bad</t></phoneticPr></si>", "phoneticPr")]
+    public void OpenXmlReader_RejectsHiddenContentInsideSharedStringSchemaLeaf(
+        string replacement,
+        string leafLocalName)
+    {
+        var path = NewPath($"shared-hidden-{leafLocalName}.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one", "s")]]));
+        RewriteEntry(path, "xl/sharedStrings.xml", xml => ReplaceRequired(
+            xml,
+            "<si><t>one</t></si>",
+            replacement));
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+
+        Assert.Contains("xl/sharedStrings.xml", error.Message);
+        Assert.Contains("共享字符串 1", error.Message);
+        Assert.Contains(leafLocalName, error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_ReadsRichSharedStringWithEmptyStyleLeaf()
+    {
+        var path = NewPath("shared-empty-style-leaf.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one", "s")]]));
+        RewriteEntry(path, "xl/sharedStrings.xml", xml => ReplaceRequired(
+            xml,
+            "<si><t>one</t></si>",
+            "<si><r><rPr><b val=\"1\" /></rPr><t>good</t></r></si>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+
+        Assert.Equal("good", row.Cells[1].Value);
     }
 
     [Fact]

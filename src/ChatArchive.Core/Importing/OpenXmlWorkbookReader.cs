@@ -826,68 +826,80 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                     continue;
                 }
 
+                if (reader.IsStartElement && IsSpreadsheetElement(reader, "sheet"))
+                {
+                    if (!insideSheets || reader.Depth != 2)
+                    {
+                        throw Error(filePath, WorkbookEntry, "sheet 必须是 sheets 的直接子元素");
+                    }
+
+                    var sheetElement = reader.LoadCurrentElement() as Sheet
+                        ?? throw Error(filePath, WorkbookEntry, "sheet 元素无效");
+                    if (!string.IsNullOrEmpty(sheetElement.InnerXml))
+                    {
+                        throw Error(
+                            filePath,
+                            WorkbookEntry,
+                            "sheet 必须为空，不能包含子元素或文本内容");
+                    }
+
+                    var name = sheetElement.Name?.Value;
+                    var relationshipId = sheetElement.Id?.Value;
+                    if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(relationshipId))
+                    {
+                        throw Error(filePath, WorkbookEntry, "工作表缺少名称或关系 ID");
+                    }
+
+                    if (!relationshipIds.Add(relationshipId))
+                    {
+                        throw Error(filePath, WorkbookEntry, $"工作表关系 ID 重复：{relationshipId}");
+                    }
+
+                    OpenXmlPart relatedPart;
+                    try
+                    {
+                        relatedPart = workbookPart.GetPartById(relationshipId);
+                    }
+                    catch (KeyNotFoundException)
+                    {
+                        throw Error(filePath, WorkbookEntry, $"找不到工作表 {name} 的关系 {relationshipId}");
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        throw Error(filePath, WorkbookEntry, $"找不到工作表 {name} 的关系 {relationshipId}");
+                    }
+
+                    if (relatedPart is not WorksheetPart worksheetPart)
+                    {
+                        throw Error(filePath, WorkbookEntry, $"关系 {relationshipId} 不是工作表关系");
+                    }
+
+                    var entryPath = worksheetPart.Uri.OriginalString.TrimStart('/');
+                    RequireContentType(package, entryPath, WorksheetContentType, filePath);
+                    var sheet = new OpenXmlSheet(name, entryPath);
+                    if (!parts.TryAdd(sheet, worksheetPart))
+                    {
+                        throw Error(filePath, WorkbookEntry, $"工作表声明重复：{name}");
+                    }
+
+                    sheets.Add(sheet);
+                    continue;
+                }
+
                 if (!reader.IsStartElement
-                    || reader.LocalName != "sheet"
-                    || reader.NamespaceUri != SpreadsheetNamespace)
+                    || !typeof(OpenXmlLeafElement).IsAssignableFrom(reader.ElementType))
                 {
                     continue;
                 }
 
-                if (!insideSheets || reader.Depth != 2)
-                {
-                    throw Error(filePath, WorkbookEntry, "sheet 必须是 sheets 的直接子元素");
-                }
-
-                var sheetElement = reader.LoadCurrentElement() as Sheet
-                    ?? throw Error(filePath, WorkbookEntry, "sheet 元素无效");
-                if (!string.IsNullOrEmpty(sheetElement.InnerXml))
-                {
-                    throw Error(
-                        filePath,
-                        WorkbookEntry,
-                        "sheet 必须为空，不能包含子元素或文本内容");
-                }
-
-                var name = sheetElement.Name?.Value;
-                var relationshipId = sheetElement.Id?.Value;
-                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(relationshipId))
-                {
-                    throw Error(filePath, WorkbookEntry, "工作表缺少名称或关系 ID");
-                }
-
-                if (!relationshipIds.Add(relationshipId))
-                {
-                    throw Error(filePath, WorkbookEntry, $"工作表关系 ID 重复：{relationshipId}");
-                }
-
-                OpenXmlPart relatedPart;
-                try
-                {
-                    relatedPart = workbookPart.GetPartById(relationshipId);
-                }
-                catch (KeyNotFoundException)
-                {
-                    throw Error(filePath, WorkbookEntry, $"找不到工作表 {name} 的关系 {relationshipId}");
-                }
-                catch (ArgumentOutOfRangeException)
-                {
-                    throw Error(filePath, WorkbookEntry, $"找不到工作表 {name} 的关系 {relationshipId}");
-                }
-
-                if (relatedPart is not WorksheetPart worksheetPart)
-                {
-                    throw Error(filePath, WorkbookEntry, $"关系 {relationshipId} 不是工作表关系");
-                }
-
-                var entryPath = worksheetPart.Uri.OriginalString.TrimStart('/');
-                RequireContentType(package, entryPath, WorksheetContentType, filePath);
-                var sheet = new OpenXmlSheet(name, entryPath);
-                if (!parts.TryAdd(sheet, worksheetPart))
-                {
-                    throw Error(filePath, WorkbookEntry, $"工作表声明重复：{name}");
-                }
-
-                sheets.Add(sheet);
+                var leafLocalName = reader.LocalName;
+                var leaf = reader.LoadCurrentElement() as OpenXmlLeafElement
+                    ?? throw Error(filePath, WorkbookEntry, $"{leafLocalName} 叶元素无效");
+                _ = ReadOrValidateLeafContent(
+                    leaf,
+                    leafLocalName,
+                    allowText: leaf is OpenXmlLeafTextElement,
+                    message => Error(filePath, WorkbookEntry, message));
             }
 
             if (!sawWorkbook)
@@ -973,6 +985,19 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
                     if (!IsSpreadsheetElement(element, "t"))
                     {
+                        if (element is OpenXmlLeafElement leaf)
+                        {
+                            _ = ReadOrValidateLeafContent(
+                                leaf,
+                                element.LocalName,
+                                allowText: false,
+                                message => SharedStringError(
+                                    filePath,
+                                    entryPath,
+                                    position,
+                                    message));
+                        }
+
                         continue;
                     }
 
@@ -985,9 +1010,10 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                             "t 只允许位于 si/t 或 si/r/t");
                     }
 
-                    value.Append(ReadValidatedLeafText(
+                    value.Append(ReadOrValidateLeafContent(
                         element,
                         "t",
+                        allowText: true,
                         message => SharedStringError(
                             filePath,
                             entryPath,
@@ -1353,6 +1379,30 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             element,
             localName,
             message => CellError(_filePath, entryPath, reference, message));
+    }
+
+    private static string ReadOrValidateLeafContent(
+        OpenXmlElement element,
+        string localName,
+        bool allowText,
+        Func<string, ImportFormatException> invalid)
+    {
+        if (allowText)
+        {
+            return ReadValidatedLeafText(element, localName, invalid);
+        }
+
+        if (element is not OpenXmlLeafElement leaf)
+        {
+            throw invalid($"{localName} 叶元素无效");
+        }
+
+        if (!string.IsNullOrEmpty(leaf.InnerXml))
+        {
+            throw invalid($"{localName} 必须为空，不能包含子元素或文本内容");
+        }
+
+        return string.Empty;
     }
 
     private static string ReadValidatedLeafText(
