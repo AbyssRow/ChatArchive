@@ -1322,49 +1322,60 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         string reference,
         string localName)
     {
-        // SDK leaf shadow content exposes decoded ampersands; reserve a legal XML
-        // character so the SDK fragment parser can still classify every node in order.
-        var sentinel = FindUnusedXmlTextSentinel(leaf.InnerXml);
-        var fragmentInnerXml = sentinel is null
-            ? leaf.InnerXml
-            : leaf.InnerXml.Replace('&', sentinel.Value);
-        var fragment = new OpenXmlUnknownElement("fragment")
+        try
         {
-            InnerXml = fragmentInnerXml,
-        };
-        var text = new StringBuilder();
-        foreach (var child in fragment.ChildElements)
-        {
-            if (child is not OpenXmlMiscNode node)
+            // SDK leaf shadow content exposes decoded ampersands; reserve a legal XML
+            // character so the SDK fragment parser can still classify every node in order.
+            var sentinel = FindUnusedXmlTextSentinel(leaf.InnerXml);
+            var fragmentInnerXml = sentinel is null
+                ? leaf.InnerXml
+                : leaf.InnerXml.Replace('&', sentinel.Value);
+            var fragment = new OpenXmlUnknownElement("fragment")
             {
-                throw InvalidLeafMarkup(entryPath, reference, localName);
-            }
-
-            switch (node.XmlNodeType)
+                InnerXml = fragmentInnerXml,
+            };
+            var text = new StringBuilder();
+            foreach (var child in fragment.ChildElements)
             {
-                case System.Xml.XmlNodeType.Text:
-                case System.Xml.XmlNodeType.Whitespace:
-                case System.Xml.XmlNodeType.SignificantWhitespace:
-                    text.Append(RestoreXmlTextSentinel(node.OuterXml, sentinel));
-                    break;
-                case System.Xml.XmlNodeType.CDATA:
-                    const string CDataStart = "<![CDATA[";
-                    const string CDataEnd = "]]>";
-                    var outerXml = RestoreXmlTextSentinel(node.OuterXml, sentinel);
-                    if (!outerXml.StartsWith(CDataStart, StringComparison.Ordinal)
-                        || !outerXml.EndsWith(CDataEnd, StringComparison.Ordinal))
-                    {
-                        throw InvalidLeafMarkup(entryPath, reference, localName);
-                    }
-
-                    text.Append(outerXml.AsSpan(CDataStart.Length, outerXml.Length - CDataStart.Length - CDataEnd.Length));
-                    break;
-                default:
+                if (child is not OpenXmlMiscNode node)
+                {
                     throw InvalidLeafMarkup(entryPath, reference, localName);
-            }
-        }
+                }
 
-        return text.ToString();
+                switch (node.XmlNodeType)
+                {
+                    case System.Xml.XmlNodeType.Text:
+                    case System.Xml.XmlNodeType.Whitespace:
+                    case System.Xml.XmlNodeType.SignificantWhitespace:
+                        text.Append(RestoreXmlTextSentinel(node.OuterXml, sentinel));
+                        break;
+                    case System.Xml.XmlNodeType.CDATA:
+                        const string CDataStart = "<![CDATA[";
+                        const string CDataEnd = "]]>";
+                        var outerXml = RestoreXmlTextSentinel(node.OuterXml, sentinel);
+                        if (!outerXml.StartsWith(CDataStart, StringComparison.Ordinal)
+                            || !outerXml.EndsWith(CDataEnd, StringComparison.Ordinal))
+                        {
+                            throw InvalidLeafMarkup(entryPath, reference, localName);
+                        }
+
+                        text.Append(outerXml.AsSpan(CDataStart.Length, outerXml.Length - CDataStart.Length - CDataEnd.Length));
+                        break;
+                    default:
+                        throw InvalidLeafMarkup(entryPath, reference, localName);
+                }
+            }
+
+            return text.ToString();
+        }
+        catch (ImportFormatException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (IsPackageFailure(ex))
+        {
+            throw InvalidLeafMarkup(entryPath, reference, localName);
+        }
     }
 
     private static char? FindUnusedXmlTextSentinel(string innerXml)

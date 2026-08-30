@@ -43,22 +43,6 @@ internal sealed class XlsxPackageHandle : IDisposable
             : null;
     }
 
-    internal IReadOnlyDictionary<string, ZipArchiveEntry> OpenValidatedEntryMap(out ZipArchive archive)
-    {
-        archive = new ZipArchive(Stream, ZipArchiveMode.Read, leaveOpen: true);
-        try
-        {
-            return archive.Entries
-                .Where(entry => !entry.FullName.EndsWith("/", StringComparison.Ordinal))
-                .ToDictionary(entry => entry.FullName, StringComparer.Ordinal);
-        }
-        catch
-        {
-            archive.Dispose();
-            throw;
-        }
-    }
-
     public void Dispose()
     {
         if (_disposed) return;

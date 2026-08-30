@@ -1061,6 +1061,54 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
     }
 
     [Fact]
+    public void OpenXmlReader_FragmentClassificationFailureIncludesCellAndLeafContext()
+    {
+        var path = NewPath("inline-text-malformed-decoded-less-than.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "<is><t>one</t></is>",
+            "<is><t><![CDATA[a]]>&lt;</t></is>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var error = Record.Exception(
+            () => workbook.ReadRows(workbook.Sheets[0], CancellationToken.None).ToList());
+
+        Assert.NotNull(error);
+        Assert.Contains(
+            "XLSX 条目 xl/worksheets/sheet1.xml：单元格 A1：t 包含无效的子元素或标记",
+            error.Message);
+        Assert.IsType<ImportFormatException>(error);
+    }
+
+    [Fact]
+    public void OpenXmlReader_SentinelExhaustionIncludesCellAndLeafContext()
+    {
+        var path = NewPath("inline-text-sentinel-exhaustion.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[new XlsxTestCell("A1", "one")]]));
+        var privateUseRange = string.Concat(
+            Enumerable.Range(0xE000, 0x1900).Select(char.ConvertFromUtf32));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "<is><t>one</t></is>",
+            $"<is><t><![CDATA[{privateUseRange}]]>&amp;</t></is>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var error = Record.Exception(
+            () => workbook.ReadRows(workbook.Sheets[0], CancellationToken.None).ToList());
+
+        Assert.NotNull(error);
+        Assert.Contains(
+            "XLSX 条目 xl/worksheets/sheet1.xml：单元格 A1：t 包含无效的子元素或标记",
+            error.Message);
+        Assert.IsType<ImportFormatException>(error);
+    }
+
+    [Fact]
     public void OpenXmlReader_PreservesMixedCharacterDataSegmentOrder()
     {
         var path = NewPath("inline-text-mixed-character-data-order.xlsx");

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **2026-08-30 XLSX reader update:** Task 7 的自研解析器和“不得新增 Excel 包”约束已由 `docs/superpowers/specs/2026-08-30-openxml-sdk-reader-migration-design.md` 取代；格式与安全验收条件不变。
+
 **Goal:** Make ChatArchive import exactly the current non-HTML exports produced by the three `inputapp` source snapshots, with strict detection, safe media resolution, Excel support, and source-derived regression coverage.
 
 **Architecture:** Keep the existing `IChatExportFormat -> ExportFile -> ParsedMessage` pipeline. Replace generic text/SQL matching with source-specific adapters, share only low-level CSV/SQL/OpenXML readers, remove HTML from discovery, and use explicit degradation rules when an upstream format omits identity or direction.
