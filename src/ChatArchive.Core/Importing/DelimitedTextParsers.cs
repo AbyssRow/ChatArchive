@@ -316,9 +316,11 @@ public static class WeFlowTextParser
             string? line;
             while ((line = reader.ReadLine()) is not null)
             {
-                if (awaitingContent && !MessageHeaderRegex.IsMatch(line)) return true;
                 var header = MessageHeaderRegex.Match(line);
-                awaitingContent = header.Success && ImportText.TryParseFlexibleTimestamp(header.Groups["time"].Value, out _);
+                var isValidHeader = header.Success
+                    && ImportText.TryParseFlexibleTimestamp(header.Groups["time"].Value, out _);
+                if (awaitingContent && !isValidHeader) return true;
+                awaitingContent = isValidHeader;
             }
             return false;
         }
@@ -354,7 +356,7 @@ public static class WeFlowTextParser
                 if (sender is not null)
                 {
                     body.Add(line);
-                    hasCurrentContentLine |= !string.IsNullOrWhiteSpace(line);
+                    hasCurrentContentLine = true;
                 }
                 continue;
             }

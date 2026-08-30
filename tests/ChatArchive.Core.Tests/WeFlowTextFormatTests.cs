@@ -231,6 +231,38 @@ public sealed class WeFlowTextFormatTests : IDisposable
     }
 
     [Fact]
+    public void WeFlowTxt_AcceptsWriterProducedEmptyBody()
+    {
+        var path = WriteFile(
+            "empty-body.txt",
+            "2023-11-15 06:15:23 'Alice'\n\n\n");
+        var format = new WeFlowTextExportFormat();
+
+        Assert.True(format.Matches(path));
+        using var export = format.Open(path);
+        var message = Assert.Single(export.EnumerateMessages());
+
+        Assert.Equal("Alice", message.SenderName);
+        Assert.Equal(string.Empty, message.Content);
+    }
+
+    [Fact]
+    public void WeFlowTxt_InvalidTimestampHeaderLikeFirstBodyLineRemainsContent()
+    {
+        const string HeaderLikeBody = "2023-99-99 25:61:00 '这只是正文'";
+        var path = WriteFile(
+            "invalid-header-like-body.txt",
+            "2023-11-15 06:15:23 'Alice'\n" + HeaderLikeBody + "\n\n");
+        var format = new WeFlowTextExportFormat();
+
+        Assert.True(format.Matches(path));
+        using var export = format.Open(path);
+        var message = Assert.Single(export.EnumerateMessages());
+
+        Assert.Equal(HeaderLikeBody, message.Content);
+    }
+
+    [Fact]
     public void WeFlowTxt_RejectsFinalHeaderWithoutBody()
     {
         var path = WriteFile("missing-final-body.txt",
