@@ -679,7 +679,20 @@ public class ImportServiceTests : IDisposable
             0L,
             Scalar(
                 connection,
-                "SELECT COUNT(*) FROM messages WHERE sender_id IS NULL OR content NOT LIKE '%你好%'"));
+                "SELECT COUNT(*) FROM messages WHERE sender_id IS NULL"));
+        Assert.Equal(
+            1L,
+            Scalar(
+                connection,
+                "SELECT COUNT(*) FROM messages " +
+                "WHERE content = char(10) || '![图片消息](../images/layout-a.jpg)'"));
+        Assert.Equal(
+            0L,
+            Scalar(
+                connection,
+                "SELECT COUNT(*) FROM messages " +
+                "WHERE content NOT LIKE '%你好%' " +
+                "AND content <> (char(10) || '![图片消息](../images/layout-a.jpg)')"));
         Assert.Equal(
             0L,
             Scalar(

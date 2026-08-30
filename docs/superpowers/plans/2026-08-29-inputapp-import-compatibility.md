@@ -1295,36 +1295,39 @@ Also document that XLSX tests use `XlsxTestFile` to reproduce the exact writer r
 
 ```csharp
 [Theory]
-[InlineData("weflow-standard.json", typeof(WeFlowExportFormat), "wechat")]
-[InlineData("weflow-arkme.json", typeof(WeFlowExportFormat), "wechat")]
-[InlineData("ciphertalk-detailed.json", typeof(CipherTalkDetailedJsonFormat), "wechat")]
-[InlineData("ciphertalk-chatlab.json", typeof(ChatLabJsonExportFormat), "wechat")]
-[InlineData("chatlab-current.jsonl", typeof(ChatLabJsonlExportFormat), "wechat")]
-[InlineData("qq-single.json", typeof(QqExportFormat), "qq")]
-[InlineData("qq-chunked/manifest.json", typeof(QqChunkedExportFormat), "qq")]
-[InlineData("weflow-current.csv", typeof(WeFlowCsvExportFormat), "wechat")]
-[InlineData("weflow-current.md", typeof(WeFlowMarkdownExportFormat), "wechat")]
-[InlineData("weflow-current.txt", typeof(WeFlowTextExportFormat), "wechat")]
-[InlineData("qq-current.txt", typeof(QqTextExportFormat), "qq")]
-[InlineData("weflow-current.sql", typeof(WeFlowSqlExportFormat), "wechat")]
-[InlineData("ciphertalk-current.sql", typeof(CipherTalkSqlExportFormat), "wechat")]
+[InlineData("weflow-standard.json", typeof(WeFlowExportFormat), "wechat", "你好")]
+[InlineData("weflow-arkme.json", typeof(WeFlowExportFormat), "wechat", "你好")]
+[InlineData("ciphertalk-detailed.json", typeof(CipherTalkDetailedJsonFormat), "wechat", "你好")]
+[InlineData("ciphertalk-chatlab.json", typeof(ChatLabJsonExportFormat), "wechat", "你好")]
+[InlineData("chatlab-current.jsonl", typeof(ChatLabJsonlExportFormat), "wechat", "你好")]
+[InlineData("qq-single.json", typeof(QqExportFormat), "qq", "你好")]
+[InlineData("qq-chunked/manifest.json", typeof(QqChunkedExportFormat), "qq", "你好")]
+[InlineData("weflow-current.csv", typeof(WeFlowCsvExportFormat), "wechat", "你好")]
+[InlineData("weflow-current.md", typeof(WeFlowMarkdownExportFormat), "wechat", "![图片消息]")]
+[InlineData("weflow-current.txt", typeof(WeFlowTextExportFormat), "wechat", "你好")]
+[InlineData("qq-current.txt", typeof(QqTextExportFormat), "qq", "你好")]
+[InlineData("weflow-current.sql", typeof(WeFlowSqlExportFormat), "wechat", "你好")]
+[InlineData("ciphertalk-current.sql", typeof(CipherTalkSqlExportFormat), "wechat", "你好")]
 public void CurrentFixture_HasExactlyOneSourceAdapterAndOneExpectedMessage(
     string name,
     Type expectedAdapterType,
-    string platform)
+    string platform,
+    string expectedContent)
 {
     var path = Fixture(name);
-    var matches = ExportFormats.Default.Where(format => format.Matches(path)).ToList();
+    var matches = RegisteredSourceFormats().Where(format => format.Matches(path)).ToList();
     var format = Assert.Single(matches);
     Assert.IsType(expectedAdapterType, format);
     Assert.Equal(platform, format.Platform);
     using var export = format.Open(path);
     var message = Assert.Single(export.EnumerateMessages());
-    Assert.Contains("你好", message.Content);
+    Assert.Contains(expectedContent, message.Content);
     Assert.True(message.TimestampMs > 0);
     Assert.False(string.IsNullOrWhiteSpace(message.SenderNativeId));
 }
 ```
+
+The final characterization additionally compares the production-assembly registry against a hard-coded, duplicate-free set of the 15 approved adapter runtime types. The Markdown row intentionally expects only the emitted image Markdown: the current writer clears ordinary image-message text after it emits the media link.
 
 The fixture helper is:
 

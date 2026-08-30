@@ -2,7 +2,7 @@
 
 These files are the smallest textual structures extracted from or validated against the external current writers at the audited commits below. They are source-attributed regression inputs: they are not vendored repositories, and they are not invented generic dialects.
 
-Writer-owned counters and identifiers use values the current writers can emit (including positive decimal platform message IDs). The QQ chunk manifest records the exact UTF-8 chunk byte length including its terminal LF, and the WeFlow TXT fixture retains the writer's terminal blank message separator; narrow path-specific Git attributes keep those byte-sensitive LF endings stable.
+Writer-owned counters and identifiers use values the current writers can emit (including positive decimal platform message IDs). The QQ chunk manifest records the exact UTF-8 chunk byte length including its terminal LF, and the WeFlow Markdown/TXT fixtures retain the writers' terminal blank message separators; narrow path-specific Git attributes keep those byte-sensitive LF endings stable.
 
 | Fixture | Upstream commit | Writer source |
 | --- | --- | --- |

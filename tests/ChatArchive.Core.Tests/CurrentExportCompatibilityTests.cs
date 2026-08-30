@@ -27,23 +27,24 @@ public sealed class CurrentExportCompatibilityTests
     };
 
     [Theory]
-    [InlineData("weflow-standard.json", typeof(WeFlowExportFormat), "wechat")]
-    [InlineData("weflow-arkme.json", typeof(WeFlowExportFormat), "wechat")]
-    [InlineData("ciphertalk-detailed.json", typeof(CipherTalkDetailedJsonFormat), "wechat")]
-    [InlineData("ciphertalk-chatlab.json", typeof(ChatLabJsonExportFormat), "wechat")]
-    [InlineData("chatlab-current.jsonl", typeof(ChatLabJsonlExportFormat), "wechat")]
-    [InlineData("qq-single.json", typeof(QqExportFormat), "qq")]
-    [InlineData("qq-chunked/manifest.json", typeof(QqChunkedExportFormat), "qq")]
-    [InlineData("weflow-current.csv", typeof(WeFlowCsvExportFormat), "wechat")]
-    [InlineData("weflow-current.md", typeof(WeFlowMarkdownExportFormat), "wechat")]
-    [InlineData("weflow-current.txt", typeof(WeFlowTextExportFormat), "wechat")]
-    [InlineData("qq-current.txt", typeof(QqTextExportFormat), "qq")]
-    [InlineData("weflow-current.sql", typeof(WeFlowSqlExportFormat), "wechat")]
-    [InlineData("ciphertalk-current.sql", typeof(CipherTalkSqlExportFormat), "wechat")]
+    [InlineData("weflow-standard.json", typeof(WeFlowExportFormat), "wechat", "你好")]
+    [InlineData("weflow-arkme.json", typeof(WeFlowExportFormat), "wechat", "你好")]
+    [InlineData("ciphertalk-detailed.json", typeof(CipherTalkDetailedJsonFormat), "wechat", "你好")]
+    [InlineData("ciphertalk-chatlab.json", typeof(ChatLabJsonExportFormat), "wechat", "你好")]
+    [InlineData("chatlab-current.jsonl", typeof(ChatLabJsonlExportFormat), "wechat", "你好")]
+    [InlineData("qq-single.json", typeof(QqExportFormat), "qq", "你好")]
+    [InlineData("qq-chunked/manifest.json", typeof(QqChunkedExportFormat), "qq", "你好")]
+    [InlineData("weflow-current.csv", typeof(WeFlowCsvExportFormat), "wechat", "你好")]
+    [InlineData("weflow-current.md", typeof(WeFlowMarkdownExportFormat), "wechat", "![图片消息]")]
+    [InlineData("weflow-current.txt", typeof(WeFlowTextExportFormat), "wechat", "你好")]
+    [InlineData("qq-current.txt", typeof(QqTextExportFormat), "qq", "你好")]
+    [InlineData("weflow-current.sql", typeof(WeFlowSqlExportFormat), "wechat", "你好")]
+    [InlineData("ciphertalk-current.sql", typeof(CipherTalkSqlExportFormat), "wechat", "你好")]
     public void CurrentFixture_HasExactlyOneSourceAdapterAndOneExpectedMessage(
         string relativePath,
         Type expectedAdapterType,
-        string expectedPlatform)
+        string expectedPlatform,
+        string expectedContent)
     {
         var path = Fixture(relativePath);
         var matches = RegisteredSourceFormats()
@@ -59,7 +60,7 @@ public sealed class CurrentExportCompatibilityTests
         using var export = format.Open(path);
         Assert.Equal(expectedPlatform, export.Conversation.Platform);
         var message = Assert.Single(export.EnumerateMessages());
-        Assert.Contains("你好", message.Content, StringComparison.Ordinal);
+        Assert.Contains(expectedContent, message.Content, StringComparison.Ordinal);
         Assert.True(message.TimestampMs > 0);
         Assert.False(string.IsNullOrWhiteSpace(message.SenderNativeId));
     }
@@ -108,7 +109,11 @@ public sealed class CurrentExportCompatibilityTests
         Assert.DoesNotContain("\n", csvText.Replace("\r\n", string.Empty), StringComparison.Ordinal);
         var csvLines = File.ReadAllLines(Fixture("weflow-current.csv"));
         Assert.Equal("1,810000000000008", string.Join(',', csvLines[1].Split(',').Take(2)));
-        Assert.Contains("![图片消息](../images/layout-a.jpg)", File.ReadAllText(Fixture("weflow-current.md")));
+        var markdownBytes = File.ReadAllBytes(Fixture("weflow-current.md"));
+        Assert.DoesNotContain((byte)'\r', markdownBytes);
+        var markdown = Encoding.UTF8.GetString(markdownBytes);
+        Assert.EndsWith("![图片消息](../images/layout-a.jpg)\n\n", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("你好，WeFlow Markdown", markdown, StringComparison.Ordinal);
         Assert.Contains("'810000000000012'", File.ReadAllText(Fixture("weflow-current.sql")));
 
         var weFlowText = File.ReadAllBytes(Fixture("weflow-current.txt"));
@@ -188,7 +193,7 @@ public sealed class CurrentExportCompatibilityTests
         using (var workbook = OpenXmlWorkbookReader.Open(Path.Combine(texts, "weflow-current.xlsx")))
         {
             var rows = workbook.ReadRows(Assert.Single(workbook.Sheets), CancellationToken.None).ToList();
-            AssertCells(rows[1], (0, "微信ID"), (1, "fixture-weflow-excel"), (3, "昵称"), (4, "WeFlow Excel"));
+            AssertCells(rows[1], (0, "微信ID"), (1, "fixture-weflow-excel"), (3, "昵称"), (4, "WeFlow Excel 发送者"));
             AssertCells(
                 rows[2],
                 (0, "导出工具"), (1, "WeFlow"), (2, "导出版本"), (3, "1.0.3"),
@@ -404,7 +409,7 @@ internal sealed class CurrentExportTestTree : IDisposable
                         new XlsxTestCell("A2", "微信ID"),
                         new XlsxTestCell("B2", "fixture-weflow-excel"),
                         new XlsxTestCell("D2", "昵称"),
-                        new XlsxTestCell("E2", "WeFlow Excel"),
+                        new XlsxTestCell("E2", "WeFlow Excel 发送者"),
                     ],
                     [
                         new XlsxTestCell("A3", "导出工具"),
