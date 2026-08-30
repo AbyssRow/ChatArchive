@@ -158,7 +158,7 @@ SQL 不保存会话显示名，标题取文件名。
 - 私聊完整：`序号, 时间, 发送者昵称, 发送者微信ID, 发送者备注, 发送者身份, 消息类型, 内容`
 - 群聊完整：在私聊完整结构中增加 `群昵称`
 
-元数据区提供会话 ID、昵称、备注、平台和导出时间。消息内容单元格的内部超链接可作为媒体路径。紧凑结构和群聊完整结构没有可靠本人标志时，不根据显示名猜测 outgoing。
+常规非流式 writer 的元数据行包含会话 ID/昵称，并且只在群聊时增加备注；下一行包含导出工具、版本、平台和导出时间。流式 writer 使用更小的元数据布局：会话 ID/昵称以及导出工具/导出时间，因此不能假定每个布局都有备注或平台单元格。消息内容单元格的 hyperlink 关系可作为媒体路径声明；ExcelJS 会把当前 writer 的安全相对媒体目标序列化为 `TargetMode="External"`。读取器只把受边界约束的安全相对目标保留为惰性声明，绝不打开或获取目标；根路径、URI 和越界目标继续忽略或拒绝。紧凑结构和群聊完整结构没有可靠本人标志时，不根据显示名猜测 outgoing。
 
 ### 4.8 CipherTalk Excel
 
@@ -208,7 +208,7 @@ QQ Excel 不保存 chat info 或本人 UIN。标题取文件名，内部会话 I
 
 - 只接受 `.xlsx` ZIP/OpenXML 包，不接受 `.xls`、`.xlsm` 或二进制工作簿。
 - 只解析包内工作簿定义引用的工作表和共享字符串。
-- 包根与工作簿部件的外部关系一律拒绝。工作表上只有精确标准 hyperlink 关系可进入当前 writer 所需的受限例外：安全相对媒体 Target 只作为附件声明返回，不读取网络或外部文件；URL、根路径、驱动器路径、UNC 和越界 Target 被忽略。该规则由 `2026-08-30-openxml-sdk-reader-migration-design.md` 取代了最初“拒绝所有 `TargetMode="External"`”的历史表述。
+- 包根与工作簿部件的外部关系一律拒绝。工作表上只有精确标准 hyperlink 关系可进入当前 writer 所需的受限例外：ExcelJS 虽把安全相对媒体 Target 标记为 `TargetMode="External"`，读取器仍只把它作为惰性附件声明返回，绝不读取网络或外部文件；URI、根路径、驱动器路径、UNC 和越界 Target 被忽略或拒绝。该规则由 `2026-08-30-openxml-sdk-reader-migration-design.md` 取代了最初“拒绝所有 `TargetMode="External"`”的历史表述。
 - 公式单元格只读取已有缓存值，不计算公式；没有缓存值则视为空。
 - 不读取宏、自定义 XML、嵌入对象、图片二进制或外部数据连接。
 - 工作表行通过 SDK `OpenXmlReader` SAX API 流式枚举，并在行/超长单元格循环中检查取消令牌；共享字符串在打开阶段以前向读取方式建立只读索引。
@@ -241,7 +241,7 @@ QQ 分块 JSONL 的 manifest 剪枝规则保持不变。
 - WeFlow Excel 三种动态表头；
 - CipherTalk Excel 两个可选列；
 - QQ Excel 可选群头衔和资源工作表；
-- Open XML SDK SAX 路径下的 shared string、inline string、数字、日期、缓存值，以及内部和受限外部媒体超链接；
+- Open XML SDK SAX 路径下的 shared string、inline string、数字、日期、缓存值，以及受限的内容单元格 hyperlink 关系声明；
 - SQL 注释、转义单引号、多行和多值 `INSERT`；
 - TXT/Markdown 多行正文和末条消息无尾随空行；
 - JSON/JSONL 当前可选字段与版本标记；

@@ -21,7 +21,7 @@
   "messages": [
     {
       "localId": 3,
-      "platformMessageId": "fixture-message-ciphertalk-detailed",
+      "platformMessageId": "820000000000003",
       "createTime": 1701000003,
       "formattedTime": "2023-11-26 12:00:03",
       "type": "文本消息",

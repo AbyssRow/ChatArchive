@@ -10,6 +10,6 @@
 
 ## 2023-11-26 12:00:09 Markdown 发送者
 
-![图片](../images/layout-a.jpg)
+![图片消息](../images/layout-a.jpg)
 
 你好，WeFlow Markdown

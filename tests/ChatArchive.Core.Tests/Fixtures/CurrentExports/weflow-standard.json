@@ -25,7 +25,8 @@
       "senderUsername": "fixture-sender-weflow-standard",
       "senderDisplayName": "标准发送者",
       "source": "",
-      "platformMessageId": "fixture-message-weflow-standard"
+      "senderAvatarKey": "fixture-sender-weflow-standard",
+      "platformMessageId": "810000000000001"
     }
   ]
 }

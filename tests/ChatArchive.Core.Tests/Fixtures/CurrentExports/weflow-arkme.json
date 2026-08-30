@@ -7,6 +7,8 @@
   },
   "session": {
     "wxid": "fixture-weflow-arkme@chatroom",
+    "nickname": "ArkMe 会话",
+    "remark": "",
     "displayName": "ArkMe 会话",
     "type": "群聊",
     "lastTimestamp": 1701000002,
@@ -23,7 +25,7 @@
   ],
   "messages": [
     {
-      "localId": 2,
+      "localId": 1,
       "createTime": 1701000002,
       "formattedTime": "2023-11-26 12:00:02",
       "type": "文本消息",
@@ -32,7 +34,7 @@
       "isSend": 0,
       "senderID": 1,
       "source": "",
-      "platformMessageId": "fixture-message-weflow-arkme"
+      "platformMessageId": "810000000000002"
     }
   ],
   "groupMembers": [

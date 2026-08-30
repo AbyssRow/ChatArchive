@@ -12,5 +12,5 @@ CREATE TABLE IF NOT EXISTS weflow_messages (
   media_path TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_weflow_messages_session_time ON weflow_messages (session_id, create_time);
-INSERT INTO weflow_messages (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path) VALUES ('fixture-weflow-sql', '12', 'fixture-message-weflow-sql', 1701000012, 'fixture-sender-weflow-sql', FALSE, 1, NULL, '你好，WeFlow SQL', NULL);
+INSERT INTO weflow_messages (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path) VALUES ('fixture-weflow-sql', '12', '810000000000012', 1701000012, 'fixture-sender-weflow-sql', FALSE, 1, NULL, '你好，WeFlow SQL', NULL);
 COMMIT;

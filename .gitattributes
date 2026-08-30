@@ -1,0 +1,3 @@
+tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/qq-chunked/chunks/*.jsonl text eol=lf
+tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/weflow-current.txt text eol=lf whitespace=-blank-at-eof
+tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/weflow-current.csv text eol=crlf

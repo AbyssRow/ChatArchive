@@ -1032,16 +1032,20 @@ public void WeFlowExcel_ParsesCurrentDynamicLayouts(string layout)
 }
 ```
 
-`CreateWeFlowWorkbook` writes:
+> **Superseded writer-detail note:** The original Task 8 fixture recipe treated group-only remark metadata as universal and called the media relationship an internal hyperlink. Current writer truth is authoritative below: regular private and group layouts differ in row 2, the streaming layout has a smaller row 3, and ExcelJS marks its safe relative content-cell hyperlink relationship as `TargetMode="External"`.
+
+`CreateWeFlowWorkbook` should represent the applicable current layout:
 
 ```text
 row 1: 会话信息
-row 2: 微信ID | wxid_session | [merged blank] | 昵称 | 会话标题 | 备注 | 群备注
-row 3: 导出工具 | WeFlow | 导出版本 | 1.0.3 | 平台 | wechat | 导出时间 | 2023-11-15 06:20:00
+regular row 2: 微信ID | wxid_session | [merged blank] | 昵称 | 会话标题 | [group only: 备注 | 群备注]
+regular row 3: 导出工具 | WeFlow | 导出版本 | 1.0.3 | 平台 | wechat | 导出时间 | 2023-11-15 06:20:00
+streaming row 2: 微信ID | wxid_session | 昵称 | 会话标题
+streaming row 3: 导出工具 | WeFlow | 导出时间 | 2023-11-15 06:20:00
 row 4+: one of the exact three header layouts from the design, followed by one row
 ```
 
-For the group layout, make the content cell value and internal hyperlink `../images/one.jpg`, create the parent image on disk, and assert the attachment resolves. Add a negative workbook whose core header exists but metadata generator is not WeFlow; `Matches` must return false.
+For the group layout, make the content cell value and hyperlink target `../images/one.jpg`, create the parent image on disk, and assert the attachment resolves. The current ExcelJS writer serializes this safe relative relationship with `TargetMode="External"`; it remains an inert declaration that the importer bounds and never opens or fetches. Add a negative workbook whose core header exists but metadata generator is not WeFlow; `Matches` must return false.
 
 - [ ] **Step 2: Run focused tests and verify RED**
 
@@ -1092,7 +1096,7 @@ private static string MapType(string value) => value switch
 };
 ```
 
-When the content cell has a non-empty internal hyperlink, create one attachment using the hyperlink as declared path and `SafeResolveMedia` as source path. Use `FlatMessageFactory` for the message.
+When the content cell has a non-empty hyperlink relationship, create one attachment using a bounded safe relative target as the declared path and `SafeResolveMedia` as source path. Treat the relationship as inert even when ExcelJS marks it `TargetMode="External"`; never open or fetch it, and ignore/reject rooted, URI, or escaping targets. Use `FlatMessageFactory` for the message.
 
 - [ ] **Step 5: Register/discover WeFlow Excel and run regressions**
 
@@ -1203,7 +1207,7 @@ Match the `资源列表` header exactly. Build a join key from normalized timest
 internal readonly record struct QqExcelJoinKey(string Time, string Uin, string Sender);
 ```
 
-Count message occurrences per key first. Attach resource rows only when the key count equals one. Treat an internal/local `URL` as declared path and resolve it safely; preserve HTTP(S) only in attachment metadata, never as `SourcePath`. Map QQ Chinese labels `文本/图片/视频/音频/文件/表情/@提及/回复/系统消息`; read `是否撤回 == 是`; direction remains incoming unless system.
+Count message occurrences per key first. Attach resource rows only when the key count equals one. Treat a bounded safe relative `URL` declaration as the declared path and resolve it safely; preserve HTTP(S) only in attachment metadata, never as `SourcePath`. Map QQ Chinese labels `文本/图片/视频/音频/文件/表情/@提及/回复/系统消息`; read `是否撤回 == 是`; direction remains incoming unless system.
 
 - [ ] **Step 6: Register both formats in unambiguous order**
 

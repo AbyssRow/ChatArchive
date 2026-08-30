@@ -1,10 +1,31 @@
 using ChatArchive.Core.Importing;
+using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace ChatArchive.Core.Tests;
 
 public sealed class CurrentExportCompatibilityTests
 {
+    private static readonly IReadOnlySet<Type> ExpectedAdapterTypes = new HashSet<Type>
+    {
+        typeof(QqExportFormat),
+        typeof(QqChunkedExportFormat),
+        typeof(WeFlowExportFormat),
+        typeof(CipherTalkDetailedJsonFormat),
+        typeof(ChatLabJsonExportFormat),
+        typeof(ChatLabJsonlExportFormat),
+        typeof(WeFlowCsvExportFormat),
+        typeof(WeFlowMarkdownExportFormat),
+        typeof(QqTextExportFormat),
+        typeof(WeFlowTextExportFormat),
+        typeof(WeFlowSqlExportFormat),
+        typeof(CipherTalkSqlExportFormat),
+        typeof(WeFlowExcelExportFormat),
+        typeof(CipherTalkExcelExportFormat),
+        typeof(QqExcelExportFormat),
+    };
+
     [Theory]
     [InlineData("weflow-standard.json", typeof(WeFlowExportFormat), "wechat")]
     [InlineData("weflow-arkme.json", typeof(WeFlowExportFormat), "wechat")]
@@ -44,6 +65,188 @@ public sealed class CurrentExportCompatibilityTests
     }
 
     [Fact]
+    public void CurrentTextFixtures_MatchCurrentWriterFieldsAndFraming()
+    {
+        using var standard = JsonDocument.Parse(File.ReadAllText(Fixture("weflow-standard.json")));
+        var standardMessage = standard.RootElement.GetProperty("messages")[0];
+        Assert.Equal("810000000000001", standardMessage.GetProperty("platformMessageId").GetString());
+        Assert.Equal(
+            standardMessage.GetProperty("senderUsername").GetString(),
+            standardMessage.GetProperty("senderAvatarKey").GetString());
+
+        using var arkMe = JsonDocument.Parse(File.ReadAllText(Fixture("weflow-arkme.json")));
+        var arkMeSession = arkMe.RootElement.GetProperty("session");
+        Assert.Equal("ArkMe 会话", arkMeSession.GetProperty("nickname").GetString());
+        Assert.Equal(string.Empty, arkMeSession.GetProperty("remark").GetString());
+        var arkMeMessage = arkMe.RootElement.GetProperty("messages")[0];
+        Assert.Equal(1, arkMeMessage.GetProperty("localId").GetInt32());
+        Assert.Equal("810000000000002", arkMeMessage.GetProperty("platformMessageId").GetString());
+
+        var chatLabMessage = File.ReadLines(Fixture("chatlab-current.jsonl"))
+            .Select(line => JsonDocument.Parse(line))
+            .Single(document => document.RootElement.GetProperty("_type").GetString() == "message");
+        using (chatLabMessage)
+        {
+            Assert.Equal(
+                "810000000000005",
+                chatLabMessage.RootElement.GetProperty("platformMessageId").GetString());
+        }
+
+        using var cipherDetailed = JsonDocument.Parse(File.ReadAllText(Fixture("ciphertalk-detailed.json")));
+        Assert.Equal(
+            "820000000000003",
+            cipherDetailed.RootElement.GetProperty("messages")[0].GetProperty("platformMessageId").GetString());
+        using var cipherChatLab = JsonDocument.Parse(File.ReadAllText(Fixture("ciphertalk-chatlab.json")));
+        Assert.Equal(
+            "820000000000004",
+            cipherChatLab.RootElement.GetProperty("messages")[0].GetProperty("platformMessageId").GetString());
+
+        var csvBytes = File.ReadAllBytes(Fixture("weflow-current.csv"));
+        Assert.Equal(new byte[] { 0xef, 0xbb, 0xbf }, csvBytes[..3]);
+        var csvText = Encoding.UTF8.GetString(csvBytes);
+        Assert.EndsWith("\r\n", csvText, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n", csvText.Replace("\r\n", string.Empty), StringComparison.Ordinal);
+        var csvLines = File.ReadAllLines(Fixture("weflow-current.csv"));
+        Assert.Equal("1,810000000000008", string.Join(',', csvLines[1].Split(',').Take(2)));
+        Assert.Contains("![图片消息](../images/layout-a.jpg)", File.ReadAllText(Fixture("weflow-current.md")));
+        Assert.Contains("'810000000000012'", File.ReadAllText(Fixture("weflow-current.sql")));
+
+        var weFlowText = File.ReadAllBytes(Fixture("weflow-current.txt"));
+        Assert.DoesNotContain((byte)'\r', weFlowText);
+        Assert.EndsWith("\n\n", Encoding.UTF8.GetString(weFlowText), StringComparison.Ordinal);
+
+        var qqText = File.ReadAllText(Fixture("qq-current.txt")).Replace("\r\n", "\n");
+        Assert.Contains(
+            "消息总数: 1\n时间范围: 2023-11-26 12:00:11 - 2023-11-26 12:00:11\n",
+            qqText,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void QqChunkedManifest_MatchesExactChunkBytesAndLines()
+    {
+        var manifestPath = Fixture("qq-chunked/manifest.json");
+        using var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var chunkInfo = Assert.Single(
+            manifest.RootElement.GetProperty("chunked").GetProperty("chunks").EnumerateArray());
+        var chunkPath = Path.Combine(
+            Path.GetDirectoryName(manifestPath)!,
+            chunkInfo.GetProperty("relativePath").GetString()!.Replace('/', Path.DirectorySeparatorChar));
+        var bytes = File.ReadAllBytes(chunkPath);
+
+        Assert.NotEmpty(bytes);
+        Assert.Equal((byte)'\n', bytes[^1]);
+        Assert.DoesNotContain((byte)'\r', bytes);
+        Assert.Equal(bytes.LongLength, chunkInfo.GetProperty("bytes").GetInt64());
+        Assert.Equal(
+            chunkInfo.GetProperty("count").GetInt64(),
+            Encoding.UTF8.GetString(bytes).Split('\n').LongCount(line => line.Length > 0));
+    }
+
+    [Fact]
+    public void RegisteredSourceFormats_MatchHardCodedCurrentWriterOracle()
+    {
+        var registeredFormats = RegisteredSourceFormats();
+        var registeredTypes = registeredFormats.Select(format => format.GetType()).ToArray();
+
+        Assert.Equal(15, registeredFormats.Count);
+        Assert.Equal(registeredTypes.Length, registeredTypes.Distinct().Count());
+        Assert.True(
+            ExpectedAdapterTypes.SetEquals(registeredTypes),
+            $"expected=[{string.Join(", ", ExpectedAdapterTypes.Select(type => type.Name).Order())}], " +
+            $"registered=[{string.Join(", ", registeredTypes.Select(type => type.Name).Order())}]");
+    }
+
+    [Theory]
+    [InlineData("weflow-current.xlsx", typeof(WeFlowExcelExportFormat), "wechat")]
+    [InlineData("ciphertalk-current.xlsx", typeof(CipherTalkExcelExportFormat), "wechat")]
+    [InlineData("qq-current.xlsx", typeof(QqExcelExportFormat), "qq")]
+    public void CurrentXlsxFixture_HasExactlyOneExplicitSourceAdapter(
+        string fileName,
+        Type expectedAdapterType,
+        string expectedPlatform)
+    {
+        using var tree = CurrentExportTestTree.Create();
+        var path = Path.Combine(tree.Root, "texts", fileName);
+        var matches = RegisteredSourceFormats().Where(format => format.Matches(path)).ToList();
+
+        var format = Assert.Single(matches);
+        Assert.IsType(expectedAdapterType, format);
+        Assert.Equal(expectedPlatform, format.Platform);
+
+        using var export = format.Open(path);
+        Assert.Equal(expectedPlatform, export.Conversation.Platform);
+        Assert.Single(export.EnumerateMessages());
+    }
+
+    [Fact]
+    public void CurrentXlsxFixtures_MatchExactOneMessageWriterRows()
+    {
+        using var tree = CurrentExportTestTree.Create();
+        var texts = Path.Combine(tree.Root, "texts");
+
+        using (var workbook = OpenXmlWorkbookReader.Open(Path.Combine(texts, "weflow-current.xlsx")))
+        {
+            var rows = workbook.ReadRows(Assert.Single(workbook.Sheets), CancellationToken.None).ToList();
+            AssertCells(rows[1], (0, "微信ID"), (1, "fixture-weflow-excel"), (3, "昵称"), (4, "WeFlow Excel"));
+            AssertCells(
+                rows[2],
+                (0, "导出工具"), (1, "WeFlow"), (2, "导出版本"), (3, "1.0.3"),
+                (4, "平台"), (5, "wechat"), (6, "导出时间"), (7, "2023-11-26 12:00:14"));
+            AssertCells(
+                rows[4],
+                (0, "1"), (1, "2023-11-26 12:00:14"), (2, "WeFlow Excel 发送者"),
+                (3, "fixture-weflow-excel"), (4, "Excel 发送者"), (5, "Excel 发送者"),
+                (6, "文本消息"), (7, "你好，WeFlow Excel"));
+        }
+
+        using (var workbook = OpenXmlWorkbookReader.Open(Path.Combine(texts, "ciphertalk-current.xlsx")))
+        {
+            var rows = workbook.ReadRows(Assert.Single(workbook.Sheets), CancellationToken.None).ToList();
+            AssertCells(
+                rows[1],
+                (0, "1"), (1, "2023/11/26 12:00:15"), (2, "2023/11/26"), (3, "12:00:15"),
+                (4, "日"), (5, "CipherTalk Excel 发送者"), (6, "fixture-sender-ciphertalk-excel"),
+                (7, "文本消息"), (8, "你好，CipherTalk Excel"), (9, "1"), (10, "1701000015"));
+        }
+
+        using (var workbook = OpenXmlWorkbookReader.Open(Path.Combine(texts, "qq-current.xlsx")))
+        {
+            var messageRows = workbook.ReadRows(workbook.Sheets.Single(sheet => sheet.Name == "聊天记录"), CancellationToken.None).ToList();
+            AssertCells(
+                messageRows[1],
+                (0, "1"), (1, "2023-11-26 12:00:16"), (2, "QQ Excel 发送者"), (3, "930003"),
+                (4, "群主"), (5, "图片"), (6, "你好，QQ Excel"), (7, "否"), (8, "1"));
+
+            var resourceRows = workbook.ReadRows(workbook.Sheets.Single(sheet => sheet.Name == "资源列表"), CancellationToken.None).ToList();
+            AssertCells(
+                resourceRows[1],
+                (0, "1"), (1, "2023-11-26 12:00:16"), (2, "QQ Excel 发送者"), (3, "930003"),
+                (4, "image"), (5, "qq-current.jpg"), (6, "4"), (7, "qq-media/qq-current.jpg"));
+        }
+    }
+
+    [Fact]
+    public void CurrentExportTestTree_CreateDeletesItsExactRootWhenConstructionThrows()
+    {
+        string? createdRoot = null;
+
+        var error = Assert.Throws<InvalidOperationException>(() => CurrentExportTestTree.Create(root =>
+        {
+            createdRoot = root;
+            throw new InvalidOperationException("fixture construction failed");
+        }));
+
+        Assert.Equal("fixture construction failed", error.Message);
+        Assert.NotNull(createdRoot);
+        Assert.StartsWith(
+            Path.Combine(Path.GetTempPath(), "chatarchive-current-exports-"),
+            createdRoot,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(createdRoot));
+    }
+
+    [Fact]
     public void CurrentFormats_MixedDirectoryDiscoversEveryRegisteredAdapterExactlyOnce()
     {
         using var tree = CurrentExportTestTree.Create();
@@ -74,13 +277,19 @@ public sealed class CurrentExportCompatibilityTests
             matchedTypes.Add(match.GetType());
         }
 
-        var registeredTypes = registeredFormats
-            .Select(format => format.GetType())
-            .ToHashSet();
         Assert.True(
-            registeredTypes.SetEquals(matchedTypes),
-            $"registered=[{string.Join(", ", registeredTypes.Select(type => type.Name).Order())}], " +
+            ExpectedAdapterTypes.SetEquals(matchedTypes),
+            $"expected=[{string.Join(", ", ExpectedAdapterTypes.Select(type => type.Name).Order())}], " +
             $"matched=[{string.Join(", ", matchedTypes.Select(type => type.Name).Order())}]");
+    }
+
+    private static void AssertCells(OpenXmlRow row, params (int Column, string Value)[] expected)
+    {
+        Assert.Equal(expected.Length, row.Cells.Count);
+        foreach (var (column, value) in expected)
+        {
+            Assert.Equal(value, row.Cells[column + 1].Value);
+        }
     }
 
     private static string Fixture(string relativePath) => Path.Combine(
@@ -106,48 +315,59 @@ internal sealed class CurrentExportTestTree : IDisposable
 
     internal IReadOnlyList<string> NonExportCandidates { get; }
 
-    internal static CurrentExportTestTree Create()
+    internal static CurrentExportTestTree Create(Action<string>? afterRootCreated = null)
     {
         var root = Path.Combine(
             Path.GetTempPath(),
             $"chatarchive-current-exports-{Guid.NewGuid():N}");
-        var texts = Path.Combine(root, "texts");
-        Directory.CreateDirectory(texts);
-        CopyDirectory(FixtureRoot(), texts);
+        try
+        {
+            Directory.CreateDirectory(root);
+            afterRootCreated?.Invoke(root);
 
-        var images = Path.Combine(root, "images");
-        Directory.CreateDirectory(images);
-        File.WriteAllBytes(Path.Combine(images, "layout-a.jpg"), [1, 2, 3, 4]);
+            var texts = Path.Combine(root, "texts");
+            Directory.CreateDirectory(texts);
+            CopyDirectory(FixtureRoot(), texts);
 
-        WriteWeFlowWorkbook(Path.Combine(texts, "weflow-current.xlsx"));
-        WriteCipherTalkWorkbook(Path.Combine(texts, "ciphertalk-current.xlsx"));
-        WriteQqWorkbook(Path.Combine(texts, "qq-current.xlsx"));
+            var images = Path.Combine(root, "images");
+            Directory.CreateDirectory(images);
+            File.WriteAllBytes(Path.Combine(images, "layout-a.jpg"), [1, 2, 3, 4]);
 
-        var html = Path.Combine(texts, "presentation.html");
-        File.WriteAllText(html, "<html><body>browser presentation only</body></html>");
-        var unrelatedText = Path.Combine(texts, "unrelated-notes.txt");
-        File.WriteAllText(unrelatedText, "This is not a chat export.");
-        var unrelatedSql = Path.Combine(texts, "unrelated-database.sql");
-        File.WriteAllText(
-            unrelatedSql,
-            "CREATE TABLE notes (id INTEGER, body TEXT); INSERT INTO notes VALUES (1, 'not chat');");
-        var unrelatedXlsx = Path.Combine(texts, "unrelated-workbook.xlsx");
-        XlsxTestFile.Write(
-            unrelatedXlsx,
-            new XlsxTestSheet(
-                "Data",
-                [[new XlsxTestCell("A1", "name"), new XlsxTestCell("B1", "value")]]));
+            WriteWeFlowWorkbook(Path.Combine(texts, "weflow-current.xlsx"));
+            WriteCipherTalkWorkbook(Path.Combine(texts, "ciphertalk-current.xlsx"));
+            WriteQqWorkbook(Path.Combine(texts, "qq-current.xlsx"));
 
-        return new CurrentExportTestTree(
-            root,
-            [
-                Path.GetFullPath(Path.Combine(texts, "README.md")),
-                Path.GetFullPath(html),
-                Path.GetFullPath(unrelatedText),
-                Path.GetFullPath(unrelatedSql),
-                Path.GetFullPath(unrelatedXlsx),
-                Path.GetFullPath(Path.Combine(texts, "qq-chunked", "chunks", "c000001.jsonl")),
-            ]);
+            var html = Path.Combine(texts, "presentation.html");
+            File.WriteAllText(html, "<html><body>browser presentation only</body></html>");
+            var unrelatedText = Path.Combine(texts, "unrelated-notes.txt");
+            File.WriteAllText(unrelatedText, "This is not a chat export.");
+            var unrelatedSql = Path.Combine(texts, "unrelated-database.sql");
+            File.WriteAllText(
+                unrelatedSql,
+                "CREATE TABLE notes (id INTEGER, body TEXT); INSERT INTO notes VALUES (1, 'not chat');");
+            var unrelatedXlsx = Path.Combine(texts, "unrelated-workbook.xlsx");
+            XlsxTestFile.Write(
+                unrelatedXlsx,
+                new XlsxTestSheet(
+                    "Data",
+                    [[new XlsxTestCell("A1", "name"), new XlsxTestCell("B1", "value")]]));
+
+            return new CurrentExportTestTree(
+                root,
+                [
+                    Path.GetFullPath(Path.Combine(texts, "README.md")),
+                    Path.GetFullPath(html),
+                    Path.GetFullPath(unrelatedText),
+                    Path.GetFullPath(unrelatedSql),
+                    Path.GetFullPath(unrelatedXlsx),
+                    Path.GetFullPath(Path.Combine(texts, "qq-chunked", "chunks", "c000001.jsonl")),
+                ]);
+        }
+        catch
+        {
+            DeleteOwnedRootBestEffort(root);
+            throw;
+        }
     }
 
     private static string FixtureRoot() => Path.Combine(
@@ -185,8 +405,6 @@ internal sealed class CurrentExportTestTree : IDisposable
                         new XlsxTestCell("B2", "fixture-weflow-excel"),
                         new XlsxTestCell("D2", "昵称"),
                         new XlsxTestCell("E2", "WeFlow Excel"),
-                        new XlsxTestCell("F2", "备注"),
-                        new XlsxTestCell("G2", "WeFlow Excel"),
                     ],
                     [
                         new XlsxTestCell("A3", "导出工具"),
@@ -209,12 +427,12 @@ internal sealed class CurrentExportTestTree : IDisposable
                         new XlsxTestCell("H4", "内容"),
                     ],
                     [
-                        new XlsxTestCell("A5", "14", "n"),
+                        new XlsxTestCell("A5", "1", "n"),
                         new XlsxTestCell("B5", "2023-11-26 12:00:14"),
                         new XlsxTestCell("C5", "WeFlow Excel 发送者"),
-                        new XlsxTestCell("D5", "fixture-sender-weflow-excel"),
+                        new XlsxTestCell("D5", "fixture-weflow-excel"),
                         new XlsxTestCell("E5", "Excel 发送者"),
-                        new XlsxTestCell("F5", "对方"),
+                        new XlsxTestCell("F5", "Excel 发送者"),
                         new XlsxTestCell("G5", "文本消息"),
                         new XlsxTestCell("H5", "你好，WeFlow Excel"),
                     ],
@@ -242,8 +460,8 @@ internal sealed class CurrentExportTestTree : IDisposable
                         new XlsxTestCell("K1", "时间戳"),
                     ],
                     [
-                        new XlsxTestCell("A2", "15", "n"),
-                        new XlsxTestCell("B2", "2023-11-26 12:00:15"),
+                        new XlsxTestCell("A2", "1", "n"),
+                        new XlsxTestCell("B2", "2023/11/26 12:00:15"),
                         new XlsxTestCell("C2", "2023/11/26"),
                         new XlsxTestCell("D2", "12:00:15"),
                         new XlsxTestCell("E2", "日"),
@@ -280,10 +498,10 @@ internal sealed class CurrentExportTestTree : IDisposable
                         new XlsxTestCell("I1", "资源数量"),
                     ],
                     [
-                        new XlsxTestCell("A2", "16", "n"),
+                        new XlsxTestCell("A2", "1", "n"),
                         new XlsxTestCell("B2", "2023-11-26 12:00:16"),
                         new XlsxTestCell("C2", "QQ Excel 发送者"),
-                        new XlsxTestCell("D2", "fixture-sender-qq-excel"),
+                        new XlsxTestCell("D2", "930003"),
                         new XlsxTestCell("E2", "群主"),
                         new XlsxTestCell("F2", "图片"),
                         new XlsxTestCell("G2", "你好，QQ Excel"),
@@ -308,7 +526,7 @@ internal sealed class CurrentExportTestTree : IDisposable
                         new XlsxTestCell("A2", "1", "n"),
                         new XlsxTestCell("B2", "2023-11-26 12:00:16"),
                         new XlsxTestCell("C2", "QQ Excel 发送者"),
-                        new XlsxTestCell("D2", "fixture-sender-qq-excel"),
+                        new XlsxTestCell("D2", "930003"),
                         new XlsxTestCell("E2", "image"),
                         new XlsxTestCell("F2", "qq-current.jpg"),
                         new XlsxTestCell("G2", "4", "n"),
@@ -319,9 +537,19 @@ internal sealed class CurrentExportTestTree : IDisposable
 
     public void Dispose()
     {
+        DeleteOwnedRootBestEffort(Root);
+    }
+
+    private static void DeleteOwnedRootBestEffort(string root)
+    {
+        if (!IsOwnedRoot(root))
+        {
+            return;
+        }
+
         try
         {
-            Directory.Delete(Root, recursive: true);
+            Directory.Delete(root, recursive: true);
         }
         catch (IOException)
         {
@@ -329,5 +557,20 @@ internal sealed class CurrentExportTestTree : IDisposable
         catch (UnauthorizedAccessException)
         {
         }
+    }
+
+    private static bool IsOwnedRoot(string root)
+    {
+        const string Prefix = "chatarchive-current-exports-";
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var tempRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+        if (!string.Equals(Path.GetDirectoryName(fullRoot), tempRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var name = Path.GetFileName(fullRoot);
+        return name.StartsWith(Prefix, StringComparison.Ordinal)
+            && Guid.TryParseExact(name[Prefix.Length..], "N", out _);
     }
 }
