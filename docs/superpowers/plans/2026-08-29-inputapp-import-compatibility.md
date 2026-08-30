@@ -2,28 +2,28 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **2026-08-30 XLSX reader update:** Task 7 的自研解析器和“不得新增 Excel 包”约束已由 `docs/superpowers/specs/2026-08-30-openxml-sdk-reader-migration-design.md` 取代；格式与安全验收条件不变。
+> **2026-08-30 XLSX reader update（现状优先）：** Task 7 下方的自研 OPC/XML 步骤只保留为历史计划，已由 `docs/superpowers/specs/2026-08-30-openxml-sdk-reader-migration-design.md` 取代。当前实现固定使用 `DocumentFormat.OpenXml` 3.5.1 和 `OpenXmlReader` SAX API，并保留窄化 ZIP 安全预检；后续任务不得把下方历史伪码或“不得新增 Excel 包”重新解释为现状。
 
 **Goal:** Make ChatArchive import exactly the current non-HTML exports produced by the three `inputapp` source snapshots, with strict detection, safe media resolution, Excel support, and source-derived regression coverage.
 
 **Architecture:** Keep the existing `IChatExportFormat -> ExportFile -> ParsedMessage` pipeline. Replace generic text/SQL matching with source-specific adapters, share only low-level CSV/SQL/OpenXML readers, remove HTML from discovery, and use explicit degradation rules when an upstream format omits identity or direction.
 
-**Tech Stack:** .NET 10, C# 14, `System.Text.Json`, `System.IO.Compression`, `System.Xml`, `Microsoft.Data.Sqlite`, xUnit v3.
+**Tech Stack:** .NET 10, C# 14, `System.Text.Json`, `DocumentFormat.OpenXml` 3.5.1 (`OpenXmlReader` SAX), narrow `System.IO.Compression` ZIP preflight, `Microsoft.Data.Sqlite`, xUnit v3 runner 4.0.0.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-inputapp-import-compatibility-design.md`
 
 ## Global Constraints
 
-- Format truth comes only from WeFlow `6f8e7e89f9b1`, CipherTalk `6b886e682472`, QQ Chat Exporter `888b51fab652`, and `docs/EXPORT_FORMATS_SPEC.md`.
+- Format truth comes only from the read-only external snapshots WeFlow `6f8e7e89f9b1`, CipherTalk `6b886e682472`, QQ Chat Exporter `888b51fab652` under `E:/AgentCode/ChatArchive/inputapp/`, plus the user's read-only local audit document `E:/AgentCode/ChatArchive/docs/EXPORT_FORMATS_SPEC.md`. None of those inputs is a project artifact to copy, modify, vendor, or commit.
 - HTML is not an import format: remove `.html`/`.htm` discovery and all HTML adapters/parsers.
 - Do not retain generic CSV, Markdown, TXT, or SQL syntaxes without a matching current `inputapp` writer.
-- Do not add an Excel package or runtime; parse `.xlsx` with `System.IO.Compression` and streaming XML.
+- Use the implemented, fixed `DocumentFormat.OpenXml` 3.5.1 SDK facade for `.xlsx`; retain only the documented narrow ZIP preflight and SAX worksheet reading, with no Excel application/runtime dependency.
 - Never execute SQL, formulas, macros, external workbook relationships, HTML, or JavaScript.
 - WeFlow and CipherTalk formats produce platform `wechat`; QQ formats produce platform `qq`.
 - Preserve streaming enumeration and cancellation checks for message rows.
 - Permit only the explicit, existing WeFlow layout-A parent-media paths from the spec; keep all other traversal blocked.
 - Every production behavior change starts with a focused failing test and ends with the focused test plus the complete relevant test project.
-- Preserve the untracked `inputapp/` tree and unrelated user changes; never stage it.
+- Keep the external `inputapp/` repositories and local audit document read-only and clean; never copy or stage them, and preserve unrelated user changes.
 
 ---
 
@@ -824,6 +824,8 @@ git commit -m "fix(import): align SQL with WeFlow and CipherTalk"
 
 ### Task 7: Build a safe streaming OpenXML workbook reader
 
+> **Historical task, superseded after implementation:** The steps and pseudocode in this Task 7 describe the first hand-written reader. The completed SDK migration design named at the top of this plan is authoritative for the current implementation, including its worksheet hyperlink exception. This section remains only as execution history.
+
 **Files:**
 - Create: `src/ChatArchive.Core/Importing/OpenXmlWorkbookReader.cs`
 - Create: `tests/ChatArchive.Core.Tests/XlsxTestFile.cs`
@@ -1232,8 +1234,11 @@ git commit -m "feat(import): support CipherTalk and QQ Excel exports"
 - Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/weflow-standard.json`
 - Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/weflow-arkme.json`
 - Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/ciphertalk-detailed.json`
+- Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/ciphertalk-chatlab.json`
 - Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/chatlab-current.jsonl`
 - Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/qq-single.json`
+- Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/qq-chunked/manifest.json`
+- Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/qq-chunked/chunks/c000001.jsonl`
 - Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/weflow-current.csv`
 - Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/weflow-current.md`
 - Create: `tests/ChatArchive.Core.Tests/Fixtures/CurrentExports/weflow-current.txt`
@@ -1243,68 +1248,75 @@ git commit -m "feat(import): support CipherTalk and QQ Excel exports"
 - Modify: `tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj`
 - Create: `tests/ChatArchive.Core.Tests/CurrentExportCompatibilityTests.cs`
 - Modify: `tests/ChatArchive.Core.Tests/ImportServiceTests.cs`
-- Modify: `docs/EXPORT_FORMATS_SPEC.md`
+- Modify: `src/ChatArchive.App/MainWindow.xaml.cs`
+- Modify: `src/ChatArchive.App/ViewModels/ImportViewModel.cs`
+- Create: `tests/ChatArchive.App.Tests/ImportFormatPresentationTests.cs`
 - Modify: `README.md`
+- Modify: `docs/superpowers/specs/2026-08-29-inputapp-import-compatibility-design.md`
+- Modify: `docs/superpowers/plans/2026-08-29-inputapp-import-compatibility.md`
 
 **Interfaces:**
 - Produces: committed, source-attributed fixtures copied to the test output directory.
 - Verifies: all registered current formats can be discovered, opened, and imported through `ImportService`.
-- Documents: the final support matrix, excluding HTML and non-existent CipherTalk TXT.
+- Documents: the final support matrix, excluding HTML and non-existent CipherTalk TXT; records external repositories and the user's local audit spec as read-only inputs rather than tracked project artifacts.
 
 - [ ] **Step 1: Commit current-writer textual fixtures with provenance**
 
-Copy the smallest current structures already verified against the upstream writers. `README.md` must contain this exact provenance table:
+Create the smallest current structures already verified against the read-only upstream writers. `README.md` must contain this exact provenance table:
 
 ```markdown
 | Fixture | Upstream commit | Writer source |
 | --- | --- | --- |
-| weflow-standard.json / weflow-arkme.json | 6f8e7e89f9b1 | electron/services/export/formatters/JsonFormatter.ts |
-| chatlab-current.jsonl | 6f8e7e89f9b1 | electron/services/export/formatters/ChatLabFormatter.ts |
-| weflow-current.csv | 6f8e7e89f9b1 | electron/services/export/formatters/WeCloneFormatter.ts |
-| weflow-current.md | 6f8e7e89f9b1 | electron/services/export/formatters/MarkdownFormatter.ts |
-| weflow-current.txt | 6f8e7e89f9b1 | electron/services/export/formatters/TxtFormatter.ts |
-| weflow-current.sql | 6f8e7e89f9b1 | electron/services/export/formatters/SqlFormatter.ts |
-| ciphertalk-detailed.json | 6b886e682472 | electron/services/exportService.ts |
-| ciphertalk-current.sql | 6b886e682472 | electron/services/exportService.ts |
-| qq-single.json | 888b51fab652 | qq-chat-export-core/src/json_exporter.rs |
-| qq-current.txt | 888b51fab652 | qq-chat-export-core/src/text_exporter.rs |
+| `weflow-standard.json` / `weflow-arkme.json` | `6f8e7e89f9b1` | `electron/services/export/formatters/JsonFormatter.ts` |
+| `chatlab-current.jsonl` | `6f8e7e89f9b1` | `electron/services/export/formatters/ChatLabFormatter.ts` |
+| `weflow-current.csv` | `6f8e7e89f9b1` | `electron/services/export/formatters/WeCloneFormatter.ts` |
+| `weflow-current.md` | `6f8e7e89f9b1` | `electron/services/export/formatters/MarkdownFormatter.ts` |
+| `weflow-current.txt` | `6f8e7e89f9b1` | `electron/services/export/formatters/TxtFormatter.ts` |
+| `weflow-current.sql` | `6f8e7e89f9b1` | `electron/services/export/formatters/SqlFormatter.ts` |
+| `ciphertalk-detailed.json` / `ciphertalk-chatlab.json` | `6b886e682472` | `electron/services/exportService.ts` |
+| `ciphertalk-current.sql` | `6b886e682472` | `electron/services/exportService.ts` |
+| `qq-single.json` / `qq-chunked/**` | `888b51fab652` | `qq-chat-export-core/src/json_exporter.rs`, `chunked_jsonl_writer.rs` |
+| `qq-current.txt` | `888b51fab652` | `qq-chat-export-core/src/text_exporter.rs` |
 ```
 
 Also document that XLSX tests use `XlsxTestFile` to reproduce the exact writer rows because binary fixtures cannot be meaningfully reviewed as diffs. Add this project item:
 
 ```xml
 <ItemGroup>
-  <None Include="Fixtures\CurrentExports\**\*" CopyToOutputDirectory="PreserveNewest" />
+  <None Update="Fixtures\CurrentExports\**\*" CopyToOutputDirectory="PreserveNewest" />
 </ItemGroup>
 ```
 
-- [ ] **Step 2: Write a failing registry-to-fixture compatibility test**
+- [ ] **Step 2: Write a registry-to-fixture characterization test**
 
 ```csharp
 [Theory]
-[InlineData("weflow-standard.json", "wechat", "你好")]
-[InlineData("weflow-arkme.json", "wechat", "你好")]
-[InlineData("ciphertalk-detailed.json", "wechat", "你好")]
-[InlineData("chatlab-current.jsonl", "wechat", "你好")]
-[InlineData("qq-single.json", "qq", "你好")]
-[InlineData("weflow-current.csv", "wechat", "你好")]
-[InlineData("weflow-current.md", "wechat", "你好")]
-[InlineData("weflow-current.txt", "wechat", "你好")]
-[InlineData("qq-current.txt", "qq", "你好")]
-[InlineData("weflow-current.sql", "wechat", "你好")]
-[InlineData("ciphertalk-current.sql", "wechat", "你好")]
-public void CurrentFixture_HasExactlyOneAdapterAndOneExpectedMessage(
+[InlineData("weflow-standard.json", typeof(WeFlowExportFormat), "wechat")]
+[InlineData("weflow-arkme.json", typeof(WeFlowExportFormat), "wechat")]
+[InlineData("ciphertalk-detailed.json", typeof(CipherTalkDetailedJsonFormat), "wechat")]
+[InlineData("ciphertalk-chatlab.json", typeof(ChatLabJsonExportFormat), "wechat")]
+[InlineData("chatlab-current.jsonl", typeof(ChatLabJsonlExportFormat), "wechat")]
+[InlineData("qq-single.json", typeof(QqExportFormat), "qq")]
+[InlineData("qq-chunked/manifest.json", typeof(QqChunkedExportFormat), "qq")]
+[InlineData("weflow-current.csv", typeof(WeFlowCsvExportFormat), "wechat")]
+[InlineData("weflow-current.md", typeof(WeFlowMarkdownExportFormat), "wechat")]
+[InlineData("weflow-current.txt", typeof(WeFlowTextExportFormat), "wechat")]
+[InlineData("qq-current.txt", typeof(QqTextExportFormat), "qq")]
+[InlineData("weflow-current.sql", typeof(WeFlowSqlExportFormat), "wechat")]
+[InlineData("ciphertalk-current.sql", typeof(CipherTalkSqlExportFormat), "wechat")]
+public void CurrentFixture_HasExactlyOneSourceAdapterAndOneExpectedMessage(
     string name,
-    string platform,
-    string expectedContent)
+    Type expectedAdapterType,
+    string platform)
 {
     var path = Fixture(name);
     var matches = ExportFormats.Default.Where(format => format.Matches(path)).ToList();
     var format = Assert.Single(matches);
+    Assert.IsType(expectedAdapterType, format);
     Assert.Equal(platform, format.Platform);
     using var export = format.Open(path);
     var message = Assert.Single(export.EnumerateMessages());
-    Assert.Contains(expectedContent, message.Content);
+    Assert.Contains("你好", message.Content);
     Assert.True(message.TimestampMs > 0);
     Assert.False(string.IsNullOrWhiteSpace(message.SenderNativeId));
 }
@@ -1317,13 +1329,14 @@ private static string Fixture(string name) => Path.Combine(
     AppContext.BaseDirectory, "Fixtures", "CurrentExports", name);
 ```
 
-- [ ] **Step 3: Run the fixture test and verify RED**
+- [ ] **Step 3: Run the fixture characterization and record its first result**
 
 ```powershell
-dotnet test tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj --filter "CurrentFixture_"
+dotnet build tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj -c Release
+& .\tests\ChatArchive.Core.Tests\bin\Release\net10.0\ChatArchive.Core.Tests.exe -class ChatArchive.Core.Tests.CurrentExportCompatibilityTests
 ```
 
-Expected: at least one fixture is absent or one corrected adapter is not yet uniquely matched until all preceding tasks are complete.
+This is a Task 10 integration/characterization test and may be GREEN on its first run because Tasks 1–9 own the production RED/GREEN cycles. A failure that exposes production behavior must first receive a focused RED in the owning adapter suite before the minimal fix.
 
 - [ ] **Step 4: Add mixed-directory discovery and end-to-end import tests**
 
@@ -1351,29 +1364,21 @@ Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM conversations WHERE pl
 ```
 
 Give every fixture a unique conversation ID/path and a unique timestamp/content so deduplication cannot merge them. Add one WeFlow layout-A image and assert the imported attachment has `is_available = 1`.
+Also assert that the matched adapter runtime-type set equals the runtime-type set in `ExportFormats.Default`, so every registered adapter has a current source-provenance input and no generic/legacy registration remains.
 
 - [ ] **Step 5: Run compatibility and import-service regressions**
 
 ```powershell
-dotnet test tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj --filter "CurrentFixture_|CurrentFormats_EndToEnd|ImportDiscoveryTests"
-dotnet test tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj
+dotnet build tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj -c Release
+& .\tests\ChatArchive.Core.Tests\bin\Release\net10.0\ChatArchive.Core.Tests.exe -class ChatArchive.Core.Tests.CurrentExportCompatibilityTests -class ChatArchive.Core.Tests.ImportServiceTests -class ChatArchive.Core.Tests.ImportDiscoveryTests
+dotnet test tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj -c Release
 ```
 
 Expected: PASS with every fixture matched by exactly one adapter.
 
-- [ ] **Step 6: Update the format specification to match the implementation**
+- [ ] **Step 6: Record audited inputs and tracked outputs truthfully**
 
-In `docs/EXPORT_FORMATS_SPEC.md`:
-
-- mark WeFlow CSV/Markdown/TXT/SQL/Excel supported according to the final tests;
-- mark CipherTalk SQL/Excel supported and TXT not applicable;
-- mark QQ TXT/Excel supported;
-- state that HTML is intentionally excluded as a browser presentation artifact;
-- list discovery extensions as `.json .jsonl .csv .md .txt .sql .xlsx`;
-- replace the layout-A conflict section with the exact one-level whitelist and security conditions;
-- retain upstream commit baselines and writer-source references.
-
-Do not claim fields the upstream transport does not contain. Explicitly document path-derived conversation IDs and incoming fallback for directionless TXT/Excel.
+Treat `E:/AgentCode/ChatArchive/docs/EXPORT_FORMATS_SPEC.md` and the three repositories under `E:/AgentCode/ChatArchive/inputapp/` as read-only audit inputs. Do not add, edit, vendor, submodule, or commit them. Update the committed compatibility design and this plan only where needed to record that README and source-attributed tests are the tracked outputs. Make the implemented `DocumentFormat.OpenXml` SDK migration visibly authoritative over Task 7's historical hand-written reader statements without rewriting that execution history.
 
 - [ ] **Step 7: Replace the README support table**
 
@@ -1389,32 +1394,34 @@ Use source-specific rows only:
 
 Add one sentence: HTML exports are intentionally not imported because they are browser presentation artifacts rather than stable data interchange formats. Remove the “通用导出” and “通用网页” rows.
 
+The final stale-reference audit also exposed a Task 1 UI-surface omission: the core discovery registry already excluded HTML, while the file picker, initial status, and help text still advertised it. Record a focused failing App test first, then make the picker mirror `ImportDiscovery.SupportedExtensions` and align both user-visible strings with the source-specific matrix. This is a bounded production scope expansion, not an adapter behavior change.
+
 - [ ] **Step 8: Run documentation consistency and complete solution verification**
 
 Invoke `superpowers:verification-before-completion`, then run fresh commands:
 
 ```powershell
-rg -n "ChatHtmlExportFormat|HtmlDataExtractor|平台.*html|通用网页|is_sender,talker,content" src tests README.md docs/EXPORT_FORMATS_SPEC.md
-dotnet test tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj
-dotnet test tests/ChatArchive.App.Tests/ChatArchive.App.Tests.csproj
-dotnet test ChatArchive.sln
+rg -n "ChatHtmlExportFormat|HtmlDataExtractor|通用网页|通用导出|is_sender,talker,content|HTML.*(导入|支持)|\.html|\.htm" src tests README.md docs/superpowers/specs/2026-08-29-inputapp-import-compatibility-design.md docs/superpowers/plans/2026-08-29-inputapp-import-compatibility.md
+dotnet test tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj -c Release
+dotnet test tests/ChatArchive.App.Tests/ChatArchive.App.Tests.csproj -c Release
+dotnet test ChatArchive.sln -c Release
 git diff --check
 ```
 
 Expected:
 
-- `rg` returns no stale production/test/support claims; historical explanation in the audited spec is allowed only when explicitly labeled removed;
+- `rg` returns no stale production/test/support claims; negative tests and historical/superseded explanations in the committed design/plan are acceptable only when visibly labeled;
 - core, app, and solution tests all pass;
 - `git diff --check` prints nothing.
 
-- [ ] **Step 9: Request code review and resolve findings**
+- [ ] **Step 9: Inspect the complete diff and resolve findings**
 
-Invoke `superpowers:requesting-code-review` against the design, this plan, and the complete diff. Fix every correctness/safety/spec finding through a new RED/GREEN cycle, then rerun Step 8.
+Because this Task 10 dispatch explicitly forbids subagents, perform a direct requirements/diff review against the design, this plan, and the task brief. Fix every correctness/safety/spec finding through an owning-adapter RED/GREEN cycle if production behavior is implicated, then rerun Step 8.
 
 - [ ] **Step 10: Commit fixtures, integration tests, and docs**
 
 ```powershell
-git add tests/ChatArchive.Core.Tests/Fixtures/CurrentExports tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj tests/ChatArchive.Core.Tests/CurrentExportCompatibilityTests.cs tests/ChatArchive.Core.Tests/ImportServiceTests.cs docs/EXPORT_FORMATS_SPEC.md README.md
+git add tests/ChatArchive.Core.Tests/Fixtures/CurrentExports tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj tests/ChatArchive.Core.Tests/CurrentExportCompatibilityTests.cs tests/ChatArchive.Core.Tests/ImportServiceTests.cs src/ChatArchive.App/MainWindow.xaml.cs src/ChatArchive.App/ViewModels/ImportViewModel.cs tests/ChatArchive.App.Tests/ImportFormatPresentationTests.cs README.md docs/superpowers/specs/2026-08-29-inputapp-import-compatibility-design.md docs/superpowers/plans/2026-08-29-inputapp-import-compatibility.md
 git commit -m "test(import): verify current inputapp export compatibility"
 ```
 
@@ -1425,8 +1432,8 @@ git commit -m "test(import): verify current inputapp export compatibility"
 - [ ] Every design requirement maps to a task above.
 - [ ] Every production change has a test that was observed failing first.
 - [ ] No registered generic text/SQL adapter remains.
-- [ ] HTML is absent from discovery, registration, code, and support claims.
-- [ ] All three Excel formats use the same safe OpenXML reader and no new package.
+- [ ] HTML import is absent from discovery, registration, the file picker, and current support claims; legacy archive display paths, negative tests, and explicitly historical/removal text are not import support.
+- [ ] All three Excel formats use the same safe `DocumentFormat.OpenXml` 3.5.1 SAX reader facade and narrow ZIP preflight.
 - [ ] Parent media traversal is limited to the exact WeFlow layout-A whitelist.
 - [ ] All current fixtures match exactly one adapter.
 - [ ] Core, app, and complete solution tests pass from fresh runs.

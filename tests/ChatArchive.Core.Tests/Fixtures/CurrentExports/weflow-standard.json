@@ -1,0 +1,31 @@
+{
+  "weflow": {
+    "version": "1.0.3",
+    "exportedAt": 1701000001,
+    "generator": "WeFlow"
+  },
+  "session": {
+    "wxid": "fixture-weflow-standard",
+    "nickname": "标准会话",
+    "remark": "",
+    "displayName": "标准会话",
+    "type": "私聊",
+    "lastTimestamp": 1701000001,
+    "messageCount": 1
+  },
+  "messages": [
+    {
+      "localId": 1,
+      "createTime": 1701000001,
+      "formattedTime": "2023-11-26 12:00:01",
+      "type": "文本消息",
+      "localType": 1,
+      "content": "你好，WeFlow Standard",
+      "isSend": 0,
+      "senderUsername": "fixture-sender-weflow-standard",
+      "senderDisplayName": "标准发送者",
+      "source": "",
+      "platformMessageId": "fixture-message-weflow-standard"
+    }
+  ]
+}

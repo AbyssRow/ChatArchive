@@ -2,13 +2,13 @@
 
 ## 1. 背景与目标
 
-ChatArchive 只面向仓库 `inputapp` 中的三个上游源码快照：
+ChatArchive 只面向外部只读审计目录 `E:/AgentCode/ChatArchive/inputapp/` 中的三个上游源码快照：
 
 - WeFlow `6f8e7e89f9b1`
 - CipherTalk `6b886e682472`
 - QQ Chat Exporter `888b51fab652`
 
-当前 JSON/JSONL 主格式已基本对齐，但 CSV、Markdown、TXT、SQL、Excel、HTML 和媒体路径仍存在实现与实际 writer 不一致的问题。现有文本解析器主要来自提交 `bbaa9b1` 中的手写理想样例，不能证明是三个上游的真实历史协议。本设计以 `docs/EXPORT_FORMATS_SPEC.md` 和上述源码快照的 writer 为唯一格式依据。
+本计划启动时，JSON/JSONL 主格式已基本对齐，但 CSV、Markdown、TXT、SQL、Excel、HTML 和媒体路径仍与实际 writer 不一致；当时的文本解析器主要来自提交 `bbaa9b1` 中的手写理想样例，不能证明是三个上游的真实历史协议。截至最终兼容性 characterization，这些缺口已按当前 writer 纠正或明确排除。本设计以用户本地只读审计文档 `E:/AgentCode/ChatArchive/docs/EXPORT_FORMATS_SPEC.md` 和上述外部源码快照的 writer 为格式依据；这些输入都不是本项目要复制、修改或提交的 artifact。
 
 目标是让每个受支持状态同时满足：实际产物可以被发现、能够由唯一适配器识别、至少生成一条字段正确的消息，并对格式固有的信息损失采用明确且稳定的降级规则。
 
@@ -42,7 +42,7 @@ ChatArchive 只面向仓库 `inputapp` 中的三个上游源码快照：
 
 - 删除所有 HTML 导入支持。HTML 是供浏览器直接查看的展示产物，不是稳定的数据交换协议；部分上游 HTML 已经不可逆地丢失原始消息字段。
 - 不实现 CipherTalk TXT。其 UI 类型中仍有 TXT，但当前 `exportService` 没有对应后端分支，不能产生有效产物。
-- 不保留没有当前 `inputapp` writer 或 fixture 依据的通用/理想 CSV、Markdown、TXT 和 SQL 语法。
+- 不保留没有当前外部 `inputapp` writer 或 fixture 依据的通用/理想 CSV、Markdown、TXT 和 SQL 语法。
 - 不执行 SQL、Excel 公式、宏、外部工作簿关系、HTML 或 JavaScript。
 
 ## 3. 架构
@@ -53,7 +53,7 @@ ChatArchive 只面向仓库 `inputapp` 中的三个上游源码快照：
 
 - RFC 4180 CSV 记录读取器继续作为 WeFlow CSV 的底层能力。
 - SQL 语句读取器负责处理注释、字符串转义、建表列顺序和多值 `INSERT`，但只向 WeFlow/CipherTalk 两个专属映射器暴露已知表的行。
-- 新增轻量 OpenXML `.xlsx` 读取器，使用 `System.IO.Compression` 与流式 XML 读取工作簿、工作表、共享字符串、inline string、数值、布尔值、缓存值、超链接和内部关系，不增加 Excel 运行时依赖。
+- `.xlsx` 共享读取层已按后续迁移设计改用固定版本 `DocumentFormat.OpenXml` 3.5.1：由 SDK 处理 OPC/部件关系，并用 `OpenXmlReader` SAX API 流式读取工作表；项目只保留窄化 ZIP 安全预检和来源适配器所需的严格策略。该现状取代本设计最初“使用 `System.IO.Compression` 与 `XmlReader` 自研完整读取层”的历史选择，详见 `2026-08-30-openxml-sdk-reader-migration-design.md`。
 - 文本块读取保持逐行流式处理，并在消息边界检查取消令牌。
 
 ### 3.2 来源专属适配器
@@ -208,10 +208,10 @@ QQ Excel 不保存 chat info 或本人 UIN。标题取文件名，内部会话 I
 
 - 只接受 `.xlsx` ZIP/OpenXML 包，不接受 `.xls`、`.xlsm` 或二进制工作簿。
 - 只解析包内工作簿定义引用的工作表和共享字符串。
-- 关系目标必须是包内相对路径；拒绝 `TargetMode="External"`、绝对路径和越界目标。
+- 包根与工作簿部件的外部关系一律拒绝。工作表上只有精确标准 hyperlink 关系可进入当前 writer 所需的受限例外：安全相对媒体 Target 只作为附件声明返回，不读取网络或外部文件；URL、根路径、驱动器路径、UNC 和越界 Target 被忽略。该规则由 `2026-08-30-openxml-sdk-reader-migration-design.md` 取代了最初“拒绝所有 `TargetMode="External"`”的历史表述。
 - 公式单元格只读取已有缓存值，不计算公式；没有缓存值则视为空。
 - 不读取宏、自定义 XML、嵌入对象、图片二进制或外部数据连接。
-- 工作表行通过 `XmlReader` 流式枚举；共享字符串按索引读取，所有循环支持取消令牌。
+- 工作表行通过 SDK `OpenXmlReader` SAX API 流式枚举，并在行/超长单元格循环中检查取消令牌；共享字符串在打开阶段以前向读取方式建立只读索引。
 - ZIP 或 XML 损坏、关系缺失和非法单元格引用转换为可理解的 `ImportFormatException`。
 
 ## 8. 发现顺序与误识别控制
@@ -241,30 +241,31 @@ QQ 分块 JSONL 的 manifest 剪枝规则保持不变。
 - WeFlow Excel 三种动态表头；
 - CipherTalk Excel 两个可选列；
 - QQ Excel 可选群头衔和资源工作表；
-- OpenXML shared string、inline string、数字、日期、缓存值和内部超链接；
+- Open XML SDK SAX 路径下的 shared string、inline string、数字、日期、缓存值，以及内部和受限外部媒体超链接；
 - SQL 注释、转义单引号、多行和多值 `INSERT`；
 - TXT/Markdown 多行正文和末条消息无尾随空行；
 - JSON/JSONL 当前可选字段与版本标记；
 - HTML 不再发现；
 - 普通无关 `.txt`、`.md`、`.sql`、`.xlsx` 不误识别；
-- 损坏 ZIP/XML、外部关系、公式无缓存、绝对路径和目录穿越安全失败；
+- 损坏 ZIP/XML、禁止的外部关系、公式无缓存、绝对路径和目录穿越安全失败；
 - 长文件枚举过程中的取消。
 
 实现遵循 TDD：每个格式先加入最小失败测试，确认因当前缺口失败，再实现最小修复并运行该格式测试。最终运行核心测试、应用测试和 `dotnet test ChatArchive.sln` 全套测试。
 
 ## 10. 文档与完成标准
 
-同步更新：
+用户本地 `E:/AgentCode/ChatArchive/docs/EXPORT_FORMATS_SPEC.md` 是本次已审计的只读输入，不在分支内新增或修改。项目跟踪的输出是：
 
-- `docs/EXPORT_FORMATS_SPEC.md` 的兼容矩阵、HTML、文本、SQL、Excel、媒体路径和发现规则；
-- README 支持格式说明；
-- 适配器与发现器注释。
+- README 来源专属支持格式说明；
+- 来源归属 fixture、注册表/发现/完整导入测试；
+- 本设计与实施计划中对只读输入和已实现 SDK 迁移的状态说明；
+- 必要的适配器与发现器注释。
 
 完成标准：
 
 1. 第 2.2 节每个真实格式都有源码对应 fixture 和通过的解析/导入测试；
-2. HTML 不再出现在发现、注册或支持文档中；
+2. HTML 导入不再出现在发现、注册、文件选择器或当前支持声明中；兼容旧归档的平台显示、负面测试和明确的移除说明不属于导入支持；
 3. 没有无上游依据的通用文本格式分支；
 4. WeFlow 布局 A 媒体可解析且安全负面测试通过；
 5. 所有现有及新增测试无错误、失败或警告；
-6. 兼容矩阵与实现结果一致。
+6. README、来源 fixture 与测试形成的兼容矩阵与实现结果一致。

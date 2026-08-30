@@ -1,0 +1,3 @@
+{"_type":"header","chatlab":{"version":"0.0.2","exportedAt":1701000005,"generator":"WeFlow"},"meta":{"name":"WeFlow ChatLab JSONL","platform":"wechat","type":"group","groupId":"fixture-weflow-chatlab-jsonl@chatroom"}}
+{"_type":"member","platformId":"fixture-sender-weflow-chatlab-jsonl","accountName":"WeFlow ChatLab 发送者","groupNickname":"JSONL 群名片"}
+{"_type":"message","sender":"fixture-sender-weflow-chatlab-jsonl","accountName":"WeFlow ChatLab 发送者","groupNickname":"JSONL 群名片","timestamp":1701000005,"type":0,"content":"你好，WeFlow ChatLab JSONL","platformMessageId":"fixture-message-weflow-chatlab-jsonl"}

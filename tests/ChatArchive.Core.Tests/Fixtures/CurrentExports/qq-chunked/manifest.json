@@ -1,0 +1,64 @@
+{
+  "metadata": {
+    "name": "QQChatExporter",
+    "copyright": "https://github.com/shuakami/qq-chat-exporter",
+    "version": "0.1.0"
+  },
+  "chatInfo": {
+    "name": "QQ Chunked",
+    "type": "group",
+    "selfUid": "fixture-self-qq-chunked",
+    "selfUin": "920001",
+    "peerUid": "fixture-peer-qq-chunked",
+    "peerUin": "920002"
+  },
+  "statistics": {
+    "totalMessages": 1,
+    "timeRange": {
+      "start": "2023-11-26T12:00:07.000Z",
+      "end": "2023-11-26T12:00:07.000Z",
+      "durationDays": 1
+    },
+    "messageTypes": { "type_1": 1 },
+    "senders": [
+      {
+        "uid": "fixture-sender-qq-chunked",
+        "name": "QQ Chunked 发送者",
+        "messageCount": 1,
+        "percentage": 100.0
+      }
+    ],
+    "resources": { "total": 0, "byType": {}, "totalSize": 0 }
+  },
+  "chunked": {
+    "format": "jsonl",
+    "chunksDir": "chunks",
+    "chunkFileExt": ".jsonl",
+    "maxMessagesPerChunk": 50000,
+    "maxBytesPerChunk": 52428800,
+    "chunks": [
+      {
+        "index": 1,
+        "fileName": "c000001.jsonl",
+        "relativePath": "chunks/c000001.jsonl",
+        "start": "2023-11-26T12:00:07.000Z",
+        "end": "2023-11-26T12:00:07.000Z",
+        "count": 1,
+        "bytes": 1,
+        "startTsMs": 1701000007000,
+        "endTsMs": 1701000007000
+      }
+    ]
+  },
+  "exportOptions": {
+    "includedFields": ["id", "timestamp", "sender", "content", "resources"],
+    "filters": {},
+    "options": {
+      "includeResourceLinks": true,
+      "includeSystemMessages": true,
+      "preferGroupMemberName": true,
+      "timeFormat": "YYYY-MM-DD HH:mm:ss",
+      "encoding": "utf-8"
+    }
+  }
+}

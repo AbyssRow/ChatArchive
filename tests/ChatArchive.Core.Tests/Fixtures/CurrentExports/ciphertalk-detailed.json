@@ -1,0 +1,38 @@
+{
+  "exportInfo": {
+    "version": "0.0.2",
+    "exportedAt": 1701000003,
+    "generator": "CipherTalk",
+    "format": "detailed-json"
+  },
+  "session": {
+    "wxid": "fixture-ciphertalk-detailed",
+    "nickname": "CipherTalk Detailed",
+    "remark": "CipherTalk Detailed",
+    "displayName": "CipherTalk Detailed",
+    "type": "私聊",
+    "platform": "wechat",
+    "isGroup": false,
+    "ownerId": "fixture-owner-ciphertalk-detailed",
+    "firstTimestamp": 1701000003,
+    "lastTimestamp": 1701000003,
+    "messageCount": 1
+  },
+  "messages": [
+    {
+      "localId": 3,
+      "platformMessageId": "fixture-message-ciphertalk-detailed",
+      "createTime": 1701000003,
+      "formattedTime": "2023-11-26 12:00:03",
+      "type": "文本消息",
+      "localType": 1,
+      "chatLabType": 0,
+      "content": "你好，CipherTalk Detailed",
+      "rawContent": "你好，CipherTalk Detailed",
+      "isSend": 0,
+      "senderUsername": "fixture-sender-ciphertalk-detailed",
+      "senderDisplayName": "Detailed 发送者",
+      "source": ""
+    }
+  ]
+}

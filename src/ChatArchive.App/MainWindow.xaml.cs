@@ -271,15 +271,10 @@ public sealed partial class MainWindow : Window
                         SuggestedStartLocation = PickerLocationId.ComputerFolder,
                         ViewMode = PickerViewMode.List,
                     };
-                    picker.FileTypeFilter.Add(".json");
-                    picker.FileTypeFilter.Add(".jsonl");
-                    picker.FileTypeFilter.Add(".html");
-                    picker.FileTypeFilter.Add(".htm");
-                    picker.FileTypeFilter.Add(".csv");
-                    picker.FileTypeFilter.Add(".md");
-                    picker.FileTypeFilter.Add(".txt");
-                    picker.FileTypeFilter.Add(".sql");
-                    picker.FileTypeFilter.Add("*");
+                    foreach (var extension in ImportViewModel.PickerExtensions)
+                    {
+                        picker.FileTypeFilter.Add(extension);
+                    }
                     WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
                     var files = await picker.PickMultipleFilesAsync();
                     if (files is not null)
@@ -337,7 +332,7 @@ public sealed partial class MainWindow : Window
 
             pathsPanel.Children.Add(new TextBlock
             {
-                Text = "支持导入以下软件与格式的导出文件或文件夹（自动递归嗅探与深度解析）：\n• 微信：WeFlow (JSON / ArkMe)、CipherTalk (Detailed JSON)、WeClone (CSV)\n• QQ：QQ Chat Exporter (单文件 JSON / 分块 JSONL manifest)\n• 通用：ChatLab (JSON / JSONL)、内嵌 HTML、Markdown、TXT、SQL 脚本\n• 支持多次重叠导入，应用会按内容哈希与消息原生 ID 自动去重。",
+                Text = ImportViewModel.HelpText,
                 TextWrapping = TextWrapping.Wrap,
                 Opacity = 0.85,
                 FontSize = 12,

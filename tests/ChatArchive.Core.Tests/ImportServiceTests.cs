@@ -647,6 +647,55 @@ public class ImportServiceTests : IDisposable
     }
 
     [Fact]
+    public void CurrentFormats_EndToEnd_ImportsEveryDiscoveredSourceThroughImportService()
+    {
+        using var tree = CurrentExportTestTree.Create();
+        var discovered = ImportDiscovery.Discover([tree.Root]);
+        var service = new ImportService(_archive.Db, _mediaDir);
+
+        var result = service.Run([tree.Root]);
+
+        Assert.Equal(16, discovered.Count);
+        Assert.Equal(discovered.Count, result.FilesFound);
+        Assert.Equal(discovered.Count, result.FilesImported);
+        Assert.Equal(0, result.FilesSkipped);
+        Assert.Equal(0, result.FilesFailed);
+        Assert.Equal(discovered.Count, result.MessagesSeen);
+        Assert.Equal(discovered.Count, result.Added);
+        Assert.Equal(0, result.Duplicates);
+        Assert.Equal(0, result.Revised);
+        Assert.Equal(0, result.Variants);
+
+        using var connection = _archive.Open();
+        Assert.Equal((long)discovered.Count, Scalar(connection, "SELECT COUNT(*) FROM messages"));
+        Assert.Equal((long)discovered.Count, Scalar(connection, "SELECT COUNT(*) FROM conversations"));
+        Assert.Equal((long)discovered.Count, Scalar(connection, "SELECT COUNT(*) FROM senders"));
+        Assert.Equal(
+            0L,
+            Scalar(
+                connection,
+                "SELECT COUNT(*) FROM conversations WHERE platform NOT IN ('wechat', 'qq')"));
+        Assert.Equal(
+            0L,
+            Scalar(
+                connection,
+                "SELECT COUNT(*) FROM messages WHERE sender_id IS NULL OR content NOT LIKE '%你好%'"));
+        Assert.Equal(
+            0L,
+            Scalar(
+                connection,
+                "SELECT COUNT(*) FROM senders WHERE TRIM(native_id) = '' OR TRIM(current_name) = ''"));
+        Assert.Equal(
+            1L,
+            Scalar(
+                connection,
+                "SELECT COUNT(*) FROM attachments WHERE declared_path = '../images/layout-a.jpg' AND is_available = 1"));
+        Assert.True(
+            Scalar(connection, "SELECT COUNT(*) FROM attachments WHERE is_available = 1") >= 2,
+            "The WeFlow layout-A image and QQ Excel resource should both be stored.");
+    }
+
+    [Fact]
     public async Task ImportService_ImportsAllSupportedFormats_EndToEnd_IntoDatabase()
     {
         var testDir = Path.Combine(Path.GetTempPath(), $"chatarchive-e2e-{Guid.NewGuid():N}");

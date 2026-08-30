@@ -18,25 +18,22 @@ ChatArchive 是一款基于 WinUI 3 与 .NET 开发的现代化 Windows 聊天�
 
 ## 📥 丰富的导入格式支持
 
-ChatArchive 采用插件化适配器与自动嗅探引擎，支持通过软件界面直接选择**单文件**或包含聊天记录的**任意多级文件夹**（自动递归识别、自动跳过媒体文件夹以提速）：
+ChatArchive 采用来源专属适配器与自动嗅探引擎，支持通过软件界面直接选择**单文件**或包含聊天记录的**任意多级文件夹**（自动递归识别、自动跳过媒体文件夹以提速）：
 
-| 平台 / 规范 | 导出工具 | 支持格式与扩展名 | 说明 |
-| :--- | :--- | :--- | :--- |
-| **微信 (WeChat)** | [WeFlow](https://github.com/hicccc77/WeFlow) | 标准 JSON / ArkMe JSON (`.json`) | 兼容全版本 1.x 导出，支持 `senders` 映射字典解析、位置/名片/卡片提取与媒体挂载。 |
-| **微信 (WeChat)** | [CipherTalk](https://github.com/ILoveBingLu/CipherTalk) | Detailed JSON (`.json`) | 支持 `detailed-json` 会话元数据、毫秒时间戳归一、引用回复（`quote`）与完整媒体解析。 |
-| **微信 (WeChat)** | WeClone | CSV (`.csv`) | 基于 RFC 4180 标准 CSV 流式解析器，支持跨行消息与时间戳自动转换。 |
-| **QQ** | [qq-chat-exporter](https://github.com/shuakami/qq-chat-exporter) | 单文件 JSON / 分块 JSONL (`manifest.json` + `chunks/*.jsonl`) | 全版本自适应兼容，支持跨分块流式逐行解析与 `resources/` 媒体资源定位。 |
-| **通用规范** | ChatLab 0.0.2 | Standard JSON (`.json`) / JSONL (`.jsonl`, `.json`) | 标准化 0~99 消息类型映射、`members` 成员名片字典与流式消息解析。 |
-| **通用网页** | WeFlow / CipherTalk / QQ / ChatLab | 内嵌 HTML (`.html`, `.htm`) | 高性能内嵌数据轨提取（免 DOM 解析开销），自动路由至专属格式解析器。 |
-| **纯文本 / 文档** | 通用导出 | Markdown (`.md`) / TXT (`.txt`) | 正则流式时间戳与发送者识别、多行合并与会话标题提取。 |
-| **数据库转储** | WeFlow / CipherTalk | SQL 脚本 (`.sql`) | 流式提取 `INSERT INTO messages` 语句，还原会话与消息字段。 |
+| Platform | Exporter | Supported import formats |
+| --- | --- | --- |
+| WeChat | WeFlow | Standard/ArkMe/ChatLab JSON, ChatLab JSONL, WeClone CSV, Markdown, TXT, PostgreSQL SQL, Excel |
+| WeChat | CipherTalk | Detailed/ChatLab JSON, ChatLab JSONL, PostgreSQL SQL, Excel |
+| QQ | QQ Chat Exporter | Single JSON, chunked JSONL, TXT, Excel |
+
+目录发现仅扫描 `.json .jsonl .csv .md .txt .sql .xlsx`。HTML 导出被有意排除，因为它们是浏览器展示产物，而不是稳定的数据交换格式。
 
 ---
 
 ## 🛠️ 技术栈
 
 - **UI 框架**：Windows App SDK / WinUI 3
-- **运行环境**：.NET 10 / C# 13
+- **运行环境**：.NET 10 / C# 14
 - **数据引擎**：SQLite (`Microsoft.Data.Sqlite`) + FTS5 全文索引
 
 ---

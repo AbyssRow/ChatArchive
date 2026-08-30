@@ -9,6 +9,20 @@ namespace ChatArchive.App.ViewModels;
 
 public partial class ImportViewModel : ObservableObject
 {
+    internal static IReadOnlyList<string> PickerExtensions { get; } = ImportDiscovery.SupportedExtensions
+        .OrderBy(extension => extension, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    internal const string InitialStatusText =
+        "选择包含聊天记录导出文件（JSON/JSONL/CSV/MD/TXT/SQL/XLSX）或文件夹，支持多选后一次导入。";
+
+    internal const string HelpText =
+        "支持导入以下软件与格式的导出文件或文件夹（自动递归嗅探与深度解析）：\n" +
+        "• 微信 WeFlow：Standard/ArkMe/ChatLab JSON、ChatLab JSONL、WeClone CSV、Markdown、TXT、PostgreSQL SQL、Excel\n" +
+        "• 微信 CipherTalk：Detailed/ChatLab JSON、ChatLab JSONL、PostgreSQL SQL、Excel\n" +
+        "• QQ Chat Exporter：单文件 JSON、分块 JSONL manifest、TXT、Excel\n" +
+        "• 支持多次重叠导入，应用会按内容哈希与消息原生 ID 自动去重。";
+
     private readonly ArchiveDatabase _database;
     private readonly DispatcherQueue _dispatcher;
 
@@ -18,7 +32,7 @@ public partial class ImportViewModel : ObservableObject
     public partial bool IsRunning { get; set; }
 
     [ObservableProperty]
-    public partial string StatusText { get; set; } = "选择包含聊天记录导出文件（JSON/JSONL/HTML/CSV/MD/TXT/SQL）或文件夹，支持多选后一次导入。";
+    public partial string StatusText { get; set; } = InitialStatusText;
 
     [ObservableProperty]
     public partial double ProgressValue { get; set; }

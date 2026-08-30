@@ -1,0 +1,50 @@
+{
+  "weflow": {
+    "version": "1.0.3",
+    "exportedAt": 1701000002,
+    "generator": "WeFlow",
+    "format": "arkme-json"
+  },
+  "session": {
+    "wxid": "fixture-weflow-arkme@chatroom",
+    "displayName": "ArkMe 会话",
+    "type": "群聊",
+    "lastTimestamp": 1701000002,
+    "messageCount": 1
+  },
+  "senders": [
+    {
+      "senderID": 1,
+      "wxid": "fixture-sender-weflow-arkme",
+      "displayName": "ArkMe 发送者",
+      "nickname": "ArkMe 发送者",
+      "groupNickname": "ArkMe 群名片"
+    }
+  ],
+  "messages": [
+    {
+      "localId": 2,
+      "createTime": 1701000002,
+      "formattedTime": "2023-11-26 12:00:02",
+      "type": "文本消息",
+      "localType": 1,
+      "content": "你好，WeFlow ArkMe",
+      "isSend": 0,
+      "senderID": 1,
+      "source": "",
+      "platformMessageId": "fixture-message-weflow-arkme"
+    }
+  ],
+  "groupMembers": [
+    {
+      "wxid": "fixture-sender-weflow-arkme",
+      "displayName": "ArkMe 发送者",
+      "nickname": "ArkMe 发送者",
+      "remark": "",
+      "alias": "",
+      "groupNickname": "ArkMe 群名片",
+      "isFriend": true,
+      "messageCount": 1
+    }
+  ]
+}

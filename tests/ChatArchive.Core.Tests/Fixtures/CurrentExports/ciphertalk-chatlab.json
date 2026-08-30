@@ -1,0 +1,32 @@
+{
+  "chatlab": {
+    "version": "0.0.2",
+    "exportedAt": 1701000004,
+    "generator": "CipherTalk"
+  },
+  "meta": {
+    "name": "CipherTalk ChatLab",
+    "platform": "wechat",
+    "type": "group",
+    "groupId": "fixture-ciphertalk-chatlab@chatroom",
+    "ownerId": "fixture-owner-ciphertalk-chatlab"
+  },
+  "members": [
+    {
+      "platformId": "fixture-sender-ciphertalk-chatlab",
+      "accountName": "CipherTalk ChatLab 发送者",
+      "groupNickname": "ChatLab 群名片"
+    }
+  ],
+  "messages": [
+    {
+      "sender": "fixture-sender-ciphertalk-chatlab",
+      "accountName": "CipherTalk ChatLab 发送者",
+      "groupNickname": "ChatLab 群名片",
+      "timestamp": 1701000004,
+      "type": 0,
+      "content": "你好，CipherTalk ChatLab",
+      "platformMessageId": "fixture-message-ciphertalk-chatlab"
+    }
+  ]
+}

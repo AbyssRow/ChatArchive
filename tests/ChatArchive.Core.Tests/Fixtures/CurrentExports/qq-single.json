@@ -1,0 +1,70 @@
+{
+  "metadata": {
+    "name": "QQChatExporter",
+    "copyright": "https://github.com/shuakami/qq-chat-exporter",
+    "version": "0.1.0"
+  },
+  "chatInfo": {
+    "name": "QQ Single",
+    "type": "private",
+    "selfUid": "fixture-self-qq-single",
+    "selfUin": "910001",
+    "peerUid": "fixture-peer-qq-single",
+    "peerUin": "910002",
+    "participantCount": 2
+  },
+  "statistics": {
+    "totalMessages": 1,
+    "timeRange": {
+      "start": "2023-11-26T12:00:06.000Z",
+      "end": "2023-11-26T12:00:06.000Z",
+      "durationDays": 1
+    },
+    "messageTypes": { "type_1": 1 },
+    "senders": [
+      {
+        "uid": "fixture-sender-qq-single",
+        "name": "QQ Single 发送者",
+        "messageCount": 1,
+        "percentage": 100.0
+      }
+    ],
+    "resources": { "total": 0, "byType": {}, "totalSize": 0 }
+  },
+  "messages": [
+    {
+      "id": "fixture-message-qq-single",
+      "seq": "6",
+      "timestamp": 1701000006000,
+      "time": "2023-11-26 12:00:06",
+      "sender": {
+        "uid": "fixture-sender-qq-single",
+        "uin": "910002",
+        "name": "QQ Single 发送者",
+        "nickname": "QQ Single 发送者"
+      },
+      "type": "type_1",
+      "content": {
+        "text": "你好，QQ Single",
+        "elements": [
+          { "type": "text", "data": { "text": "你好，QQ Single" } }
+        ],
+        "resources": [],
+        "mentions": []
+      },
+      "recalled": false,
+      "system": false
+    }
+  ],
+  "exportOptions": {
+    "includedFields": ["id", "timestamp", "sender", "content", "resources"],
+    "filters": {},
+    "options": {
+      "includeResourceLinks": true,
+      "includeSystemMessages": true,
+      "preferGroupMemberName": true,
+      "timeFormat": "YYYY-MM-DD HH:mm:ss",
+      "encoding": "utf-8"
+    }
+  }
+}

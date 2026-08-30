@@ -8,7 +8,7 @@ public sealed record DiscoveredImport(
     long FileSize,
     string? Error = null);
 
-/// <summary>递归发现受支持导出工具的 JSON 文件；格式嗅探由各 IChatExportFormat 提供。</summary>
+/// <summary>递归发现受支持导出工具的文件；格式嗅探由各 IChatExportFormat 提供。</summary>
 public static class ImportDiscovery
 {
     public static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)

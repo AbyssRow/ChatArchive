@@ -16,4 +16,8 @@
     <ProjectReference Include="..\..\src\ChatArchive.Core\ChatArchive.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Fixtures\CurrentExports\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
