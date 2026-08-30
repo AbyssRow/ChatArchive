@@ -924,6 +924,104 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
     }
 
     [Fact]
+    public void OpenXmlReader_RejectsElementContentInsideDirectHyperlinkDeclaration()
+    {
+        var path = NewPath("hyperlink-with-element-content.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录",
+        [[new XlsxTestCell("A1", "one", Hyperlink: "media/one.jpg")]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "<hyperlink ref=\"A1\" r:id=\"rIdHyperlink1\" />",
+            "<hyperlink ref=\"A1\" r:id=\"rIdHyperlink1\"><c r=\"B1\" /></hyperlink>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var error = Assert.Throws<ImportFormatException>(
+            () => workbook.ReadRows(workbook.Sheets[0], CancellationToken.None).ToList());
+        Assert.Contains("hyperlink", error.Message);
+        Assert.Contains("sheet1.xml", error.Message);
+    }
+
+    [Theory]
+    [InlineData("str", "1+1", "cached", "<f>1+1</f>", "<f><c r=\"B1\" /></f>")]
+    [InlineData("str", "1+1", "cached", "<v>cached</v>", "<v><c r=\"B1\" /></v>")]
+    [InlineData("inlineStr", null, "one", "<t>one</t>", "<t><c r=\"B1\" /></t>")]
+    public void OpenXmlReader_RejectsElementMarkupInsideCellLeaf(
+        string type,
+        string? formula,
+        string value,
+        string original,
+        string replacement)
+    {
+        var path = NewPath($"cell-leaf-{type}-{original[1]}.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[new XlsxTestCell("A1", value, type, Formula: formula)]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            original,
+            replacement));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var error = Assert.Throws<ImportFormatException>(
+            () => workbook.ReadRows(workbook.Sheets[0], CancellationToken.None).ToList());
+        Assert.Contains("A1", error.Message);
+        Assert.Contains("sheet1.xml", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsInlineTextInsideRunProperties()
+    {
+        var path = NewPath("inline-text-inside-run-properties.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "<is><t>one</t></is>",
+            "<is><r><rPr><t>bad</t></rPr><t>good</t></r></is>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var error = Assert.Throws<ImportFormatException>(
+            () => workbook.ReadRows(workbook.Sheets[0], CancellationToken.None).ToList());
+        Assert.Contains("A1", error.Message);
+        Assert.Contains("t", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_ReadsInlineTextFromPermittedPathsAndXmlTextEncodings()
+    {
+        var path = NewPath("inline-text-permitted-paths.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "<is><t>one</t></is>",
+            "<is><t>A &amp; </t><r><t><![CDATA[B ]]></t></r><rPh sb=\"0\" eb=\"1\"><t>C</t></rPh></is>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+        Assert.Equal("A & B C", row.Cells[1].Value);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsWorksheetQNameNestedInsideWorksheet()
+    {
+        var path = NewPath("worksheet-inside-worksheet.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "</worksheet>",
+            "<wrapper><worksheet /></wrapper></worksheet>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var error = Assert.Throws<ImportFormatException>(
+            () => workbook.ReadRows(workbook.Sheets[0], CancellationToken.None).ToList());
+        Assert.Contains("worksheet", error.Message);
+        Assert.Contains("sheet1.xml", error.Message);
+    }
+
+    [Fact]
     public void OpenXmlReader_RejectsWorksheetNestedBelowWrongRoot()
     {
         var path = NewPath("nested-worksheet-root.xlsx");
