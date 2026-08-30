@@ -103,6 +103,7 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
     [InlineData("../images/one.jpg#preview")]
     [InlineData("../images/\none.jpg")]
     [InlineData("../../../outside.jpg")]
+    [InlineData("../../../__chatarchive_package_root__/outside.jpg")]
     public void OpenXmlReader_IgnoresUnsafeExternalHyperlinkButReadsCellText(string target)
     {
         var path = NewPath("unsafe-external-link.xlsx");

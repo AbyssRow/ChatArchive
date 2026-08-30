@@ -1050,19 +1050,23 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
     private static bool ResolvesWithinPackageRoot(OpenXmlPartContainer owner, Uri target)
     {
+        const string SentinelPrefix = "/__chatarchive_package_root__";
         var source = owner is OpenXmlPart ownerPart
             ? ownerPart.Uri
             : new Uri("/", UriKind.Relative);
         var sentinelSource = new Uri(
-            "/__chatarchive_package_root__" + source.OriginalString,
+            SentinelPrefix + source.OriginalString,
             UriKind.Relative);
         try
         {
+            var resolvedTarget = System.IO.Packaging.PackUriHelper.ResolvePartUri(
+                source,
+                target);
             var sentinelTarget = System.IO.Packaging.PackUriHelper.ResolvePartUri(
                 sentinelSource,
                 target);
-            return sentinelTarget.OriginalString.StartsWith(
-                "/__chatarchive_package_root__/",
+            return sentinelTarget.OriginalString.Equals(
+                SentinelPrefix + resolvedTarget.OriginalString,
                 StringComparison.Ordinal);
         }
         catch (ArgumentException)
