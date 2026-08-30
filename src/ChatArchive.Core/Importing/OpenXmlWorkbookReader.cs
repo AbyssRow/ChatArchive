@@ -67,6 +67,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             var workbookPart = RequireWorkbookPart(document, package, filePath);
             ValidateContainerRelationships(
                 document,
+                package.EntryPaths,
                 filePath,
                 "_rels/.rels",
                 allowExternalHyperlinks: false);
@@ -658,6 +659,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         {
             ValidateContainerRelationships(
                 workbookPart,
+                package.EntryPaths,
                 filePath,
                 "xl/_rels/workbook.xml.rels",
                 allowExternalHyperlinks: false);
@@ -788,18 +790,23 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             var insideSheets = false;
             while (reader.Read())
             {
-                if (reader.IsStartElement && reader.Depth == 0)
+                if (reader.IsStartElement && IsSpreadsheetElement(reader, "workbook"))
                 {
-                    if (reader.ElementType != typeof(Workbook))
+                    if (reader.Depth != 0 || sawWorkbook)
                     {
-                        throw Error(filePath, WorkbookEntry, "workbook 根元素无效");
+                        throw Error(filePath, WorkbookEntry, "workbook 必须是唯一根元素");
                     }
 
                     sawWorkbook = true;
                     continue;
                 }
 
-                if (reader.IsStartElement && reader.ElementType == typeof(Sheets))
+                if (reader.IsStartElement && reader.Depth == 0)
+                {
+                    throw Error(filePath, WorkbookEntry, "workbook 根元素无效");
+                }
+
+                if (reader.IsStartElement && IsSpreadsheetElement(reader, "sheets"))
                 {
                     if (reader.Depth != 1 || sawSheets)
                     {
@@ -812,7 +819,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 }
 
                 if (reader.IsEndElement
-                    && reader.ElementType == typeof(Sheets)
+                    && IsSpreadsheetElement(reader, "sheets")
                     && reader.Depth == 1)
                 {
                     insideSheets = false;
@@ -833,15 +840,12 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
                 var sheetElement = reader.LoadCurrentElement() as Sheet
                     ?? throw Error(filePath, WorkbookEntry, "sheet 元素无效");
-                var sheetMarkup = workbookPart.CreateUnknownElement(sheetElement.OuterXml);
-                if (sheetMarkup.Descendants().Any(element =>
-                        element.LocalName == "sheet"
-                        && element.NamespaceUri == SpreadsheetNamespace))
+                if (!string.IsNullOrEmpty(sheetElement.InnerXml))
                 {
                     throw Error(
                         filePath,
                         WorkbookEntry,
-                        "sheet 不能嵌套，sheet 必须是 sheets 的直接子元素");
+                        "sheet 必须为空，不能包含子元素或文本内容");
                 }
 
                 var name = sheetElement.Name?.Value;
@@ -954,16 +958,44 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
                 var item = reader.LoadCurrentElement() as SharedStringItem
                     ?? throw Error(filePath, entryPath, "si 元素无效");
-                if (item.Descendants().Any(element =>
-                        element.LocalName == "si"
-                        && element.NamespaceUri == SpreadsheetNamespace))
+                var position = values.Count + 1;
+                var value = new StringBuilder();
+                foreach (var element in item.Descendants())
                 {
-                    throw Error(filePath, entryPath, "si 不能嵌套，si 必须是 sst 的直接子元素");
+                    if (IsSpreadsheetElement(element, "si"))
+                    {
+                        throw SharedStringError(
+                            filePath,
+                            entryPath,
+                            position,
+                            "si 不能嵌套，si 必须是 sst 的直接子元素");
+                    }
+
+                    if (!IsSpreadsheetElement(element, "t"))
+                    {
+                        continue;
+                    }
+
+                    if (!IsPermittedSharedStringTextPath(element, item))
+                    {
+                        throw SharedStringError(
+                            filePath,
+                            entryPath,
+                            position,
+                            "t 只允许位于 si/t 或 si/r/t");
+                    }
+
+                    value.Append(ReadValidatedLeafText(
+                        element,
+                        "t",
+                        message => SharedStringError(
+                            filePath,
+                            entryPath,
+                            position,
+                            message)));
                 }
 
-                values.Add(string.Concat(
-                    item.Descendants<DocumentFormat.OpenXml.Spreadsheet.Text>()
-                        .Select(text => text.Text ?? string.Empty)));
+                values.Add(value.ToString());
             }
 
             if (!sawSharedStrings)
@@ -1165,17 +1197,37 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
     private static void ValidateContainerRelationships(
         OpenXmlPartContainer owner,
+        IReadOnlySet<string> entryPaths,
         string filePath,
         string relationshipEntry,
         bool allowExternalHyperlinks)
     {
-        _ = SnapshotRelationships(
+        var relationships = SnapshotRelationships(
             owner,
             filePath,
             relationshipEntry,
             CancellationToken.None,
             maximumRelationships: null,
             allowExternalHyperlinks: allowExternalHyperlinks);
+        foreach (var relationship in relationships.Values)
+        {
+            if (relationship.IsExternal || relationship.Type != HyperlinkRelationship)
+            {
+                continue;
+            }
+
+            var target = (relationship.Part?.Uri
+                    ?? ResolveInternalTargetUri(owner, relationship.Target))
+                .OriginalString
+                .TrimStart('/');
+            if (!entryPaths.Contains(target))
+            {
+                throw Error(
+                    filePath,
+                    relationshipEntry,
+                    $"关系 {relationship.Id} 指向不存在的 XLSX 条目 {target}");
+            }
+        }
     }
 
     private static void RequireContentType(
@@ -1297,9 +1349,20 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         string reference,
         string localName)
     {
+        return ReadValidatedLeafText(
+            element,
+            localName,
+            message => CellError(_filePath, entryPath, reference, message));
+    }
+
+    private static string ReadValidatedLeafText(
+        OpenXmlElement element,
+        string localName,
+        Func<string, ImportFormatException> invalid)
+    {
         if (element is not OpenXmlLeafTextElement leaf)
         {
-            throw CellError(_filePath, entryPath, reference, $"{localName} 文本元素无效");
+            throw invalid($"{localName} 文本元素无效");
         }
 
         var normalized = (OpenXmlLeafTextElement)leaf.CloneNode(deep: false);
@@ -1311,16 +1374,14 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
         return ReadCharacterDataOnlyLeafText(
             leaf,
-            entryPath,
-            reference,
-            localName);
+            localName,
+            invalid);
     }
 
-    private string ReadCharacterDataOnlyLeafText(
+    private static string ReadCharacterDataOnlyLeafText(
         OpenXmlLeafTextElement leaf,
-        string entryPath,
-        string reference,
-        string localName)
+        string localName,
+        Func<string, ImportFormatException> invalid)
     {
         try
         {
@@ -1339,7 +1400,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             {
                 if (child is not OpenXmlMiscNode node)
                 {
-                    throw InvalidLeafMarkup(entryPath, reference, localName);
+                    throw InvalidLeafMarkup(localName, invalid);
                 }
 
                 switch (node.XmlNodeType)
@@ -1356,13 +1417,13 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                         if (!outerXml.StartsWith(CDataStart, StringComparison.Ordinal)
                             || !outerXml.EndsWith(CDataEnd, StringComparison.Ordinal))
                         {
-                            throw InvalidLeafMarkup(entryPath, reference, localName);
+                            throw InvalidLeafMarkup(localName, invalid);
                         }
 
                         text.Append(outerXml.AsSpan(CDataStart.Length, outerXml.Length - CDataStart.Length - CDataEnd.Length));
                         break;
                     default:
-                        throw InvalidLeafMarkup(entryPath, reference, localName);
+                        throw InvalidLeafMarkup(localName, invalid);
                 }
             }
 
@@ -1374,7 +1435,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         }
         catch (Exception ex) when (IsPackageFailure(ex))
         {
-            throw InvalidLeafMarkup(entryPath, reference, localName);
+            throw InvalidLeafMarkup(localName, invalid);
         }
     }
 
@@ -1414,16 +1475,30 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             : value.Replace(sentinel.Value, '&');
     }
 
-    private ImportFormatException InvalidLeafMarkup(
-        string entryPath,
-        string reference,
-        string localName)
+    private static ImportFormatException InvalidLeafMarkup(
+        string localName,
+        Func<string, ImportFormatException> invalid)
     {
-        return CellError(
-            _filePath,
-            entryPath,
-            reference,
-            $"{localName} 包含无效的子元素或标记");
+        return invalid($"{localName} 包含无效的子元素或标记");
+    }
+
+    private static bool IsPermittedSharedStringTextPath(
+        OpenXmlElement text,
+        SharedStringItem item)
+    {
+        var parent = text.Parent;
+        if (parent is null)
+        {
+            return false;
+        }
+
+        if (ReferenceEquals(parent, item))
+        {
+            return true;
+        }
+
+        return IsSpreadsheetElement(parent, "r")
+            && ReferenceEquals(parent.Parent, item);
     }
 
     private static bool IsPermittedInlineTextPath(OpenXmlElement text, Cell cell)
@@ -1533,6 +1608,15 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         string message)
     {
         return Error(filePath, entryPath, $"单元格 {reference}：{message}");
+    }
+
+    private static ImportFormatException SharedStringError(
+        string filePath,
+        string entryPath,
+        int position,
+        string message)
+    {
+        return Error(filePath, entryPath, $"共享字符串 {position}：{message}");
     }
 
     public void Dispose()

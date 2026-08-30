@@ -6,7 +6,7 @@
 
 ## 1. 背景
 
-当前分支已经实现 `OpenXmlWorkbookReader`，并由 WeFlow、CipherTalk 和 QQ 三个 Excel 适配器共享。它使用 `ZipArchive` 与 `XmlReader` 手工处理 OPC 路径、内容类型、关系、工作簿、共享字符串、工作表、单元格和超链接，约 1,425 行。现有测试已经覆盖流式行读取、ExcelJS 媒体超链接、安全边界、结构校验、取消和资源释放。
+迁移前已经实现 `OpenXmlWorkbookReader`，并由 WeFlow、CipherTalk 和 QQ 三个 Excel 适配器共享。它使用 `ZipArchive` 与 `XmlReader` 手工处理 OPC 路径、内容类型、关系、工作簿、共享字符串、工作表、单元格和超链接，约 1,425 行。现有测试已经覆盖流式行读取、ExcelJS 媒体超链接、安全边界、结构校验、取消和资源释放。
 
 Microsoft Open XML SDK 已提供面向大工作表的前向 SAX API `OpenXmlReader`。继续维护完整的自研 OPC/OpenXML 解析层没有必要；本迁移让 SDK 负责标准包、部件和元素读取，同时保留项目特有的严格输入策略。
 

@@ -188,6 +188,29 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData("_rels/.rels", "/missing-root-hyperlink.bin", "missing-root-hyperlink.bin")]
+    [InlineData("xl/_rels/workbook.xml.rels", "../missing-workbook-hyperlink.bin", "missing-workbook-hyperlink.bin")]
+    public void OpenXmlReader_RejectsDanglingInternalHyperlinkInPackageContainer(
+        string relationshipEntry,
+        string target,
+        string expectedEntry)
+    {
+        var path = NewPath($"dangling-{Path.GetFileName(relationshipEntry)}.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, relationshipEntry, xml => InsertBeforeRequired(
+            xml,
+            "</Relationships>",
+            $"<Relationship Id=\"rIdDanglingHyperlink\" Type=\"{HyperlinkRelationship}\" Target=\"{target}\" />"));
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+
+        Assert.Contains(relationshipEntry, error.Message);
+        Assert.Contains(expectedEntry, error.Message);
+        Assert.Contains("不存在", error.Message);
+    }
+
     [Fact]
     public void OpenXmlReader_RejectsExternalRelationshipWhoseTypeOnlyCaseMatchesHyperlink()
     {
@@ -606,6 +629,49 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
     }
 
     [Fact]
+    public void OpenXmlReader_RejectsNestedSpreadsheetSheetsQName()
+    {
+        var path = NewPath("additional-sheets-qname.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/workbook.xml", xml => InsertBeforeRequired(
+            xml,
+            "</workbook>",
+            "<wrapper><sheets /></wrapper>"));
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+
+        Assert.Contains("sheets", error.Message);
+        Assert.Contains("xl/workbook.xml", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsChildMarkupInsideSheetDeclaration()
+    {
+        var path = NewPath("sheet-with-child-markup.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/workbook.xml", xml =>
+        {
+            const string marker = "<sheet name=\"聊天记录\"";
+            Assert.Contains(marker, xml);
+            var start = xml.IndexOf(marker, StringComparison.Ordinal);
+            var end = xml.IndexOf("/>", start, StringComparison.Ordinal);
+            Assert.True(end >= 0);
+            var directSheet = xml.Substring(start, end + 2 - start);
+            var replacement = string.Concat(
+                directSheet.AsSpan(0, directSheet.Length - 2),
+                "><wrapper /></sheet>");
+            return xml.Remove(start, directSheet.Length).Insert(start, replacement);
+        });
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+
+        Assert.Contains("sheet", error.Message);
+        Assert.Contains("xl/workbook.xml", error.Message);
+    }
+
+    [Fact]
     public void OpenXmlReader_RejectsSharedStringsNestedBelowWrongRoot()
     {
         var path = NewPath("nested-shared-root.xlsx");
@@ -662,6 +728,64 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
         using var workbook = OpenXmlWorkbookReader.Open(path);
         var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
         Assert.Equal("rich text", row.Cells[1].Value);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsChildMarkupInsideSharedStringText()
+    {
+        var path = NewPath("shared-text-with-child-markup.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one", "s")]]));
+        RewriteEntry(path, "xl/sharedStrings.xml", xml => ReplaceRequired(
+            xml,
+            "<si><t>one</t></si>",
+            "<si><t>good<c />tail</t></si>"));
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+
+        Assert.Contains("xl/sharedStrings.xml", error.Message);
+        Assert.Contains("共享字符串 1", error.Message);
+        Assert.Contains("t", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsSharedStringTextInsideRunProperties()
+    {
+        var path = NewPath("shared-text-inside-run-properties.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录", [[new XlsxTestCell("A1", "one", "s")]]));
+        RewriteEntry(path, "xl/sharedStrings.xml", xml => ReplaceRequired(
+            xml,
+            "<si><t>one</t></si>",
+            "<si><r><rPr><t>bad</t></rPr><t>good</t></r></si>"));
+
+        var error = Assert.Throws<ImportFormatException>(() => OpenXmlWorkbookReader.Open(path));
+
+        Assert.Contains("xl/sharedStrings.xml", error.Message);
+        Assert.Contains("共享字符串 1", error.Message);
+        Assert.Contains("t", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_ReadsPermittedSharedStringTextWithMixedCharacterData()
+    {
+        var path = NewPath("shared-text-mixed-character-data.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[
+                new XlsxTestCell("A1", "one", "s"),
+                new XlsxTestCell("B1", "two", "s"),
+            ]]));
+        RewriteEntry(path, "xl/sharedStrings.xml", xml => ReplaceRequired(
+            xml,
+            "<si><t>one</t></si><si><t>two</t></si>",
+            "<si><t>a&amp;<![CDATA[b]]>c</t></si><si><r><t>D &amp; <![CDATA[E]]> F</t></r></si>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+
+        Assert.Equal("a&bc", row.Cells[1].Value);
+        Assert.Equal("D & E F", row.Cells[2].Value);
     }
 
     [Fact]
