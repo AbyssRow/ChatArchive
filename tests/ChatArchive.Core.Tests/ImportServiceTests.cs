@@ -128,7 +128,7 @@ public class ImportServiceTests : IDisposable
     }
 
     [Fact]
-    public void Zero_message_export_creates_no_conversation()
+    public void Zero_message_export_is_failed_and_creates_no_conversation()
     {
         var json = """
             {
@@ -141,9 +141,14 @@ public class ImportServiceTests : IDisposable
         var service = new ImportService(_archive.Db, _mediaDir);
         var result = service.Run(new[] { root });
 
-        Assert.Equal(1, result.FilesImported);
+        Assert.Equal(0, result.FilesImported);
+        Assert.Equal(1, result.FilesFailed);
+        var failed = Assert.Single(result.Files);
+        Assert.Equal("failed", failed.Status);
+        Assert.Contains("没有有效消息", failed.Error);
         using var connection = _archive.Open();
         Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM conversations"));
+        Assert.Equal("failed", Text(connection, "SELECT status FROM import_files LIMIT 1"));
     }
 
     [Fact]

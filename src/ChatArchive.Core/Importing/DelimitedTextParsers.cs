@@ -345,16 +345,19 @@ public static class WeFlowTextParser
         {
             cancellationToken.ThrowIfCancellationRequested();
             var header = MessageHeaderRegex.Match(line);
-            if (!header.Success)
+            var isValidHeader = header.Success
+                && ImportText.TryParseFlexibleTimestamp(header.Groups["time"].Value, out _);
+            var isMessageBoundary = sender is null
+                || body.Count > 0 && string.IsNullOrWhiteSpace(body[^1]);
+            if (!isValidHeader || !isMessageBoundary)
             {
                 if (sender is not null)
                 {
                     body.Add(line);
-                    hasCurrentContentLine = true;
+                    hasCurrentContentLine |= !string.IsNullOrWhiteSpace(line);
                 }
                 continue;
             }
-            if (!ImportText.TryParseFlexibleTimestamp(header.Groups["time"].Value, out _)) throw new ImportFormatException(filePath, $"第 {index + 1} 个 TXT 消息时间无效");
             if (sender is not null && timestamp is not null)
             {
                 if (!hasCurrentContentLine) throw new ImportFormatException(filePath, $"第 {index + 1} 个 TXT 消息缺少正文");

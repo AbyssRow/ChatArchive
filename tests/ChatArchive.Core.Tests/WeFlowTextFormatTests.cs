@@ -210,18 +210,24 @@ public sealed class WeFlowTextFormatTests : IDisposable
     }
 
     [Fact]
-    public void WeFlowTxt_RejectsConsecutiveHeadersWithoutBodyForFirstMessage()
+    public void WeFlowTxt_PreservesHeaderLikeBodyLineUntilBlankSeparatedHeader()
     {
-        var path = WriteFile("consecutive.txt",
+        var path = WriteFile("header-like-body.txt",
             "2023-11-15 06:15:23 'Alice'\n" +
+            "第一行\n" +
             "2023-11-15 06:16:23 'Bob'\n" +
-            "有效正文\n");
+            "仍是正文\n\n" +
+            "2023-11-15 06:17:23 'Carol'\n" +
+            "第二条\n\n");
         using var export = new WeFlowTextExportFormat().Open(path);
 
-        var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
+        var messages = export.EnumerateMessages().ToList();
 
-        Assert.Contains(path, exception.Message);
-        Assert.Contains("第 1 个", exception.Message);
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("Alice", messages[0].SenderName);
+        Assert.Equal("第一行\n2023-11-15 06:16:23 'Bob'\n仍是正文", messages[0].Content);
+        Assert.Equal("Carol", messages[1].SenderName);
+        Assert.Equal("第二条", messages[1].Content);
     }
 
     [Fact]

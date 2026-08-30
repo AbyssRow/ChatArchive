@@ -54,7 +54,12 @@ public sealed class WeFlowSqlExportFormat : IChatExportFormat
 
         var sessionId = SqlExportSupport.Required(first, "session_id", filePath, Table, 1);
         var kind = sessionId.EndsWith("@chatroom", StringComparison.OrdinalIgnoreCase) ? "group" : "private";
-        var conversation = new ParsedConversation("wechat", "wechat-default", sessionId, kind, sessionId);
+        var conversation = new ParsedConversation(
+            "wechat",
+            "wechat-default",
+            sessionId,
+            kind,
+            Path.GetFileNameWithoutExtension(filePath));
         return new ExportFile(
             conversation,
             token => IterateMessages(filePath, conversation, token));

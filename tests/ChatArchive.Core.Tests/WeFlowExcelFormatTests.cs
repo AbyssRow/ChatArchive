@@ -78,11 +78,26 @@ public sealed class WeFlowExcelFormatTests : IDisposable
         Assert.False(new WeFlowExcelExportFormat().Matches(path));
     }
 
+    [Fact]
+    public void WeFlowExcel_DuplicateChatSheetsFailWithoutEscapingDiscovery()
+    {
+        var path = CreateWeFlowWorkbook("private", duplicateChatSheet: true);
+        var format = new WeFlowExcelExportFormat();
+
+        Assert.False(format.Matches(path));
+        var error = Assert.Throws<ImportFormatException>(() => format.Open(path));
+        Assert.Contains(path, error.Message);
+        Assert.DoesNotContain(
+            ImportDiscovery.Discover([Path.GetDirectoryName(path)!]),
+            item => item.FilePath == Path.GetFullPath(path));
+    }
+
     private string CreateWeFlowWorkbook(
         string layout,
         string generator = "WeFlow",
         bool streamingMetadata = false,
-        string senderIdentity = "对方")
+        string senderIdentity = "对方",
+        bool duplicateChatSheet = false)
     {
         var exportDirectory = Path.Combine(_directory, layout);
         Directory.CreateDirectory(exportDirectory);
@@ -137,7 +152,15 @@ public sealed class WeFlowExcelFormatTests : IDisposable
             File.WriteAllText(parentImage, "image");
         }
 
-        XlsxTestFile.Write(path, new XlsxTestSheet("聊天记录", rows));
+        var sheet = new XlsxTestSheet("聊天记录", rows);
+        if (duplicateChatSheet)
+        {
+            XlsxTestFile.Write(path, sheet, new XlsxTestSheet("聊天记录", rows));
+        }
+        else
+        {
+            XlsxTestFile.Write(path, sheet);
+        }
         return path;
     }
 

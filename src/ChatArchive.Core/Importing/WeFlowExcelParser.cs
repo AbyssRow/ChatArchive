@@ -158,11 +158,12 @@ internal static class WeFlowExcelParser
     private static bool TryReadProfile(OpenXmlWorkbookReader workbook, CancellationToken cancellationToken, out Profile profile)
     {
         profile = null!;
-        var sheet = workbook.Sheets.SingleOrDefault(candidate => candidate.Name == "聊天记录");
-        if (sheet is null)
+        var sheets = workbook.Sheets.Where(candidate => candidate.Name == "聊天记录").ToList();
+        if (sheets.Count != 1)
         {
             return false;
         }
+        var sheet = sheets[0];
 
         var metadata = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var row in workbook.ReadRows(sheet, cancellationToken))

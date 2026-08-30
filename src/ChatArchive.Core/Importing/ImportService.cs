@@ -304,6 +304,11 @@ public sealed class ImportService
                     counters.MissingMedia += missing;
                 }
 
+                if (counters.MessagesSeen == 0)
+                {
+                    throw new ImportFormatException(filePath, "导出文件中没有有效消息");
+                }
+
                 var finalDigest = FileHashing.ComputeImportDigest(filePath, cancellationToken);
                 if (!string.Equals(digest, finalDigest, StringComparison.Ordinal))
                 {

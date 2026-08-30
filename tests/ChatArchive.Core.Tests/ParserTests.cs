@@ -1139,7 +1139,7 @@ public class ParserTests : IDisposable
         Assert.Equal("wechat-default", export.Conversation.AccountId);
         Assert.Equal("group@chatroom", export.Conversation.NativeId);
         Assert.Equal("group", export.Conversation.Kind);
-        Assert.Equal("group@chatroom", export.Conversation.Title);
+        Assert.Equal("weflow", export.Conversation.Title);
         var message = Assert.Single(export.EnumerateMessages());
         Assert.Equal("9001", message.NativeId);
         Assert.Equal("1", message.LocalId);
