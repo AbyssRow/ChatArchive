@@ -1304,16 +1304,115 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
         var normalized = (OpenXmlLeafTextElement)leaf.CloneNode(deep: false);
         normalized.Text = leaf.Text ?? string.Empty;
-        if (!string.Equals(leaf.InnerXml, normalized.InnerXml, StringComparison.Ordinal))
+        if (string.Equals(leaf.InnerXml, normalized.InnerXml, StringComparison.Ordinal))
         {
-            throw CellError(
-                _filePath,
-                entryPath,
-                reference,
-                $"{localName} 包含无效的子元素或标记");
+            return leaf.Text ?? string.Empty;
         }
 
-        return leaf.Text ?? string.Empty;
+        return ReadCharacterDataOnlyLeafText(
+            leaf,
+            entryPath,
+            reference,
+            localName);
+    }
+
+    private string ReadCharacterDataOnlyLeafText(
+        OpenXmlLeafTextElement leaf,
+        string entryPath,
+        string reference,
+        string localName)
+    {
+        // SDK leaf shadow content exposes decoded ampersands; reserve a legal XML
+        // character so the SDK fragment parser can still classify every node in order.
+        var sentinel = FindUnusedXmlTextSentinel(leaf.InnerXml);
+        var fragmentInnerXml = sentinel is null
+            ? leaf.InnerXml
+            : leaf.InnerXml.Replace('&', sentinel.Value);
+        var fragment = new OpenXmlUnknownElement("fragment")
+        {
+            InnerXml = fragmentInnerXml,
+        };
+        var text = new StringBuilder();
+        foreach (var child in fragment.ChildElements)
+        {
+            if (child is not OpenXmlMiscNode node)
+            {
+                throw InvalidLeafMarkup(entryPath, reference, localName);
+            }
+
+            switch (node.XmlNodeType)
+            {
+                case System.Xml.XmlNodeType.Text:
+                case System.Xml.XmlNodeType.Whitespace:
+                case System.Xml.XmlNodeType.SignificantWhitespace:
+                    text.Append(RestoreXmlTextSentinel(node.OuterXml, sentinel));
+                    break;
+                case System.Xml.XmlNodeType.CDATA:
+                    const string CDataStart = "<![CDATA[";
+                    const string CDataEnd = "]]>";
+                    var outerXml = RestoreXmlTextSentinel(node.OuterXml, sentinel);
+                    if (!outerXml.StartsWith(CDataStart, StringComparison.Ordinal)
+                        || !outerXml.EndsWith(CDataEnd, StringComparison.Ordinal))
+                    {
+                        throw InvalidLeafMarkup(entryPath, reference, localName);
+                    }
+
+                    text.Append(outerXml.AsSpan(CDataStart.Length, outerXml.Length - CDataStart.Length - CDataEnd.Length));
+                    break;
+                default:
+                    throw InvalidLeafMarkup(entryPath, reference, localName);
+            }
+        }
+
+        return text.ToString();
+    }
+
+    private static char? FindUnusedXmlTextSentinel(string innerXml)
+    {
+        if (!innerXml.Contains('&'))
+        {
+            return null;
+        }
+
+        const char FirstPrivateUseCharacter = '\uE000';
+        const char LastPrivateUseCharacter = '\uF8FF';
+        var used = new bool[LastPrivateUseCharacter - FirstPrivateUseCharacter + 1];
+        foreach (var character in innerXml)
+        {
+            if (character >= FirstPrivateUseCharacter && character <= LastPrivateUseCharacter)
+            {
+                used[character - FirstPrivateUseCharacter] = true;
+            }
+        }
+
+        for (var offset = 0; offset < used.Length; offset++)
+        {
+            if (!used[offset])
+            {
+                return (char)(FirstPrivateUseCharacter + offset);
+            }
+        }
+
+        throw new InvalidOperationException("Unable to reserve an XML text sentinel.");
+    }
+
+    private static string RestoreXmlTextSentinel(string value, char? sentinel)
+    {
+        return sentinel is null
+            ? value
+            : value.Replace(sentinel.Value, '&');
+    }
+
+    private ImportFormatException InvalidLeafMarkup(
+        string entryPath,
+        string reference,
+        string localName)
+    {
+        return CellError(
+            _filePath,
+            entryPath,
+            reference,
+            $"{localName} 包含无效的子元素或标记");
     }
 
     private static bool IsPermittedInlineTextPath(OpenXmlElement text, Cell cell)

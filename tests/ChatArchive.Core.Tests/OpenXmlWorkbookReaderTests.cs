@@ -945,6 +945,9 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
     [InlineData("str", "1+1", "cached", "<f>1+1</f>", "<f><c r=\"B1\" /></f>")]
     [InlineData("str", "1+1", "cached", "<v>cached</v>", "<v><c r=\"B1\" /></v>")]
     [InlineData("inlineStr", null, "one", "<t>one</t>", "<t><c r=\"B1\" /></t>")]
+    [InlineData("str", "1+1", "cached", "<f>1+1</f>", "<f>1<!--bad-->+1</f>")]
+    [InlineData("str", "1+1", "cached", "<v>cached</v>", "<v>a<?bad data?>b</v>")]
+    [InlineData("inlineStr", null, "one", "<t>one</t>", "<t>a<!--bad-->b</t>")]
     public void OpenXmlReader_RejectsElementMarkupInsideCellLeaf(
         string type,
         string? formula,
@@ -1002,6 +1005,122 @@ public sealed class OpenXmlWorkbookReaderTests : IDisposable
         using var workbook = OpenXmlWorkbookReader.Open(path);
         var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
         Assert.Equal("A & B C", row.Cells[1].Value);
+    }
+
+    [Fact]
+    public void OpenXmlReader_ConcatenatesMixedInlineCharacterDataSegments()
+    {
+        var path = NewPath("inline-text-mixed-character-data.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "<is><t>one</t></is>",
+            "<is><t>a&amp;<![CDATA[b]]>c</t></is>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+        Assert.Equal("a&bc", row.Cells[1].Value);
+    }
+
+    [Fact]
+    public void OpenXmlReader_ReadsCanonicalEscapedAndNumericCharacterReferences()
+    {
+        var path = NewPath("inline-text-character-references.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "<is><t>one</t></is>",
+            "<is><t>&lt;&amp;&#65;&#x42;</t></is>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+        Assert.Equal("<&AB", row.Cells[1].Value);
+    }
+
+    [Fact]
+    public void OpenXmlReader_RejectsAmbiguousDecodedMarkupInsideMixedText()
+    {
+        var path = NewPath("inline-text-ambiguous-decoded-markup.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[new XlsxTestCell("A1", "one")]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "<is><t>one</t></is>",
+            "<is><t><![CDATA[a]]>&lt;fake/&gt;</t></is>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var error = Assert.Throws<ImportFormatException>(
+            () => workbook.ReadRows(workbook.Sheets[0], CancellationToken.None).ToList());
+        Assert.Contains("A1", error.Message);
+        Assert.Contains("t", error.Message);
+    }
+
+    [Fact]
+    public void OpenXmlReader_PreservesMixedCharacterDataSegmentOrder()
+    {
+        var path = NewPath("inline-text-mixed-character-data-order.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[
+                new XlsxTestCell("A1", "one"),
+                new XlsxTestCell("B1", "two"),
+                new XlsxTestCell("C1", "three"),
+            ]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            ReplaceRequired(
+                ReplaceRequired(
+                    xml,
+                    "<is><t>one</t></is>",
+                    "<is><t><![CDATA[\uE000a]]>b&amp;</t></is>"),
+                "<is><t>two</t></is>",
+                "<is><t><![CDATA[a]]><![CDATA[b]]></t></is>"),
+            "<is><t>three</t></is>",
+            "<is><t>a&#38;<![CDATA[b]]></t></is>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+        Assert.Equal("\uE000ab&", row.Cells[1].Value);
+        Assert.Equal("ab", row.Cells[2].Value);
+        Assert.Equal("a&b", row.Cells[3].Value);
+    }
+
+    [Fact]
+    public void OpenXmlReader_ConcatenatesMixedCachedValueCharacterDataSegments()
+    {
+        var path = NewPath("cached-value-mixed-character-data.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[new XlsxTestCell("A1", "cached", "str")]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "<v>cached</v>",
+            "<v>a<![CDATA[b]]>c</v>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+        Assert.Equal("abc", row.Cells[1].Value);
+    }
+
+    [Fact]
+    public void OpenXmlReader_AcceptsMixedFormulaCharacterDataAndReturnsCachedValue()
+    {
+        var path = NewPath("formula-mixed-character-data.xlsx");
+        XlsxTestFile.Write(path, new XlsxTestSheet(
+            "聊天记录",
+            [[new XlsxTestCell("A1", "cached", "str", Formula: "1+1")]]));
+        RewriteEntry(path, "xl/worksheets/sheet1.xml", xml => ReplaceRequired(
+            xml,
+            "<f>1+1</f>",
+            "<f>1<![CDATA[+]]>1</f>"));
+
+        using var workbook = OpenXmlWorkbookReader.Open(path);
+        var row = Assert.Single(workbook.ReadRows(workbook.Sheets[0], CancellationToken.None));
+        Assert.Equal("cached", row.Cells[1].Value);
     }
 
     [Fact]
