@@ -5,7 +5,9 @@ public sealed class WeFlowExcelExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default) =>
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken) =>
         WeFlowExcelParser.Matches(filePath, cancellationToken);
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
@@ -22,7 +24,9 @@ public sealed class CipherTalkExcelExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default) =>
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken) =>
         CipherTalkExcelParser.Matches(filePath, cancellationToken);
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
@@ -39,7 +43,9 @@ public sealed class QqExcelExportFormat : IChatExportFormat
 {
     public string Platform => "qq";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default) =>
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken) =>
         QqExcelParser.Matches(filePath, cancellationToken);
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)

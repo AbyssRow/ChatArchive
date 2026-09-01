@@ -401,9 +401,11 @@ public class ImportDiscoveryTests : IDisposable
 
         public bool CancellationObservedInsideMatcher { get; private set; }
 
+        public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
         public bool Matches(
             string filePath,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken)
         {
             MatchCount++;
             cancellation.Cancel();

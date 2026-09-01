@@ -22,7 +22,9 @@ public static class QqTextParser
     private static readonly Regex SenderRegex = new(@"^(?<value>.+):$", RegexOptions.Compiled);
     private static readonly Regex SenderTitleRegex = new(@"^\[(?<title>[^\]]+)\]\s+(?<sender>.+)$", RegexOptions.Compiled);
 
-    public static bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public static bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public static bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".txt", StringComparison.OrdinalIgnoreCase))

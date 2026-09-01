@@ -10,7 +10,9 @@ public sealed class QqExportFormat : IChatExportFormat
 
     public string Platform => "qq";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase)
@@ -102,7 +104,9 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
 
     public string Platform => "qq";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetFileName(filePath), "manifest.json", StringComparison.OrdinalIgnoreCase))
@@ -273,7 +277,9 @@ public sealed class WeFlowExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
@@ -330,7 +336,9 @@ public sealed class CipherTalkDetailedJsonFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
@@ -399,7 +407,9 @@ public sealed class ChatLabJsonExportFormat : IChatExportFormat
 
     public string Platform => "wechat";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
@@ -495,7 +505,9 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
 
     public string Platform => "wechat";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         try
@@ -685,7 +697,9 @@ public sealed class WeFlowCsvExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken)
     {
         return WeFlowCsvParser.Matches(filePath, cancellationToken);
     }
@@ -704,7 +718,9 @@ public sealed class WeFlowMarkdownExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken)
     {
         return WeFlowMarkdownParser.Matches(filePath, cancellationToken);
     }
@@ -723,7 +739,9 @@ public sealed class QqTextExportFormat : IChatExportFormat
 {
     public string Platform => "qq";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken)
     {
         return QqTextParser.Matches(filePath, cancellationToken);
     }
@@ -742,7 +760,9 @@ public sealed class WeFlowTextExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public bool Matches(string filePath, CancellationToken cancellationToken)
     {
         return WeFlowTextParser.Matches(filePath, cancellationToken);
     }

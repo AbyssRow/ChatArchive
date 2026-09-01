@@ -55,9 +55,12 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         _sheets = new HashSet<OpenXmlSheet>(sheets);
     }
 
+    public static OpenXmlWorkbookReader Open(string filePath) =>
+        Open(filePath, CancellationToken.None);
+
     public static OpenXmlWorkbookReader Open(
         string filePath,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         XlsxPackageHandle? package = null;

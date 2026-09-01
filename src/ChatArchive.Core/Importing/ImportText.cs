@@ -649,9 +649,12 @@ public static class ImportText
         return extension.Length > 0 && MimeByExtension.TryGetValue(extension, out var mime) ? mime : null;
     }
 
+    public static JsonDocument ParseDocument(string filePath) =>
+        ParseDocument(filePath, CancellationToken.None);
+
     public static JsonDocument ParseDocument(
         string filePath,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         try

@@ -1780,7 +1780,7 @@ public class ParserTests : IDisposable
     {
         public string Platform => "test";
 
-        public bool Matches(string filePath, CancellationToken cancellationToken = default) => false;
+        public bool Matches(string filePath) => false;
 
         public ExportFile Open(string filePath, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

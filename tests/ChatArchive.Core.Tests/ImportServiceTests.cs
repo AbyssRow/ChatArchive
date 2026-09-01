@@ -488,7 +488,7 @@ public class ImportServiceTests : IDisposable
     {
         public string Platform => "qq";
 
-        public bool Matches(string filePath, CancellationToken cancellationToken = default) =>
+        public bool Matches(string filePath) =>
             string.Equals(Path.GetFileName(filePath), "cancel.json", StringComparison.Ordinal);
 
         public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
@@ -543,7 +543,7 @@ public class ImportServiceTests : IDisposable
     {
         public string Platform => "qq";
 
-        public bool Matches(string filePath, CancellationToken cancellationToken = default) =>
+        public bool Matches(string filePath) =>
             string.Equals(Path.GetFileName(filePath), "invalid-database.json", StringComparison.Ordinal);
 
         public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
@@ -588,7 +588,7 @@ public class ImportServiceTests : IDisposable
     {
         public string Platform => "qq";
 
-        public bool Matches(string filePath, CancellationToken cancellationToken = default) =>
+        public bool Matches(string filePath) =>
             string.Equals(filePath, sourcePath, StringComparison.OrdinalIgnoreCase);
 
         public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
@@ -636,7 +636,7 @@ public class ImportServiceTests : IDisposable
     {
         public string Platform => "qq";
 
-        public bool Matches(string filePath, CancellationToken cancellationToken = default) =>
+        public bool Matches(string filePath) =>
             string.Equals(filePath, exportPath, StringComparison.OrdinalIgnoreCase);
 
         public ExportFile Open(string filePath, CancellationToken cancellationToken = default)

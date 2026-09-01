@@ -9,9 +9,100 @@ public class ExportFormatsTests
     private sealed class DummyFormat(string platform) : IChatExportFormat
     {
         public string Platform => platform;
-        public bool Matches(string filePath, CancellationToken cancellationToken = default) => false;
+        public bool Matches(string filePath) => false;
         public ExportFile Open(string filePath, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
+    }
+
+    private sealed class LegacyCancellingFormat(CancellationTokenSource cancellation)
+        : IChatExportFormat
+    {
+        public string Platform => "legacy";
+
+        public bool LegacyMatchesCalled { get; private set; }
+
+        public bool Matches(string filePath)
+        {
+            LegacyMatchesCalled = true;
+            cancellation.Cancel();
+            return false;
+        }
+
+        public ExportFile Open(string filePath, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
+
+    [Fact]
+    public void CancellationAwareMatches_DefaultImplementationSupportsLegacyFormatsAndChecksAfterMatch()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var format = new LegacyCancellingFormat(cancellation);
+
+        Assert.Throws<OperationCanceledException>(() =>
+            ((IChatExportFormat)format).Matches("candidate.json", cancellation.Token));
+        Assert.True(format.LegacyMatchesCalled);
+    }
+
+    [Fact]
+    public void LegacyPublicSniffOverloadsRemainAvailable()
+    {
+        Type[] formatTypes =
+        [
+            typeof(QqExportFormat),
+            typeof(QqChunkedExportFormat),
+            typeof(WeFlowExportFormat),
+            typeof(CipherTalkDetailedJsonFormat),
+            typeof(ChatLabJsonExportFormat),
+            typeof(ChatLabJsonlExportFormat),
+            typeof(WeFlowCsvExportFormat),
+            typeof(WeFlowMarkdownExportFormat),
+            typeof(QqTextExportFormat),
+            typeof(WeFlowTextExportFormat),
+            typeof(WeFlowExcelExportFormat),
+            typeof(CipherTalkExcelExportFormat),
+            typeof(QqExcelExportFormat),
+            typeof(WeFlowSqlExportFormat),
+            typeof(CipherTalkSqlExportFormat),
+        ];
+
+        foreach (var type in formatTypes)
+        {
+            AssertPublicOverload(type, nameof(IChatExportFormat.Matches), typeof(string));
+            var cancellable = AssertPublicOverload(
+                type,
+                nameof(IChatExportFormat.Matches),
+                typeof(string),
+                typeof(CancellationToken));
+            Assert.False(cancellable.GetParameters()[1].IsOptional);
+        }
+
+        AssertPublicOverload(typeof(ImportText), nameof(ImportText.ParseDocument), typeof(string));
+        AssertPublicOverload(typeof(Rfc4180CsvReader), nameof(Rfc4180CsvReader.ReadRecords), typeof(TextReader));
+        AssertPublicOverload(typeof(QqTextParser), nameof(QqTextParser.Matches), typeof(string));
+        AssertPublicOverload(
+            typeof(QqTextParser),
+            nameof(QqTextParser.ReadConversation),
+            typeof(string),
+            typeof(CancellationToken));
+        AssertLegacyParserOverloads(typeof(WeFlowCsvParser));
+        AssertLegacyParserOverloads(typeof(WeFlowMarkdownParser));
+        AssertLegacyParserOverloads(typeof(WeFlowTextParser));
+        AssertPublicOverload(typeof(OpenXmlWorkbookReader), nameof(OpenXmlWorkbookReader.Open), typeof(string));
+    }
+
+    private static void AssertLegacyParserOverloads(Type type)
+    {
+        AssertPublicOverload(type, "Matches", typeof(string));
+        AssertPublicOverload(type, "ReadConversation", typeof(string));
+    }
+
+    private static System.Reflection.MethodInfo AssertPublicOverload(
+        Type type,
+        string methodName,
+        params Type[] parameterTypes)
+    {
+        var method = type.GetMethod(methodName, parameterTypes);
+        return Assert.IsAssignableFrom<System.Reflection.MethodInfo>(method);
     }
 
     [Fact]

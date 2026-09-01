@@ -7,9 +7,12 @@ namespace ChatArchive.Core.Importing;
 /// <summary>RFC 4180 compatible streaming CSV reader.</summary>
 public static class Rfc4180CsvReader
 {
+    public static IEnumerable<IReadOnlyList<string>> ReadRecords(TextReader reader) =>
+        ReadRecords(reader, CancellationToken.None);
+
     public static IEnumerable<IReadOnlyList<string>> ReadRecords(
         TextReader reader,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
         var record = new List<string>();
         var field = new StringBuilder();
@@ -71,7 +74,9 @@ public static class WeFlowCsvParser
 {
     private static readonly string[] CurrentHeaders = ["id", "MsgSvrID", "type_name", "is_sender", "talker", "msg", "src", "CreateTime"];
 
-    public static bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public static bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public static bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".csv", StringComparison.OrdinalIgnoreCase)) return false;
@@ -88,9 +93,12 @@ public static class WeFlowCsvParser
         }
     }
 
+    public static ParsedConversation ReadConversation(string filePath) =>
+        ReadConversation(filePath, CancellationToken.None);
+
     public static ParsedConversation ReadConversation(
         string filePath,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
         if (!Matches(filePath, cancellationToken)) throw new ImportFormatException(filePath, "不是当前 WeFlow CSV 导出");
         return new ParsedConversation("wechat", "wechat-default", ImportText.StableFileNativeId(filePath), "private", Path.GetFileNameWithoutExtension(filePath));
@@ -158,7 +166,9 @@ public static class WeFlowMarkdownParser
     private static readonly Regex MessageHeaderRegex = new(@"^##\s+(?<time>\d{4}-\d{1,2}-\d{1,2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\s+(?<sender>.+?)\s*$", RegexOptions.Compiled);
     private static readonly Regex MarkdownLinkRegex = new(@"!?\[(?<label>[^\]]*)\]\((?<path>[^)]+)\)", RegexOptions.Compiled);
 
-    public static bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public static bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public static bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".md", StringComparison.OrdinalIgnoreCase)) return false;
@@ -200,9 +210,12 @@ public static class WeFlowMarkdownParser
         }
     }
 
+    public static ParsedConversation ReadConversation(string filePath) =>
+        ReadConversation(filePath, CancellationToken.None);
+
     public static ParsedConversation ReadConversation(
         string filePath,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
         if (!Matches(filePath, cancellationToken)) throw new ImportFormatException(filePath, "不是当前 WeFlow Markdown 导出");
         var metadata = ReadMetadata(filePath, cancellationToken);
@@ -339,7 +352,9 @@ public static class WeFlowTextParser
 {
     private static readonly Regex MessageHeaderRegex = new(@"^(?<time>\d{4}-\d{1,2}-\d{1,2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\s+'(?<sender>[^'\r\n]+)'\s*$", RegexOptions.Compiled);
 
-    public static bool Matches(string filePath, CancellationToken cancellationToken = default)
+    public static bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+
+    public static bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".txt", StringComparison.OrdinalIgnoreCase)) return false;
@@ -378,9 +393,12 @@ public static class WeFlowTextParser
         }
     }
 
+    public static ParsedConversation ReadConversation(string filePath) =>
+        ReadConversation(filePath, CancellationToken.None);
+
     public static ParsedConversation ReadConversation(
         string filePath,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
         if (!Matches(filePath, cancellationToken)) throw new ImportFormatException(filePath, "不是当前 WeFlow TXT 导出");
         return new ParsedConversation("wechat", "wechat-default", ImportText.StableFileNativeId(filePath), "private", Path.GetFileNameWithoutExtension(filePath));
