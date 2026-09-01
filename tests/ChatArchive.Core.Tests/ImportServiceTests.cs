@@ -183,21 +183,41 @@ public class ImportServiceTests : IDisposable
         var root = ExportRoot();
         var broken = Path.Combine(root, "broken");
         Directory.CreateDirectory(broken);
-        File.WriteAllText(Path.Combine(broken, "manifest.json"), """
+        var brokenManifest = Path.GetFullPath(Path.Combine(broken, "manifest.json"));
+        File.WriteAllText(brokenManifest, """
             {
               "metadata":{"name":"QQChatExporter","version":"0.2.0"},
               "chatInfo":{"selfUid":"self","peerUid":"broken","name":"损坏","type":"group"},
               "chunked":null
             }
             """);
-        File.WriteAllText(Path.Combine(root, "good.json"), Fixtures.QqExport);
+        var goodJson = Path.GetFullPath(Path.Combine(root, "good.json"));
+        File.WriteAllText(goodJson, Fixtures.QqExport);
 
         var result = new ImportService(_archive.Db, _mediaDir).Run([root]);
 
         Assert.Equal(1, result.FilesImported);
         Assert.Equal(1, result.FilesFailed);
-        Assert.Contains(result.Files, file => file.Status == "failed");
-        Assert.Contains(result.Files, file => file.Status == "completed");
+        var brokenResult = Assert.Single(
+            result.Files,
+            file => string.Equals(
+                Path.GetFullPath(file.Path),
+                brokenManifest,
+                StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("failed", brokenResult.Status);
+        Assert.Contains("chunked", brokenResult.Error, StringComparison.OrdinalIgnoreCase);
+        var goodResult = Assert.Single(
+            result.Files,
+            file => string.Equals(
+                Path.GetFullPath(file.Path),
+                goodJson,
+                StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("completed", goodResult.Status);
+        Assert.Null(goodResult.Error);
+
+        using var connection = _archive.Open();
+        Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM conversations"));
+        Assert.Equal(2L, Scalar(connection, "SELECT COUNT(*) FROM messages"));
     }
 
     [Fact]
