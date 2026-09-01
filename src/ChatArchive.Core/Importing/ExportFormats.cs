@@ -135,6 +135,8 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
+        var chunkFiles = QqChunkManifest.ResolveChunkFiles(filePath, cancellationToken);
+
         JsonObject? metadata = null;
         if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }, cancellationToken))
         {
@@ -164,7 +166,6 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
         var selfSender = !string.IsNullOrEmpty(selfUid) ? selfUid : !string.IsNullOrEmpty(selfUin) ? selfUin : null;
 
         var manifestDir = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
-        var chunkFiles = QqChunkManifest.ResolveChunkFiles(filePath, cancellationToken);
 
         return new ExportFile(
             conversation,

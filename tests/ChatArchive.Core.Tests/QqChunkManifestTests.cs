@@ -141,6 +141,31 @@ public sealed class QqChunkManifestTests : IDisposable
             () => QqChunkManifest.ResolveChunkFiles(manifest, cancellation.Token));
     }
 
+    [Fact]
+    public void QqChunkedExportFormat_Open_RejectsUnsafeManifestBeforeParsingItsContents()
+    {
+        var target = WriteAt(Path.Combine(_root, "outside", "manifest.json"), "{");
+        var manifest = Path.Combine(_root, "manifest.json");
+        try
+        {
+            File.CreateSymbolicLink(manifest, target);
+        }
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            Assert.Skip($"File symbolic links are unavailable on this platform: {ex.GetType().Name}");
+            return;
+        }
+
+        Assert.True(File.GetAttributes(manifest).HasFlag(FileAttributes.ReparsePoint));
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => new QqChunkedExportFormat().Open(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("重解析点", error.Message);
+    }
+
     public void Dispose()
     {
         try
