@@ -117,6 +117,10 @@ public partial class SearchViewModel : ObservableObject
         {
             if (generation != Interlocked.Read(ref _optionsGeneration))
             {
+                if (completed.IsFaulted)
+                {
+                    _ = completed.Exception;
+                }
                 return;
             }
 
