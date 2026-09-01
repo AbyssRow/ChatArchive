@@ -34,6 +34,7 @@ public sealed class TimelineProjectionTests : IDisposable
     [Theory]
     [InlineData("张总", "工作号", "查看发送者：张总 · 工作号")]
     [InlineData("李四", null, "查看发送者：李四")]
+    [InlineData("  李四  ", null, "查看发送者：李四")]
     [InlineData("", null, "查看发送者")]
     [InlineData("   ", null, "查看发送者")]
     public void Sender_automation_name_uses_display_sender_or_fallback(
