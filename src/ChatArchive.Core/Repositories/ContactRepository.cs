@@ -119,6 +119,30 @@ public sealed class ContactRepository
         transaction.Commit();
     }
 
+    public void BindSenderToExpectedContact(
+        long targetContactId,
+        string expectedTargetIdentityToken,
+        long senderId,
+        string? accountLabel = null,
+        bool isPrimary = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedTargetIdentityToken);
+
+        using var connection = _db.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        BindSenderInternal(
+            connection,
+            transaction,
+            targetContactId,
+            senderId,
+            accountLabel,
+            isPrimary,
+            forceRebind: false,
+            expectedTargetIdentityToken: expectedTargetIdentityToken,
+            requireUnboundSender: true);
+        transaction.Commit();
+    }
+
     public void TransferSenderFromExpectedContact(
         long targetContactId,
         long senderId,
@@ -688,7 +712,8 @@ public sealed class ContactRepository
         bool forceRebind,
         long? expectedSourceContactId = null,
         string? expectedTargetIdentityToken = null,
-        string? expectedSourceIdentityToken = null)
+        string? expectedSourceIdentityToken = null,
+        bool requireUnboundSender = false)
     {
         string targetIdentityToken;
         using (var cmd = connection.CreateCommand())
@@ -740,6 +765,11 @@ public sealed class ContactRepository
                 existingContactId = reader.GetInt64(0);
                 existingContactIdentityToken = reader.GetString(1);
             }
+        }
+
+        if (requireUnboundSender && existingContactId.HasValue)
+        {
+            throw new InvalidOperationException("账号归属已发生变化，请重新选择账号后重试");
         }
 
         if (expectedSourceContactId.HasValue)

@@ -39,8 +39,10 @@ public static class ImportDiscovery
     public static IReadOnlyList<DiscoveredImport> Discover(
         IEnumerable<string> roots,
         IReadOnlyList<IChatExportFormat>? formats = null,
-        IEnumerable<string>? excludedRoots = null)
+        IEnumerable<string>? excludedRoots = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         formats ??= ExportFormats.Default;
         var excluded = (excludedRoots ?? Array.Empty<string>())
             .Select(Path.GetFullPath)
@@ -51,6 +53,7 @@ public static class ImportDiscovery
 
         foreach (var rawRoot in roots)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var root = Path.GetFullPath(rawRoot);
             if (IsExcluded(root))
             {
@@ -84,6 +87,7 @@ public static class ImportDiscovery
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return found
             .OrderBy(item => item.Path.ToLowerInvariant(), StringComparer.Ordinal)
             .Select(item => new DiscoveredImport(item.Path, item.Platform, item.Size, item.Error))
@@ -96,6 +100,7 @@ public static class ImportDiscovery
             pending.Push(root);
             while (pending.TryPop(out var directory))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var fullDirectory = Path.GetFullPath(directory);
                 if (!visited.Add(fullDirectory) || IsExcluded(fullDirectory))
                 {
@@ -108,6 +113,7 @@ public static class ImportDiscovery
                 {
                     files = Directory.GetFiles(fullDirectory);
                     directories = Directory.GetDirectories(fullDirectory);
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -116,14 +122,21 @@ public static class ImportDiscovery
                 }
 
                 var hasQqChunkedManifest = files.Any(file =>
-                    string.Equals(Path.GetFileName(file), "manifest.json", StringComparison.OrdinalIgnoreCase)
-                    && IsSafeRegularFileForSniffing(file)
-                    && formats.Any(format =>
-                        format is QqChunkedExportFormat
-                        && SafeMatches(format, file)));
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return string.Equals(
+                               Path.GetFileName(file),
+                               "manifest.json",
+                               StringComparison.OrdinalIgnoreCase)
+                           && IsSafeRegularFileForSniffing(file)
+                           && formats.Any(format =>
+                               format is QqChunkedExportFormat
+                               && SafeMatches(format, file, cancellationToken));
+                });
 
                 foreach (var file in files)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var ext = Path.GetExtension(file);
                     if (hasQqChunkedManifest && string.Equals(ext, ".jsonl", StringComparison.OrdinalIgnoreCase))
                     {
@@ -138,6 +151,7 @@ public static class ImportDiscovery
 
                 foreach (var child in directories)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var dirName = Path.GetFileName(child);
                     if (DefaultPrunedDirectories.Contains(dirName))
                     {
@@ -173,11 +187,21 @@ public static class ImportDiscovery
             }
         }
 
-        static bool SafeMatches(IChatExportFormat format, string filePath)
+        static bool SafeMatches(
+            IChatExportFormat format,
+            string filePath,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                return format.Matches(filePath);
+                var matches = format.Matches(filePath);
+                cancellationToken.ThrowIfCancellationRequested();
+                return matches;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch
             {
@@ -214,6 +238,7 @@ public static class ImportDiscovery
 
         void RecordError(string path, string error)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var full = Path.GetFullPath(path);
             if (seen.Add(full))
             {
@@ -223,6 +248,7 @@ public static class ImportDiscovery
 
         void Consider(string path)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var full = Path.GetFullPath(path);
             if (!seen.Add(full))
             {
@@ -261,6 +287,7 @@ public static class ImportDiscovery
 
             foreach (var format in formats)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 bool matches;
                 try
                 {
@@ -272,6 +299,8 @@ public static class ImportDiscovery
                     found.Add((full, "unknown", size, $"无法检查导出格式（{ex.Message}）"));
                     return;
                 }
+
+                cancellationToken.ThrowIfCancellationRequested();
 
                 if (matches)
                 {

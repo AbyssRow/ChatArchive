@@ -31,6 +31,7 @@ public sealed partial class MainWindow : Window
     private readonly LatestRequestGate _searchResultActivationGate = new();
     private readonly LatestRequestGate _contactSelectionGate = new();
     private readonly ExclusiveInteractionGate _senderProfileGate = new();
+    private bool _isApplyingSearchResultNavigation;
     private bool _isAddingBoundAccount;
     private PendingSearchOptionsReload? _pendingSearchOptionsReload;
 
@@ -195,6 +196,11 @@ public sealed partial class MainWindow : Window
 
     private void Nav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
+        if (!_isApplyingSearchResultNavigation)
+        {
+            _searchResultActivationGate.Invalidate();
+        }
+
         if (TimelinePane is null)
         {
             return;
@@ -445,6 +451,11 @@ public sealed partial class MainWindow : Window
 
     private void ConversationList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (!_isApplyingSearchResultNavigation)
+        {
+            _searchResultActivationGate.Invalidate();
+        }
+
         if (_conversations is null)
         {
             return;
@@ -1147,11 +1158,11 @@ public sealed partial class MainWindow : Window
             }
             else
             {
-                await detail.BindSenderAsync(
+                await detail.BindUnboundSenderToExpectedContactAsync(
                     selectedSender.SenderId,
+                    target.IdentityToken,
                     selectedLabel,
-                    selectedPrimary,
-                    forceRebind: false);
+                    selectedPrimary);
             }
             await ReloadContactsAsync(currentId);
         }
@@ -1616,12 +1627,20 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            SelectNavItem("conversations");
-            _messagePagingReady = false;
-            _conversations.Activate(info);
-            ConversationListControl.SelectedItem =
-                _conversations.Conversations.FirstOrDefault(c => c.Id == info.Id) ?? info;
-            _timeline.JumpToMessage(hit.MessageId);
+            _isApplyingSearchResultNavigation = true;
+            try
+            {
+                SelectNavItem("conversations");
+                _messagePagingReady = false;
+                _conversations.Activate(info);
+                ConversationListControl.SelectedItem =
+                    _conversations.Conversations.FirstOrDefault(c => c.Id == info.Id) ?? info;
+                _timeline.JumpToMessage(hit.MessageId);
+            }
+            finally
+            {
+                _isApplyingSearchResultNavigation = false;
+            }
         }
         catch (Exception ex)
         {
@@ -1638,6 +1657,8 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+
+        _searchResultActivationGate.Invalidate();
 
         _search.Query = SearchBox.Text;
         _search.PlatformFilter = ComboTag(SearchPlatformCombo);

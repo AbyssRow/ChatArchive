@@ -288,6 +288,185 @@ public sealed class ContactRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void BindSenderToExpectedContact_WhenTargetIdIsReused_RejectsStaleTargetIdentity()
+    {
+        var sender = _archive.AddSender("80501", "Unbound target ABA sender");
+        var deletedTarget = _repository.CreateContact("Deleted unbound target");
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(deletedTarget));
+        var senderSnapshot = Assert.Single(
+            _repository.ListAvailableSendersToBind(deletedTarget),
+            item => item.SenderId == sender);
+        Assert.Null(senderSnapshot.BoundContactId);
+
+        _repository.DeleteContact(deletedTarget);
+        var replacementTarget = _repository.CreateContact("Replacement unbound target");
+        var replacementSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(replacementTarget));
+        Assert.Equal(deletedTarget, replacementTarget);
+        Assert.NotEqual(targetSnapshot.IdentityToken, replacementSnapshot.IdentityToken);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            _repository.BindSenderToExpectedContact(
+                replacementTarget,
+                targetSnapshot.IdentityToken,
+                sender,
+                accountLabel: "不应写入",
+                isPrimary: true));
+
+        Assert.Contains("目标联系人", exception.Message);
+        Assert.Null(_repository.FindContactBySenderId(sender));
+        Assert.Empty(_repository.GetContactDetail(replacementTarget)!.Senders);
+    }
+
+    [Fact]
+    public void BindSenderToExpectedContact_WhenTargetTokenMismatches_RejectsWithoutSideEffects()
+    {
+        var sender = _archive.AddSender("80502", "Target token mismatch sender");
+        var existingPrimary = _archive.AddSender("80509", "Token mismatch existing primary");
+        var targetContact = _repository.CreateContact(
+            "Token mismatch target",
+            initialBindings: [(existingPrimary, "保留主账号", true)]);
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
+        var mismatchedToken = (targetSnapshot.IdentityToken[0] == '0' ? "1" : "0")
+            + targetSnapshot.IdentityToken[1..];
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            _repository.BindSenderToExpectedContact(
+                targetContact,
+                mismatchedToken,
+                sender,
+                accountLabel: "不应写入",
+                isPrimary: true));
+
+        Assert.Contains("目标联系人", exception.Message);
+        Assert.Null(_repository.FindContactBySenderId(sender));
+        var unchangedPrimary = Assert.Single(_repository.GetContactDetail(targetContact)!.Senders);
+        Assert.Equal(existingPrimary, unchangedPrimary.SenderId);
+        Assert.Equal("保留主账号", unchangedPrimary.AccountLabel);
+        Assert.True(unchangedPrimary.IsPrimary);
+    }
+
+    [Fact]
+    public void BindSenderToExpectedContact_WhenSenderWasBoundElsewhereAfterSnapshot_RejectsWithoutSideEffects()
+    {
+        var sender = _archive.AddSender("80503", "Bound elsewhere after snapshot");
+        var targetContact = _repository.CreateContact("Expected unbound target");
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
+        Assert.Contains(
+            _repository.ListAvailableSendersToBind(targetContact),
+            item => item.SenderId == sender && item.BoundContactId is null);
+        var currentOwner = _repository.CreateContact("Current owner", note: "必须保留");
+        _repository.BindSender(currentOwner, sender, accountLabel: "现任标签", isPrimary: true);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            _repository.BindSenderToExpectedContact(
+                targetContact,
+                targetSnapshot.IdentityToken,
+                sender,
+                accountLabel: "不应覆盖",
+                isPrimary: false));
+
+        Assert.Contains("重试", exception.Message);
+        Assert.Empty(_repository.GetContactDetail(targetContact)!.Senders);
+        var unchangedBinding = Assert.Single(_repository.GetContactDetail(currentOwner)!.Senders);
+        Assert.Equal("现任标签", unchangedBinding.AccountLabel);
+        Assert.True(unchangedBinding.IsPrimary);
+        Assert.Equal(currentOwner, _repository.FindContactBySenderId(sender)!.Id);
+    }
+
+    [Fact]
+    public void BindSenderToExpectedContact_WhenSenderWasBoundToTargetAfterSnapshot_RejectsWithoutUpdatingBinding()
+    {
+        var existingPrimary = _archive.AddSender("80504", "Existing target primary");
+        var sender = _archive.AddSender("80505", "Bound to target after snapshot");
+        var targetContact = _repository.CreateContact(
+            "Same target owner",
+            initialBindings: [(existingPrimary, "原主账号", true)]);
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
+        Assert.Contains(
+            _repository.ListAvailableSendersToBind(targetContact),
+            item => item.SenderId == sender && item.BoundContactId is null);
+        _repository.BindSender(targetContact, sender, accountLabel: "现有标签", isPrimary: false);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            _repository.BindSenderToExpectedContact(
+                targetContact,
+                targetSnapshot.IdentityToken,
+                sender,
+                accountLabel: "不应覆盖",
+                isPrimary: true));
+
+        Assert.Contains("重试", exception.Message);
+        var unchangedTarget = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
+        var unchangedPrimary = unchangedTarget.Senders.Single(item => item.SenderId == existingPrimary);
+        var unchangedSender = unchangedTarget.Senders.Single(item => item.SenderId == sender);
+        Assert.Equal("原主账号", unchangedPrimary.AccountLabel);
+        Assert.True(unchangedPrimary.IsPrimary);
+        Assert.Equal("现有标签", unchangedSender.AccountLabel);
+        Assert.False(unchangedSender.IsPrimary);
+    }
+
+    [Fact]
+    public void BindSenderToExpectedContact_WhenSnapshotStillMatches_BindsSuccessfully()
+    {
+        var sender = _archive.AddSender("80506", "Expected unbound sender");
+        var targetContact = _repository.CreateContact("Expected target");
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
+
+        _repository.BindSenderToExpectedContact(
+            targetContact,
+            targetSnapshot.IdentityToken,
+            sender,
+            accountLabel: "安全绑定",
+            isPrimary: true);
+
+        var binding = Assert.Single(_repository.GetContactDetail(targetContact)!.Senders);
+        Assert.Equal(sender, binding.SenderId);
+        Assert.Equal("安全绑定", binding.AccountLabel);
+        Assert.True(binding.IsPrimary);
+        Assert.Equal(targetContact, _repository.FindContactBySenderId(sender)!.Id);
+    }
+
+    [Fact]
+    public void BindSenderToExpectedContact_WhenInsertFails_RollsBackTargetPrimaryChange()
+    {
+        var existingPrimary = _archive.AddSender("80507", "Rollback existing primary");
+        var sender = _archive.AddSender("80508", "Rollback unbound sender");
+        var targetContact = _repository.CreateContact(
+            "Rollback expected target",
+            initialBindings: [(existingPrimary, "保留主账号", true)]);
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
+
+        using (var connection = _archive.Open())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = $"""
+                CREATE TRIGGER fail_expected_unbound_target_insert
+                BEFORE INSERT ON contact_senders
+                WHEN NEW.contact_id = {targetContact} AND NEW.sender_id = {sender}
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced expected target insert failure');
+                END;
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var exception = Assert.Throws<SqliteException>(() =>
+            _repository.BindSenderToExpectedContact(
+                targetContact,
+                targetSnapshot.IdentityToken,
+                sender,
+                accountLabel: "不应提交",
+                isPrimary: true));
+
+        Assert.Contains("forced expected target insert failure", exception.Message);
+        Assert.Null(_repository.FindContactBySenderId(sender));
+        var unchangedPrimary = Assert.Single(_repository.GetContactDetail(targetContact)!.Senders);
+        Assert.Equal(existingPrimary, unchangedPrimary.SenderId);
+        Assert.Equal("保留主账号", unchangedPrimary.AccountLabel);
+        Assert.True(unchangedPrimary.IsPrimary);
+    }
+
+    [Fact]
     public void TransferSenderFromExpectedContact_WhenOwnerMatches_TransfersSuccessfully()
     {
         var sender = _archive.AddSender("81001", "Expected owner sender");

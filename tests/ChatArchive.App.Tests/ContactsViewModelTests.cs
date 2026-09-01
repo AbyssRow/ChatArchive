@@ -280,6 +280,31 @@ public sealed class ContactsViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task ContactDetailViewModel_BindUnboundSender_rejects_reused_target_contact_id()
+    {
+        var senderId = InsertSender("100861", "确认时未绑定的账号");
+        var targetId = _contactRepository.CreateContact("确认时的目标联系人");
+        var detailVm = new ContactDetailViewModel(_contactRepository, _avatarStorage);
+        Assert.True(await detailVm.LoadAsync(targetId));
+        var confirmedTargetToken = detailVm.IdentityToken;
+
+        _contactRepository.DeleteContact(targetId);
+        var replacementId = _contactRepository.CreateContact("复用 ID 的新目标");
+        Assert.Equal(targetId, replacementId);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            detailVm.BindUnboundSenderToExpectedContactAsync(
+                senderId,
+                confirmedTargetToken,
+                accountLabel: "不应写入",
+                isPrimary: true));
+
+        Assert.Null(_contactRepository.FindContactBySenderId(senderId));
+        Assert.Empty(
+            Assert.IsType<ContactDetail>(_contactRepository.GetContactDetail(replacementId)).Senders);
+    }
+
+    [Fact]
     public async Task ContactDetailViewModel_TransferSenderFromExpectedContactAsync_ForwardsExpectedOwnerAndRejectsStaleOwnership()
     {
         var senderId = InsertSender("10087", "待转移账号");

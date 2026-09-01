@@ -340,6 +340,33 @@ public class ImportDiscoveryTests : IDisposable
         Assert.Null(siblingResult.Error);
     }
 
+    [Fact]
+    public void ImportDiscovery_ThrowsImmediatelyWhenCancellationWasAlreadyRequested()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            ImportDiscovery.Discover(
+                [_tempDir],
+                cancellationToken: cancellation.Token));
+    }
+
+    [Fact]
+    public void ImportDiscovery_ObservesCancellationBetweenFormatSniffs()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "candidate.json"), "{}");
+        using var cancellation = new CancellationTokenSource();
+        var format = new CancellingMatchFormat(cancellation);
+
+        Assert.Throws<OperationCanceledException>(() =>
+            ImportDiscovery.Discover(
+                [_tempDir],
+                [format],
+                cancellationToken: cancellation.Token));
+        Assert.Equal(1, format.MatchCount);
+    }
+
     private static string WriteValidChatLabJsonl(string directory, string fileName, string id)
     {
         var path = Path.Combine(directory, fileName);
@@ -363,6 +390,25 @@ public class ImportDiscoveryTests : IDisposable
         {
             Assert.Skip($"File symbolic links are unavailable: {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    private sealed class CancellingMatchFormat(CancellationTokenSource cancellation)
+        : IChatExportFormat
+    {
+        public string Platform => "test";
+        public int MatchCount { get; private set; }
+
+        public bool Matches(string filePath)
+        {
+            MatchCount++;
+            cancellation.Cancel();
+            return false;
+        }
+
+        public ExportFile Open(
+            string filePath,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     public void Dispose()

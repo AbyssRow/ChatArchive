@@ -46,6 +46,17 @@ public sealed class UiInputTests
     }
 
     [Fact]
+    public void Latest_request_gate_can_invalidate_a_pending_action_without_replacing_it()
+    {
+        var gate = new LatestRequestGate();
+        var pending = gate.Next();
+
+        gate.Invalidate();
+
+        Assert.False(gate.IsCurrent(pending));
+    }
+
+    [Fact]
     public void SearchViewModel_QueryCleared_ResetsIsLoadingAndState()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"chatarchive-searchvm-test-{Guid.NewGuid():N}");

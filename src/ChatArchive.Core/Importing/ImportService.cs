@@ -54,7 +54,11 @@ public sealed class ImportService
         _mediaCache.Clear();
         RecoverStaleRuns();
 
-        var files = ImportDiscovery.Discover(roots, _formats, new[] { dataDir, AppContext.BaseDirectory });
+        var files = ImportDiscovery.Discover(
+            roots,
+            _formats,
+            new[] { dataDir, AppContext.BaseDirectory },
+            cancellationToken);
         var totals = new Counters();
         var fileResults = new List<FileImportResult>();
         var runId = CreateRun(roots);

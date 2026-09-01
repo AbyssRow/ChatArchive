@@ -36,5 +36,7 @@ public sealed class LatestRequestGate
 
     public long Next() => Interlocked.Increment(ref _version);
 
+    public void Invalidate() => Interlocked.Increment(ref _version);
+
     public bool IsCurrent(long version) => version == Interlocked.Read(ref _version);
 }
