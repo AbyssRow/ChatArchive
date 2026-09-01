@@ -27,6 +27,14 @@ public sealed partial class MainWindow : Window
     private ScrollViewer? _messageScroll;
     private bool _messagePagingReady;
     private bool _statsLoaded;
+    private bool _suppressSearchFilterRefresh;
+    private PendingSearchOptionsReload? _pendingSearchOptionsReload;
+
+    private sealed record PendingSearchOptionsReload(
+        long Generation,
+        long? ConversationId,
+        string? MessageType,
+        bool HasSearched);
 
     public MainWindow()
     {
@@ -52,6 +60,7 @@ public sealed partial class MainWindow : Window
             _contacts = new ContactsViewModel(services.Contacts, services.AvatarStorage, dispatcher);
             _timeline = new TimelineViewModel(services.Conversations, services.MediaLocator, dispatcher);
             _search = new SearchViewModel(services.Search, services.Conversations, dispatcher);
+            _search.OptionsReloaded += SearchOptions_Reloaded;
             _stats = new StatsViewModel(services.Stats, dispatcher);
             _stats.PropertyChanged += (_, e) =>
             {
@@ -156,7 +165,7 @@ public sealed partial class MainWindow : Window
             {
                 _statsLoaded = false;
                 _conversations.Reload();
-                _search.LoadOptions();
+                ReloadSearchOptions();
             };
             _import.PropertyChanged += (_, e) =>
             {
@@ -172,7 +181,7 @@ public sealed partial class MainWindow : Window
             SearchResultsList.ItemsSource = _search.Results;
             SearchConversationCombo.ItemsSource = _search.ConversationOptions;
             SearchMessageTypeCombo.ItemsSource = _search.MessageTypeOptions;
-            _search.LoadOptions();
+            ReloadSearchOptions();
 
             // 侧栏收起时隐藏导入按钮，展开时恢复。
             ImportButton.Visibility = Nav.IsPaneOpen ? Visibility.Visible : Visibility.Collapsed;
@@ -1314,6 +1323,68 @@ public sealed partial class MainWindow : Window
 
     // ---------- 搜索 ----------
 
+    private void ReloadSearchOptions()
+    {
+        long? conversationId = SearchConversationCombo.SelectedValue is long id ? id : null;
+        var messageType = SearchMessageTypeCombo.SelectedValue as string;
+        _suppressSearchFilterRefresh = true;
+        try
+        {
+            var generation = _search.LoadOptions();
+            _pendingSearchOptionsReload = new PendingSearchOptionsReload(
+                generation,
+                conversationId,
+                messageType,
+                _search.HasSearched);
+        }
+        catch
+        {
+            _pendingSearchOptionsReload = null;
+            _suppressSearchFilterRefresh = false;
+            throw;
+        }
+    }
+
+    private void SearchOptions_Reloaded(long generation, bool success)
+    {
+        if (_pendingSearchOptionsReload is not { } pending
+            || pending.Generation != generation)
+        {
+            return;
+        }
+
+        var shouldRunSearch = false;
+        try
+        {
+            if (!success)
+            {
+                return;
+            }
+
+            var restored = SearchOptionRefresh.Restore(
+                pending.ConversationId,
+                pending.MessageType,
+                pending.HasSearched,
+                _search.ConversationOptions,
+                _search.MessageTypeOptions);
+            SearchConversationCombo.SelectedItem = _search.ConversationOptions.First(option =>
+                option.Id == restored.ConversationId);
+            SearchMessageTypeCombo.SelectedItem = _search.MessageTypeOptions.First(option =>
+                string.Equals(option.Value, restored.MessageType, StringComparison.Ordinal));
+            shouldRunSearch = restored.ShouldRunSearch;
+        }
+        finally
+        {
+            _pendingSearchOptionsReload = null;
+            _suppressSearchFilterRefresh = false;
+        }
+
+        if (shouldRunSearch)
+        {
+            RunSearch();
+        }
+    }
+
     private void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == Windows.System.VirtualKey.Enter)
@@ -1326,7 +1397,7 @@ public sealed partial class MainWindow : Window
 
     private void SearchFilter_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (_search is null || !_search.HasSearched)
+        if (_suppressSearchFilterRefresh || _search is null || !_search.HasSearched)
         {
             return;
         }
@@ -1336,6 +1407,11 @@ public sealed partial class MainWindow : Window
 
     private void SearchFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_suppressSearchFilterRefresh)
+        {
+            return;
+        }
+
         SearchFilter_Changed(sender, e);
     }
 
