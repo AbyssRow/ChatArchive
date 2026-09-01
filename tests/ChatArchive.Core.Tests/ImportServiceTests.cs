@@ -181,9 +181,7 @@ public class ImportServiceTests : IDisposable
     public void InvalidExplicitQqManifest_FailsOnlyThatFileAndDoesNotAbortBatch()
     {
         var root = ExportRoot();
-        var broken = Path.Combine(root, "broken");
-        Directory.CreateDirectory(broken);
-        var brokenManifest = Path.GetFullPath(Path.Combine(broken, "manifest.json"));
+        var brokenManifest = Path.GetFullPath(Path.Combine(root, "manifest.json"));
         File.WriteAllText(brokenManifest, """
             {
               "metadata":{"name":"QQChatExporter","version":"0.2.0"},
@@ -191,8 +189,12 @@ public class ImportServiceTests : IDisposable
               "chunked":null
             }
             """);
-        var goodJson = Path.GetFullPath(Path.Combine(root, "good.json"));
-        File.WriteAllText(goodJson, Fixtures.QqExport);
+        var goodJsonl = Path.GetFullPath(Path.Combine(root, "good.jsonl"));
+        File.WriteAllLines(goodJsonl,
+        [
+            "{\"_type\":\"header\",\"chatlab\":{\"version\":\"0.0.2\",\"generator\":\"ChatLab\"},\"meta\":{\"name\":\"Valid sibling\",\"platform\":\"wechat\",\"type\":\"private\",\"ownerId\":\"self\"}}",
+            "{\"_type\":\"message\",\"id\":\"good-sibling\",\"sender\":\"peer\",\"timestamp\":1700000000,\"type\":0,\"content\":\"valid sibling\"}",
+        ]);
 
         var result = new ImportService(_archive.Db, _mediaDir).Run([root]);
 
@@ -210,14 +212,62 @@ public class ImportServiceTests : IDisposable
             result.Files,
             file => string.Equals(
                 Path.GetFullPath(file.Path),
-                goodJson,
+                goodJsonl,
                 StringComparison.OrdinalIgnoreCase));
         Assert.Equal("completed", goodResult.Status);
         Assert.Null(goodResult.Error);
 
         using var connection = _archive.Open();
         Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM conversations"));
-        Assert.Equal(2L, Scalar(connection, "SELECT COUNT(*) FROM messages"));
+        Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages"));
+    }
+
+    [Fact]
+    public void LinkedQqManifest_FailsOnlyThatFileAndDoesNotAbortSiblingJsonl()
+    {
+        var root = ExportRoot();
+        var target = Path.Combine(_dir(), "linked-qq-manifest-target.json");
+        File.WriteAllText(target, """
+            {
+              "metadata":{"name":"QQChatExporter","version":"0.2.0"},
+              "chatInfo":{"selfUid":"self","peerUid":"linked","name":"linked","type":"group"},
+              "chunked":{"chunks":[]}
+            }
+            """);
+        var manifest = Path.GetFullPath(Path.Combine(root, "manifest.json"));
+        CreateSymbolicLinkOrSkip(() => File.CreateSymbolicLink(manifest, target));
+        Assert.True(File.GetAttributes(manifest).HasFlag(FileAttributes.ReparsePoint));
+        var goodJsonl = Path.GetFullPath(Path.Combine(root, "good.jsonl"));
+        File.WriteAllLines(goodJsonl,
+        [
+            "{\"_type\":\"header\",\"chatlab\":{\"version\":\"0.0.2\",\"generator\":\"ChatLab\"},\"meta\":{\"name\":\"Valid sibling\",\"platform\":\"wechat\",\"type\":\"private\",\"ownerId\":\"self\"}}",
+            "{\"_type\":\"message\",\"id\":\"linked-sibling\",\"sender\":\"peer\",\"timestamp\":1700000000,\"type\":0,\"content\":\"valid sibling\"}",
+        ]);
+
+        var result = new ImportService(_archive.Db, _mediaDir).Run([root]);
+
+        Assert.Equal(1, result.FilesImported);
+        Assert.Equal(1, result.FilesFailed);
+        var manifestResult = Assert.Single(
+            result.Files,
+            file => string.Equals(
+                Path.GetFullPath(file.Path),
+                manifest,
+                StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("failed", manifestResult.Status);
+        Assert.Contains("链接文件", manifestResult.Error, StringComparison.Ordinal);
+        var goodResult = Assert.Single(
+            result.Files,
+            file => string.Equals(
+                Path.GetFullPath(file.Path),
+                goodJsonl,
+                StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("completed", goodResult.Status);
+        Assert.Null(goodResult.Error);
+
+        using var connection = _archive.Open();
+        Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM conversations"));
+        Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM messages"));
     }
 
     [Fact]
@@ -404,6 +454,20 @@ public class ImportServiceTests : IDisposable
         var path = Path.Combine(ExportRoot(), fileName);
         File.WriteAllText(path, content);
         return ExportRoot();
+    }
+
+    private static void CreateSymbolicLinkOrSkip(Action create)
+    {
+        try
+        {
+            create();
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException
+                or NotSupportedException)
+        {
+            Assert.Skip($"File symbolic links are unavailable: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private static long Scalar(Microsoft.Data.Sqlite.SqliteConnection c, string sql)

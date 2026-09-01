@@ -1,4 +1,6 @@
 using ChatArchive.Core.Importing;
+using ChatArchive.Core.IO;
+using System.Diagnostics;
 using System.Text.Json;
 using Xunit;
 
@@ -147,6 +149,53 @@ public sealed class QqChunkManifestTests : IDisposable
     }
 
     [Theory]
+    [InlineData("null")]
+    [InlineData("123")]
+    [InlineData("\"\"")]
+    [InlineData("\"   \"")]
+    public void ResolveChunkFiles_InvalidExplicitRelativePath_DoesNotFallBackToValidFileName(
+        string relativePathJson)
+    {
+        _ = WriteAt(Path.Combine(_root, "chunks", "fallback.jsonl"), "{}\n");
+        var manifest = WriteManifest(
+            $"{{\"chunks\":[{{\"relativePath\":{relativePathJson},\"fileName\":\"fallback.jsonl\"}}]}}");
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("relativePath", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("42")]
+    [InlineData("\"entry\"")]
+    [InlineData("[]")]
+    public void ResolveChunkFiles_RejectsNonObjectChunkEntry(string entryJson)
+    {
+        var manifest = WriteManifest($"{{\"chunks\":[{entryJson}]}}");
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("chunks[0] 必须是对象", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_RejectsObjectEntryMissingBothPathFields()
+    {
+        var manifest = WriteManifest("""{"chunks":[{}]}""");
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("缺少 relativePath 或有效 fileName", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("   ")]
     [InlineData("https://example.test/chunks")]
@@ -247,12 +296,45 @@ public sealed class QqChunkManifestTests : IDisposable
         }
         else if (relativePathJson == "\"../outside/a.jsonl\"")
         {
-            Assert.Contains("文件不存在、越界、不是普通文件或包含重解析点", error.Message);
+            Assert.Contains("点路径段", error.Message);
         }
         else
         {
             Assert.Contains("路径必须是相对 .jsonl 文件", error.Message);
         }
+    }
+
+    [Theory]
+    [InlineData("./a.jsonl")]
+    [InlineData("chunks/../a.jsonl")]
+    [InlineData(".\\a.jsonl")]
+    [InlineData("chunks\\..\\a.jsonl")]
+    public void ResolveChunkFiles_RejectsDotSegmentsEvenWhenTheyNormalizeInsideRoot(
+        string declaredPath)
+    {
+        _ = WriteAt(Path.Combine(_root, "a.jsonl"), "{}\n");
+        var json = JsonSerializer.Serialize(declaredPath);
+        var manifest = WriteManifest($"{{\"chunks\":[{{\"relativePath\":{json}}}]}}");
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("点路径段", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_PathNormalizationFailure_PreservesOriginalInnerException()
+    {
+        var declaredPath = "chunks/invalid\0.jsonl";
+        var json = JsonSerializer.Serialize(declaredPath);
+        var manifest = WriteManifest($"{{\"chunks\":[{{\"relativePath\":{json}}}]}}");
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.IsAssignableFrom<ArgumentException>(error.InnerException);
     }
 
     [Theory]
@@ -284,7 +366,7 @@ public sealed class QqChunkManifestTests : IDisposable
             () => QqChunkManifest.ResolveChunkFiles(manifest));
 
         Assert.Equal(manifest, error.FilePath);
-        Assert.Contains("文件不存在、越界、不是普通文件或包含重解析点", error.Message);
+        Assert.Contains("点路径段", error.Message);
     }
 
     [Fact]
@@ -349,6 +431,110 @@ public sealed class QqChunkManifestTests : IDisposable
 
         Assert.Throws<ImportFormatException>(
             () => QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void QqChunkedExportFormat_Matches_RejectsManifestFileReparsePointBeforeSniffing()
+    {
+        var target = WriteAt(
+            Path.Combine(_root, "matches-target", "manifest.json"),
+            """
+            {
+              "metadata":{"name":"QQChatExporter"},
+              "chatInfo":{"peerUid":"peer","name":"linked","type":"group"},
+              "chunked":{"chunks":[]}
+            }
+            """);
+        var exportRoot = Directory.CreateDirectory(Path.Combine(_root, "matches-link")).FullName;
+        var manifest = Path.Combine(exportRoot, "manifest.json");
+        CreateSymbolicLinkOrSkip(() => File.CreateSymbolicLink(manifest, target));
+        Assert.True(File.GetAttributes(manifest).HasFlag(FileAttributes.ReparsePoint));
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => new QqChunkedExportFormat().Matches(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("重解析点", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void QqChunkedExportFormat_Matches_RejectsMalformedExplicitChunkedShape()
+    {
+        var manifest = WriteAt(
+            Path.Combine(_root, "matches-malformed", "manifest.json"),
+            """
+            {
+              "metadata":{"name":"QQChatExporter"},
+              "chatInfo":{"peerUid":"peer","name":"broken","type":"group"},
+              "chunked":null
+            }
+            """);
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => new QqChunkedExportFormat().Matches(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("chunked", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void NtfsCaseSensitiveSiblingEscape_IsRejectedByResolverOpenAndDigest()
+    {
+        var parent = Directory.CreateDirectory(
+            Path.Combine(_root, "case-sensitive-parent")).FullName;
+        EnableNtfsCaseSensitivityOrSkip(parent);
+
+        var exportRoot = Directory.CreateDirectory(Path.Combine(parent, "export")).FullName;
+        var siblingRoot = Directory.CreateDirectory(Path.Combine(parent, "EXPORT")).FullName;
+        if (string.Equals(exportRoot, siblingRoot, StringComparison.Ordinal)
+            || Directory.GetDirectories(parent)
+                .Select(Path.GetFileName)
+                .Distinct(StringComparer.Ordinal)
+                .Count(name => name is "export" or "EXPORT") != 2)
+        {
+            Assert.Skip("NTFS did not preserve distinct export/EXPORT sibling directories after enabling case sensitivity");
+        }
+
+        _ = WriteAt(
+            Path.Combine(exportRoot, "shadow.jsonl"),
+            "{\"id\":\"decoy\",\"timestamp\":1700000000,\"sender\":{\"uid\":\"peer\",\"name\":\"Decoy\"},\"content\":{\"type\":\"text\",\"text\":\"decoy\"}}\n");
+        var escapedChunk = WriteAt(
+            Path.Combine(siblingRoot, "shadow.jsonl"),
+            "{\"id\":\"escaped\",\"timestamp\":1700000000,\"sender\":{\"uid\":\"peer\",\"name\":\"Outside\"},\"content\":{\"type\":\"text\",\"text\":\"outside\"}}\n");
+        var manifest = WriteAt(
+            Path.Combine(exportRoot, "manifest.json"),
+            """
+            {
+              "metadata":{"name":"QQChatExporter","version":"0.2.0"},
+              "chatInfo":{"selfUid":"self","peerUid":"group","name":"case escape","type":"group"},
+              "chunked":{"chunks":[{"relativePath":"../EXPORT/shadow.jsonl"}]}
+            }
+            """);
+
+        var directResolution = ImportText.ResolveExistingRegularFileUnderRoot(
+            exportRoot,
+            "../EXPORT/shadow.jsonl");
+        IReadOnlyList<string>? resolved = null;
+        var resolverError = Record.Exception(
+            () => resolved = QqChunkManifest.ResolveChunkFiles(manifest));
+        string? nativeId = null;
+        var openError = Record.Exception(() =>
+        {
+            using var export = new QqChunkedExportFormat().Open(manifest);
+            nativeId = Assert.Single(export.EnumerateMessages()).NativeId;
+        });
+        string? digest = null;
+        var digestError = Record.Exception(
+            () => digest = FileHashing.ComputeImportDigest(manifest));
+
+        Assert.Null(directResolution);
+        Assert.IsType<ImportFormatException>(resolverError);
+        Assert.IsType<ImportFormatException>(openError);
+        Assert.IsType<ImportFormatException>(digestError);
+        Assert.Null(resolved);
+        Assert.Null(nativeId);
+        Assert.Null(digest);
+        Assert.True(File.Exists(escapedChunk));
     }
 
     [Fact]
@@ -427,7 +613,7 @@ public sealed class QqChunkManifestTests : IDisposable
     [Fact]
     public void ResolveChunkFiles_LegacyManifest_ScansOnlyConventionalLocationsInNaturalOrder()
     {
-        var chunk2 = WriteAt(Path.Combine(_root, "chunk2.jsonl"), "{}\n");
+        var chunk2 = WriteAt(Path.Combine(_root, "chunks", "chunk2.jsonl"), "{}\n");
         var chunk10 = WriteAt(Path.Combine(_root, "chunks", "chunk10.jsonl"), "{}\n");
         _ = WriteAt(Path.Combine(_root, "chunks", "nested", "chunk1.jsonl"), "{}\n");
         var manifest = WriteAt(Path.Combine(_root, "manifest.json"), "{\"chatInfo\":{}}");
@@ -521,6 +707,62 @@ public sealed class QqChunkManifestTests : IDisposable
                 or NotSupportedException)
         {
             Assert.Skip("当前环境不允许创建符号链接");
+        }
+    }
+
+    private static void EnableNtfsCaseSensitivityOrSkip(string directory)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Skip("NTFS per-directory case sensitivity is only available on Windows");
+        }
+
+        string driveFormat;
+        try
+        {
+            driveFormat = new DriveInfo(Path.GetPathRoot(directory)!).DriveFormat;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Assert.Skip($"Unable to query the test volume format: {ex.GetType().Name}: {ex.Message}");
+            return;
+        }
+
+        if (!string.Equals(driveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
+        {
+            Assert.Skip($"The test temp directory is on {driveFormat}, not NTFS");
+        }
+
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo("fsutil.exe")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                },
+            };
+            process.StartInfo.ArgumentList.Add("file");
+            process.StartInfo.ArgumentList.Add("SetCaseSensitiveInfo");
+            process.StartInfo.ArgumentList.Add(directory);
+            process.StartInfo.ArgumentList.Add("enable");
+            process.Start();
+            var output = process.StandardOutput.ReadToEnd().Trim();
+            var error = process.StandardError.ReadToEnd().Trim();
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+            {
+                Assert.Skip(
+                    $"fsutil could not enable NTFS case sensitivity (exit {process.ExitCode}): {error} {output}".Trim());
+            }
+        }
+        catch (Exception ex) when (
+            ex is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            Assert.Skip($"Unable to run fsutil for NTFS case sensitivity: {ex.GetType().Name}: {ex.Message}");
         }
     }
 

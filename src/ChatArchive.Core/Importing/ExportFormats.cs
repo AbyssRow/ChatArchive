@@ -107,6 +107,8 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
             return false;
         }
 
+        _ = QqChunkManifest.ResolveChunkFiles(filePath);
+
         if (!ChunkedJsonReader.ContainsRootProperties(
                 filePath,
                 new[] { "chatInfo" }))

@@ -1,5 +1,6 @@
 using ChatArchive.Core.IO;
 using ChatArchive.Core.Importing;
+using System.Text;
 using Xunit;
 
 namespace ChatArchive.Core.Tests;
@@ -118,6 +119,24 @@ public sealed class FileHashingTests : IDisposable
         var digestAfter = FileHashing.ComputeImportDigest(manifestPath);
 
         Assert.NotEqual(digestBefore, digestAfter);
+    }
+
+    [Fact]
+    public void ComputeImportDigest_StrictTwoChunkVector_UsesFrozenBytesAndDeclarationOrder()
+    {
+        const string manifestBytes =
+            "{\"chunked\":{\"chunks\":[{\"relativePath\":\"chunks/chunk10.jsonl\"},{\"relativePath\":\"chunks/chunk2.jsonl\"}]}}";
+        var exportDir = Path.Combine(_directory, "qq-strict-fixed-vector");
+        var chunksDir = Path.Combine(exportDir, "chunks");
+        Directory.CreateDirectory(chunksDir);
+        var manifestPath = Path.Combine(exportDir, "manifest.json");
+        File.WriteAllBytes(manifestPath, Encoding.UTF8.GetBytes(manifestBytes));
+        File.WriteAllBytes(Path.Combine(chunksDir, "chunk10.jsonl"), Encoding.UTF8.GetBytes("ten\n"));
+        File.WriteAllBytes(Path.Combine(chunksDir, "chunk2.jsonl"), Encoding.UTF8.GetBytes("two\n"));
+
+        Assert.Equal(
+            "a5d181fc318a781e9830818d5e34bbb88b7478117a198de09f8e7a0eaee3c057",
+            FileHashing.ComputeImportDigest(manifestPath));
     }
 
     [Fact]

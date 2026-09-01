@@ -14,7 +14,7 @@ internal static class QqChunkManifest
             var fullManifest = Path.GetFullPath(manifestPath);
             var exportRoot = Path.GetDirectoryName(fullManifest)
                 ?? throw InvalidManifest(manifestPath, "manifest 缺少父目录");
-            var safeManifest = ImportText.ResolveExistingRegularFileUnderRoot(
+            var safeManifest = ImportText.ResolveManifestRegularFileUnderRoot(
                 exportRoot,
                 Path.GetFileName(fullManifest));
             if (!PathEquals(safeManifest, fullManifest))
@@ -116,7 +116,7 @@ internal static class QqChunkManifest
         var chunksPath = Path.Combine(exportRoot, "chunks");
         if (Path.Exists(chunksPath))
         {
-            var safeChunks = ImportText.ResolveExistingDirectoryUnderRoot(exportRoot, "chunks");
+            var safeChunks = ImportText.ResolveManifestDirectoryUnderRoot(exportRoot, "chunks");
             if (safeChunks is null)
             {
                 throw InvalidManifest(
@@ -142,7 +142,7 @@ internal static class QqChunkManifest
         {
             cancellationToken.ThrowIfCancellationRequested();
             var relative = Path.GetRelativePath(exportRoot, candidate).Replace('\\', '/');
-            var safe = ImportText.ResolveExistingRegularFileUnderRoot(exportRoot, relative);
+            var safe = ImportText.ResolveManifestRegularFileUnderRoot(exportRoot, relative);
             if (safe is null)
             {
                 throw InvalidManifest(
@@ -219,7 +219,9 @@ internal static class QqChunkManifest
             declaredPath = $"{validatedChunksDir}/{fileName}";
         }
 
+        var normalizedDeclaredPath = declaredPath.Replace('\\', '/');
         if (IsRootedOrUriLike(declaredPath)
+            || normalizedDeclaredPath.Split('/').Any(segment => segment is "." or "..")
             || !string.Equals(
                 Path.GetExtension(declaredPath),
                 ".jsonl",
@@ -227,11 +229,11 @@ internal static class QqChunkManifest
         {
             throw InvalidManifest(
                 manifestPath,
-                $"chunks[{index}] 路径必须是相对 .jsonl 文件",
+                $"chunks[{index}] 路径必须是相对 .jsonl 文件且不得包含点路径段",
                 declaredPath);
         }
 
-        var resolved = ImportText.ResolveExistingRegularFileUnderRoot(exportRoot, declaredPath);
+        var resolved = ImportText.ResolveManifestRegularFileUnderRoot(exportRoot, declaredPath);
         if (resolved is null)
         {
             throw InvalidManifest(
@@ -268,7 +270,7 @@ internal static class QqChunkManifest
                 declaredChunksDir);
         }
 
-        var resolved = ImportText.ResolveExistingDirectoryUnderRoot(exportRoot, normalized);
+        var resolved = ImportText.ResolveManifestDirectoryUnderRoot(exportRoot, normalized);
         if (resolved is null)
         {
             throw InvalidManifest(

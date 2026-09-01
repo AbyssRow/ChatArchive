@@ -247,6 +247,95 @@ public class ImportDiscoveryTests : IDisposable
         Assert.DoesNotContain(Path.GetFullPath(qqChunk0Path), discoveredDict.Keys);
     }
 
+    [Fact]
+    public void ImportDiscovery_LinkedQqManifest_DoesNotPruneValidSiblingJsonl()
+    {
+        var exportRoot = Directory.CreateDirectory(Path.Combine(_tempDir, "linked-export")).FullName;
+        var target = Path.Combine(_tempDir, "linked-target", "manifest.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.WriteAllText(
+            target,
+            """
+            {
+              "metadata":{"name":"QQChatExporter","version":"0.2.0"},
+              "chatInfo":{"selfUid":"self","peerUid":"linked","name":"linked","type":"group"},
+              "chunked":{"chunks":[]}
+            }
+            """);
+        var manifest = Path.Combine(exportRoot, "manifest.json");
+        CreateSymbolicLinkOrSkip(() => File.CreateSymbolicLink(manifest, target));
+        Assert.True(File.GetAttributes(manifest).HasFlag(FileAttributes.ReparsePoint));
+        var sibling = WriteValidChatLabJsonl(exportRoot, "sibling.jsonl", "linked-sibling");
+
+        var discovered = ImportDiscovery.Discover([exportRoot]);
+
+        var manifestResult = Assert.Single(
+            discovered,
+            item => string.Equals(item.FilePath, manifest, StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(manifestResult.Error);
+        Assert.Contains("链接文件", manifestResult.Error, StringComparison.Ordinal);
+        var siblingResult = Assert.Single(
+            discovered,
+            item => string.Equals(item.FilePath, sibling, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("wechat", siblingResult.Platform);
+        Assert.Null(siblingResult.Error);
+    }
+
+    [Fact]
+    public void ImportDiscovery_MalformedStrictQqManifest_DoesNotPruneValidSiblingJsonl()
+    {
+        var exportRoot = Directory.CreateDirectory(Path.Combine(_tempDir, "malformed-export")).FullName;
+        var manifest = Path.Combine(exportRoot, "manifest.json");
+        File.WriteAllText(
+            manifest,
+            """
+            {
+              "metadata":{"name":"QQChatExporter","version":"0.2.0"},
+              "chatInfo":{"selfUid":"self","peerUid":"broken","name":"broken","type":"group"},
+              "chunked":null
+            }
+            """);
+        var sibling = WriteValidChatLabJsonl(exportRoot, "sibling.jsonl", "malformed-sibling");
+
+        var discovered = ImportDiscovery.Discover([exportRoot]);
+
+        var manifestResult = Assert.Single(
+            discovered,
+            item => string.Equals(item.FilePath, manifest, StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(manifestResult.Error);
+        Assert.Contains("chunked", manifestResult.Error, StringComparison.OrdinalIgnoreCase);
+        var siblingResult = Assert.Single(
+            discovered,
+            item => string.Equals(item.FilePath, sibling, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("wechat", siblingResult.Platform);
+        Assert.Null(siblingResult.Error);
+    }
+
+    private static string WriteValidChatLabJsonl(string directory, string fileName, string id)
+    {
+        var path = Path.Combine(directory, fileName);
+        File.WriteAllLines(path,
+        [
+            "{\"_type\":\"header\",\"chatlab\":{\"version\":\"0.0.2\",\"generator\":\"ChatLab\"},\"meta\":{\"name\":\"Sibling\",\"platform\":\"wechat\",\"type\":\"private\",\"ownerId\":\"self\"}}",
+            $"{{\"_type\":\"message\",\"id\":\"{id}\",\"sender\":\"peer\",\"timestamp\":1700000000,\"type\":0,\"content\":\"sibling\"}}",
+        ]);
+        return path;
+    }
+
+    private static void CreateSymbolicLinkOrSkip(Action create)
+    {
+        try
+        {
+            create();
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException
+                or NotSupportedException)
+        {
+            Assert.Skip($"File symbolic links are unavailable: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     public void Dispose()
     {
         try

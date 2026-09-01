@@ -117,7 +117,10 @@ public static class ImportDiscovery
 
                 var hasQqChunkedManifest = files.Any(file =>
                     string.Equals(Path.GetFileName(file), "manifest.json", StringComparison.OrdinalIgnoreCase)
-                    && formats.Any(format => (format is QqChunkedExportFormat || string.Equals(format.Platform, "qq", StringComparison.OrdinalIgnoreCase)) && SafeMatches(format, file)));
+                    && IsSafeRegularFileForSniffing(file)
+                    && formats.Any(format =>
+                        format is QqChunkedExportFormat
+                        && SafeMatches(format, file)));
 
                 foreach (var file in files)
                 {
@@ -177,6 +180,22 @@ public static class ImportDiscovery
                 return format.Matches(filePath);
             }
             catch
+            {
+                return false;
+            }
+        }
+
+        static bool IsSafeRegularFileForSniffing(string filePath)
+        {
+            try
+            {
+                var attributes = File.GetAttributes(filePath);
+                return !attributes.HasFlag(FileAttributes.Directory)
+                       && !attributes.HasFlag(FileAttributes.ReparsePoint);
+            }
+            catch (Exception ex) when (
+                ex is IOException or UnauthorizedAccessException or ArgumentException
+                    or NotSupportedException)
             {
                 return false;
             }

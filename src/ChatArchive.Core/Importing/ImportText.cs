@@ -145,25 +145,45 @@ public static class ImportText
     {
         try
         {
-            var rootFull = Path.GetFullPath(exportRoot);
-            var normalized = declaredPath.Replace('\\', '/');
-            if (Path.IsPathRooted(normalized))
-            {
-                return null;
-            }
-
-            var candidate = Path.GetFullPath(Path.Combine(rootFull, normalized));
-            var prefix = rootFull.EndsWith(Path.DirectorySeparatorChar)
-                ? rootFull
-                : rootFull + Path.DirectorySeparatorChar;
-            return candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-                ? candidate
-                : null;
+            return SafeExportPathCore(exportRoot, declaredPath);
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
         {
             return null;
         }
+    }
+
+    private static string? SafeExportPathCore(string exportRoot, string declaredPath)
+    {
+        var rootFull = Path.GetFullPath(exportRoot);
+        var normalized = declaredPath.Replace('\\', '/');
+        if (Path.IsPathRooted(normalized))
+        {
+            return null;
+        }
+
+        var candidate = Path.GetFullPath(Path.Combine(rootFull, normalized));
+        return TryGetExactRelativePathUnderRoot(rootFull, candidate, out _)
+            ? candidate
+            : null;
+    }
+
+    private static bool TryGetExactRelativePathUnderRoot(
+        string rootFull,
+        string candidateFull,
+        out string relativePath)
+    {
+        var prefix = rootFull.EndsWith(Path.DirectorySeparatorChar)
+            ? rootFull
+            : rootFull + Path.DirectorySeparatorChar;
+        if (!candidateFull.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            relativePath = string.Empty;
+            return false;
+        }
+
+        relativePath = candidateFull[prefix.Length..];
+        return relativePath.Length > 0;
     }
 
     private static readonly HashSet<string> WeFlowParentMediaDirectories =
@@ -223,6 +243,38 @@ public static class ImportText
             : null;
     }
 
+    internal static string? ResolveManifestRegularFileUnderRoot(
+        string root,
+        string declaredRelativePath) =>
+        ResolveManifestTargetUnderRoot(
+            root,
+            declaredRelativePath,
+            SafePathTarget.ExistingRegularFile);
+
+    internal static string? ResolveManifestDirectoryUnderRoot(
+        string root,
+        string declaredRelativePath) =>
+        ResolveManifestTargetUnderRoot(
+            root,
+            declaredRelativePath,
+            SafePathTarget.ExistingDirectory);
+
+    private static string? ResolveManifestTargetUnderRoot(
+        string root,
+        string declaredRelativePath,
+        SafePathTarget target)
+    {
+        var candidate = SafeExportPathCore(root, declaredRelativePath);
+        return candidate is not null
+               && HasSafePathComponents(
+                   root,
+                   candidate,
+                   target,
+                   preserveProbeExceptions: true)
+            ? candidate
+            : null;
+    }
+
     private enum SafePathTarget
     {
         ExistingRegularFile,
@@ -247,12 +299,17 @@ public static class ImportText
     private static bool HasSafePathComponents(
         string root,
         string candidate,
-        SafePathTarget target)
+        SafePathTarget target,
+        bool preserveProbeExceptions = false)
     {
         try
         {
             var rootFull = Path.GetFullPath(root);
-            if (!TryGetPathAttributes(rootFull, out var rootAttributes, out var rootExists)
+            if (!TryGetPathAttributes(
+                    rootFull,
+                    out var rootAttributes,
+                    out var rootExists,
+                    preserveProbeExceptions)
                 || !rootExists
                 || rootAttributes.HasFlag(FileAttributes.ReparsePoint)
                 || !rootAttributes.HasFlag(FileAttributes.Directory))
@@ -260,7 +317,13 @@ public static class ImportText
                 return false;
             }
 
-            var relative = Path.GetRelativePath(rootFull, Path.GetFullPath(candidate));
+            if (!TryGetExactRelativePathUnderRoot(
+                    rootFull,
+                    Path.GetFullPath(candidate),
+                    out var relative))
+            {
+                return false;
+            }
             var segments = relative.Split(
                 [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
                 StringSplitOptions.RemoveEmptyEntries);
@@ -273,7 +336,11 @@ public static class ImportText
             for (var index = 0; index < segments.Length; index++)
             {
                 current = Path.Combine(current, segments[index]);
-                if (!TryGetPathAttributes(current, out var attributes, out var exists))
+                if (!TryGetPathAttributes(
+                        current,
+                        out var attributes,
+                        out var exists,
+                        preserveProbeExceptions))
                 {
                     return false;
                 }
@@ -308,7 +375,9 @@ public static class ImportText
 
             return false;
         }
-        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
+        catch (Exception ex) when (
+            !preserveProbeExceptions
+            && ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
         {
             return false;
         }
@@ -317,7 +386,8 @@ public static class ImportText
     private static bool TryGetPathAttributes(
         string path,
         out FileAttributes attributes,
-        out bool exists)
+        out bool exists,
+        bool preserveProbeExceptions)
     {
         try
         {
@@ -331,7 +401,9 @@ public static class ImportText
             exists = false;
             return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception ex) when (
+            !preserveProbeExceptions
+            && ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             attributes = default;
             exists = false;
