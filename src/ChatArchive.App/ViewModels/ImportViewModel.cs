@@ -25,6 +25,7 @@ public partial class ImportViewModel : ObservableObject
 
     private readonly ArchiveDatabase _database;
     private readonly DispatcherQueue _dispatcher;
+    private readonly ImportRunPresentationState _presentationState = new();
 
     public ObservableCollection<string> Paths { get; } = new();
 
@@ -70,54 +71,66 @@ public partial class ImportViewModel : ObservableObject
             return;
         }
 
+        var roots = Paths.ToList();
+        var generation = _presentationState.Begin();
         IsRunning = true;
         ProgressValue = 0;
         ProgressMaximum = 1;
         StatusText = "正在发现导出文件…";
 
-        var roots = Paths.ToList();
-        var mediaDir = Path.Combine(Path.GetDirectoryName(_database.DatabasePath)!, "media");
-        var service = new ImportService(_database, mediaDir);
-
         Task.Run(async () =>
         {
-            var progress = new Progress<ImportProgress>(p => _dispatcher.TryEnqueue(() =>
-            {
-                ProgressMaximum = Math.Max(1, p.FilesTotal);
-                ProgressValue = p.FilesDone;
-                StatusText = p.Phase switch
-                {
-                    ImportPhase.Importing =>
-                        $"[{p.FilesDone}/{p.FilesTotal}] {Path.GetFileName(p.CurrentFile)} — 新增 {p.Added}，重复 {p.Duplicates}，缺失媒体 {p.MissingMedia}",
-                    ImportPhase.Done => $"导入完成：新增 {p.Added} 条消息",
-                    ImportPhase.Failed => "导入失败",
-                    _ => p.CurrentFile,
-                };
-            }));
-
+            string terminalText;
             try
             {
-                var result = await service.RunAsync(roots, progress).ConfigureAwait(false);
-                _dispatcher.TryEnqueue(() =>
+                var mediaDir = Path.Combine(Path.GetDirectoryName(_database.DatabasePath)!, "media");
+                var service = new ImportService(_database, mediaDir);
+                var progress = new Progress<ImportProgress>(p => _dispatcher.TryEnqueue(() =>
                 {
-                    StatusText =
-                        $"完成：文件 导入{result.FilesImported}/跳过{result.FilesSkipped}/失败{result.FilesFailed}；" +
-                        $"消息 新增{result.Added} 重复{result.Duplicates} 版本{result.Revised} 变体{result.Variants}；" +
-                        $"附件 {result.Attachments}（缺媒体 {result.MissingMedia}）";
-                });
+                    if (!_presentationState.CanApplyProgress(generation))
+                    {
+                        return;
+                    }
+
+                    ProgressMaximum = Math.Max(1, p.FilesTotal);
+                    ProgressValue = p.FilesDone;
+                    StatusText = p.Phase switch
+                    {
+                        ImportPhase.Importing =>
+                            $"[{p.FilesDone}/{p.FilesTotal}] {Path.GetFileName(p.CurrentFile)} — 新增 {p.Added}，重复 {p.Duplicates}，缺失媒体 {p.MissingMedia}",
+                        ImportPhase.Done => $"导入完成：新增 {p.Added} 条消息",
+                        ImportPhase.Failed => "导入失败",
+                        _ => p.CurrentFile,
+                    };
+                }));
+
+                var result = await service.RunAsync(roots, progress).ConfigureAwait(false);
+                terminalText =
+                    $"完成：文件 导入{result.FilesImported}/跳过{result.FilesSkipped}/失败{result.FilesFailed}；" +
+                    $"消息 新增{result.Added} 重复{result.Duplicates} 版本{result.Revised} 变体{result.Variants}；" +
+                    $"附件 {result.Attachments}（缺媒体 {result.MissingMedia}）";
             }
             catch (Exception ex)
             {
-                _dispatcher.TryEnqueue(() => StatusText = $"导入失败：{ex.Message}");
+                terminalText = $"导入失败：{ex.Message}";
             }
-            finally
+
+            if (!_presentationState.TryTerminate(generation))
             {
-                _dispatcher.TryEnqueue(() =>
-                {
-                    IsRunning = false;
-                    ImportFinished?.Invoke();
-                });
+                return;
             }
+
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (!_presentationState.IsCurrentTerminal(generation))
+                {
+                    return;
+                }
+
+                StatusText = terminalText;
+                IsRunning = false;
+                ImportFinished?.Invoke();
+            });
         });
     }
 }
