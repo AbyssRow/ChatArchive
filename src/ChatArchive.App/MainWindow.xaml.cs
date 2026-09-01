@@ -958,31 +958,63 @@ public sealed partial class MainWindow : Window
                 Content = panel,
             };
 
+            BoundSenderInfo selectedSender;
+            string? selectedLabel;
+            bool selectedPrimary;
             try
             {
-                if (await dialog.ShowSafeAsync() == ContentDialogResult.Primary)
+                if (await dialog.ShowSafeAsync() != ContentDialogResult.Primary)
                 {
-                    if (list.SelectedItem is ListViewItem { Tag: BoundSenderInfo selectedSender })
-                    {
-                        var currentId = detail.ContactId;
-                        await detail.BindSenderAsync(
-                            selectedSender.SenderId,
-                            string.IsNullOrWhiteSpace(labelBox.Text) ? null : labelBox.Text.Trim(),
-                            primaryCheck.IsChecked == true,
-                            forceRebind: true);
-                        await ReloadContactsAsync(currentId);
-                    }
-                    else
-                    {
-                        ShowError("未选择要绑定的账号");
-                    }
+                    return;
                 }
+
+                if (list.SelectedItem is not ListViewItem { Tag: BoundSenderInfo item })
+                {
+                    ShowError("未选择要绑定的账号");
+                    return;
+                }
+
+                selectedSender = item;
+                selectedLabel = string.IsNullOrWhiteSpace(labelBox.Text) ? null : labelBox.Text.Trim();
+                selectedPrimary = primaryCheck.IsChecked == true;
             }
             finally
             {
                 searchCts?.Cancel();
                 searchCts?.Dispose();
             }
+
+            var forceRebind = false;
+            if (!string.IsNullOrWhiteSpace(selectedSender.BoundContactName))
+            {
+                var oldContactName = selectedSender.BoundContactName.Trim();
+                var confirm = new ContentDialog
+                {
+                    XamlRoot = Content.XamlRoot,
+                    Title = "确认转移账号",
+                    PrimaryButtonText = "确认转移",
+                    CloseButtonText = "取消",
+                    DefaultButton = ContentDialogButton.Close,
+                    Content = $"账号“{selectedSender.OriginalName}”当前属于“{oldContactName}”。\n"
+                              + $"确认将其转移到“{detail.DisplayName}”吗？\n\n"
+                              + "旧联系人如果没有其他账号、备注或自定义头像，可能会被自动清理。",
+                };
+
+                if (await confirm.ShowSafeAsync() != ContentDialogResult.Primary)
+                {
+                    return;
+                }
+
+                forceRebind = true;
+            }
+
+            var currentId = detail.ContactId;
+            await detail.BindSenderAsync(
+                selectedSender.SenderId,
+                selectedLabel,
+                selectedPrimary,
+                forceRebind);
+            await ReloadContactsAsync(currentId);
         }
         catch (Exception ex)
         {
