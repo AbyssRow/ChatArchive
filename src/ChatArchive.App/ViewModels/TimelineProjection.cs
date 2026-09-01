@@ -11,6 +11,12 @@ public sealed record AttachmentEntry(
     bool IsImage,
     bool IsMissing)
 {
+    public string? NormalizedFilename => string.IsNullOrWhiteSpace(Filename)
+        ? null
+        : Filename.Trim();
+
+    public string PreviewTitle => NormalizedFilename ?? "图片";
+
     public string ActionText => Kind switch
     {
         "audio" or "voice" => "播放语音",
@@ -19,13 +25,13 @@ public sealed record AttachmentEntry(
         _ => "打开附件",
     };
 
-    public string PreviewAutomationName => string.IsNullOrWhiteSpace(Filename)
+    public string PreviewAutomationName => NormalizedFilename is not { } filename
         ? "预览图片"
-        : $"预览图片：{Filename.Trim()}";
+        : $"预览图片：{filename}";
 
-    public string MissingText => string.IsNullOrWhiteSpace(Filename)
+    public string MissingText => NormalizedFilename is not { } filename
         ? "媒体缺失"
-        : $"{Filename}（文件缺失）";
+        : $"{filename}（文件缺失）";
 }
 
 public sealed record MessageProjection(

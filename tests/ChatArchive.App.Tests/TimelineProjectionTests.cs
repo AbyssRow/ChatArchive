@@ -32,6 +32,27 @@ public sealed class TimelineProjectionTests : IDisposable
     }
 
     [Theory]
+    [InlineData(null, null, "图片", "预览图片", "媒体缺失")]
+    [InlineData("", null, "图片", "预览图片", "媒体缺失")]
+    [InlineData("   ", null, "图片", "预览图片", "媒体缺失")]
+    [InlineData("  photo.png  ", "photo.png", "photo.png", "预览图片：photo.png", "photo.png（文件缺失）")]
+    [InlineData("photo.png", "photo.png", "photo.png", "预览图片：photo.png", "photo.png（文件缺失）")]
+    public void Attachment_filename_outputs_share_one_trimmed_normalization(
+        string? filename,
+        string? expectedNormalized,
+        string expectedTitle,
+        string expectedAutomationName,
+        string expectedMissingText)
+    {
+        var entry = new AttachmentEntry("image", filename, null, true, true);
+
+        Assert.Equal(expectedNormalized, entry.NormalizedFilename);
+        Assert.Equal(expectedTitle, entry.PreviewTitle);
+        Assert.Equal(expectedAutomationName, entry.PreviewAutomationName);
+        Assert.Equal(expectedMissingText, entry.MissingText);
+    }
+
+    [Theory]
     [InlineData("张总", "工作号", "查看发送者：张总 · 工作号")]
     [InlineData("李四", null, "查看发送者：李四")]
     [InlineData("  李四  ", null, "查看发送者：李四")]
@@ -50,6 +71,55 @@ public sealed class TimelineProjectionTests : IDisposable
         var entry = new MessageEntry(message, new MediaLocator(_directory));
 
         Assert.Equal(expected, entry.SenderAutomationName);
+    }
+
+    [Theory]
+    [InlineData(100L, true)]
+    [InlineData(null, false)]
+    public void Sender_profile_action_requires_a_sender_id(long? senderId, bool expected)
+    {
+        var message = new MessageItem(
+            1, 1, senderId, "张三", "incoming", "text", null,
+            "你好", false, false, LocalTimestamp(2026, 8, 20, 10),
+            Array.Empty<AttachmentInfo>());
+        var entry = new MessageEntry(message, new MediaLocator(_directory));
+
+        Assert.Equal(expected, entry.CanOpenSenderProfile);
+    }
+
+    [Fact]
+    public void Sender_action_text_uses_separately_trimmed_name_and_account()
+    {
+        var message = new MessageItem(
+            1, 1, 100, "  张总  ", "incoming", "text", null,
+            "你好", false, false, LocalTimestamp(2026, 8, 20, 10),
+            Array.Empty<AttachmentInfo>(),
+            AccountLabel: "  工作号  ");
+        var entry = new MessageEntry(message, new MediaLocator(_directory));
+
+        Assert.Equal("工作号", entry.AccountBadge);
+        Assert.Equal("张总 · 工作号", entry.DisplaySenderName);
+        Assert.Equal("张总 · 工作号", entry.SenderActionText);
+        Assert.Equal("查看发送者：张总 · 工作号", entry.SenderAutomationName);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Blank_sender_with_account_uses_visible_fallback_without_badge_prefix(string? senderName)
+    {
+        var message = new MessageItem(
+            1, 1, 100, senderName!, "incoming", "text", null,
+            "你好", false, false, LocalTimestamp(2026, 8, 20, 10),
+            Array.Empty<AttachmentInfo>(),
+            AccountLabel: "  工作号  ");
+        var entry = new MessageEntry(message, new MediaLocator(_directory));
+
+        Assert.Equal(string.Empty, entry.DisplaySenderName);
+        Assert.Equal("未知发送者", entry.SenderActionText);
+        Assert.Equal("查看发送者", entry.SenderAutomationName);
+        Assert.DoesNotContain("· 工作号", entry.DisplaySenderName, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -241,7 +311,7 @@ public sealed class TimelineProjectionTests : IDisposable
     }
 
     [Fact]
-    public void MessageEntry_handles_empty_sender_name_initials()
+    public void MessageEntry_normalizes_empty_sender_name_and_uses_fallbacks()
     {
         var locator = new MediaLocator(_directory);
         var message = new MessageItem(
@@ -252,7 +322,9 @@ public sealed class TimelineProjectionTests : IDisposable
         var entry = new MessageEntry(message, locator);
 
         Assert.Equal("?", entry.Initials);
-        Assert.Equal("   ", entry.DisplaySenderName);
+        Assert.Equal(string.Empty, entry.DisplaySenderName);
+        Assert.Equal("未知发送者", entry.SenderActionText);
+        Assert.Equal("查看发送者", entry.SenderAutomationName);
     }
 
     [Fact]

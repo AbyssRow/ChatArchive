@@ -568,7 +568,7 @@ public sealed partial class MainWindow : Window
         {
             try
             {
-                await ShowImagePreview(entry.ResolvedPath, entry.Filename ?? "图片");
+                await ShowImagePreview(entry.ResolvedPath, entry.PreviewTitle);
             }
             catch (Exception ex)
             {

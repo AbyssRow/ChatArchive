@@ -59,13 +59,29 @@ public sealed class MessageEntry : TimelineEntry
     public bool HasMissingMedia => MissingMediaCount > 0;
     public bool HasAttachments => Attachments.Count > 0;
 
+    private string NormalizedSenderName => string.IsNullOrWhiteSpace(Message.SenderName)
+        ? string.Empty
+        : Message.SenderName.Trim();
+
     public string? AvatarPath => Message.CustomAvatarPath;
-    public string? AccountBadge => string.IsNullOrWhiteSpace(Message.AccountLabel) ? null : Message.AccountLabel;
-    public string Initials => string.IsNullOrWhiteSpace(Message.SenderName) ? "?" : System.Globalization.StringInfo.GetNextTextElement(Message.SenderName.Trim());
-    public string DisplaySenderName => string.IsNullOrWhiteSpace(AccountBadge) ? Message.SenderName : $"{Message.SenderName} · {AccountBadge}";
+    public string? AccountBadge => string.IsNullOrWhiteSpace(Message.AccountLabel)
+        ? null
+        : Message.AccountLabel.Trim();
+    public string Initials => NormalizedSenderName.Length == 0
+        ? "?"
+        : System.Globalization.StringInfo.GetNextTextElement(NormalizedSenderName);
+    public string DisplaySenderName => NormalizedSenderName.Length == 0
+        ? string.Empty
+        : AccountBadge is null
+            ? NormalizedSenderName
+            : $"{NormalizedSenderName} · {AccountBadge}";
+    public bool CanOpenSenderProfile => Message.SenderId.HasValue;
+    public string SenderActionText => DisplaySenderName.Length == 0
+        ? "未知发送者"
+        : DisplaySenderName;
     public string SenderAutomationName => string.IsNullOrWhiteSpace(DisplaySenderName)
         ? "查看发送者"
-        : $"查看发送者：{DisplaySenderName.Trim()}";
+        : $"查看发送者：{DisplaySenderName}";
 }
 
 public partial class TimelineViewModel : ObservableObject

@@ -116,18 +116,32 @@
                     </Grid.ColumnDefinitions>
                     <Button Grid.Column="0" Width="32" Height="32" VerticalAlignment="Top" Margin="0,2,0,0"
                             Background="Transparent" BorderThickness="0" Padding="0" IsTabStop="False"
-                            AutomationProperties.Name="{Binding SenderAutomationName}"
+                            Visibility="{Binding CanOpenSenderProfile, Converter={StaticResource BoolToVis}}"
+                            AutomationProperties.AccessibilityView="Raw"
                             Click="OnSenderClick">
-                        <PersonPicture Width="32" Height="32" IsHitTestVisible="False"
+                        <PersonPicture Width="32" Height="32" IsHitTestVisible="False" IsTabStop="False"
+                                       AutomationProperties.AccessibilityView="Raw"
                                        ProfilePicture="{Binding AvatarPath, Converter={StaticResource PathToImageSource}}"
                                        Initials="{Binding Initials}"
-                                       DisplayName="{Binding DisplaySenderName}" />
+                                       DisplayName="{Binding SenderActionText}" />
                     </Button>
+                    <PersonPicture Grid.Column="0" Width="32" Height="32" VerticalAlignment="Top" Margin="0,2,0,0"
+                                   IsHitTestVisible="False" IsTabStop="False"
+                                   Visibility="{Binding CanOpenSenderProfile, Converter={StaticResource InverseBool}}"
+                                   AutomationProperties.AccessibilityView="Raw"
+                                   ProfilePicture="{Binding AvatarPath, Converter={StaticResource PathToImageSource}}"
+                                   Initials="{Binding Initials}"
+                                   DisplayName="{Binding SenderActionText}" />
                     <StackPanel Grid.Column="1" Spacing="2" HorizontalAlignment="Left">
-                        <Button Content="{Binding DisplaySenderName}" FontSize="11" Opacity="0.55"
+                        <Button Content="{Binding SenderActionText}" FontSize="11" Opacity="0.55"
                                 HorizontalAlignment="Left" Background="Transparent" BorderThickness="0" Padding="0"
+                                Visibility="{Binding CanOpenSenderProfile, Converter={StaticResource BoolToVis}}"
+                                AutomationProperties.AccessibilityView="Control"
                                 AutomationProperties.Name="{Binding SenderAutomationName}"
                                 Click="OnSenderClick" />
+                        <TextBlock Text="{Binding SenderActionText}" FontSize="11" Opacity="0.55"
+                                   HorizontalAlignment="Left"
+                                   Visibility="{Binding CanOpenSenderProfile, Converter={StaticResource InverseBool}}" />
                         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="4,12,12,12" Padding="10,7"
@@ -157,13 +171,23 @@
                     </StackPanel>
                     <Button Grid.Column="1" Width="32" Height="32" VerticalAlignment="Top" Margin="0,2,0,0"
                             Background="Transparent" BorderThickness="0" Padding="0"
+                            Visibility="{Binding CanOpenSenderProfile, Converter={StaticResource BoolToVis}}"
+                            AutomationProperties.AccessibilityView="Control"
                             AutomationProperties.Name="{Binding SenderAutomationName}"
                             Click="OnSenderClick">
-                        <PersonPicture Width="32" Height="32" IsHitTestVisible="False"
+                        <PersonPicture Width="32" Height="32" IsHitTestVisible="False" IsTabStop="False"
+                                       AutomationProperties.AccessibilityView="Raw"
                                        ProfilePicture="{Binding AvatarPath, Converter={StaticResource PathToImageSource}}"
                                        Initials="{Binding Initials}"
-                                       DisplayName="{Binding DisplaySenderName}" />
+                                       DisplayName="{Binding SenderActionText}" />
                     </Button>
+                    <PersonPicture Grid.Column="1" Width="32" Height="32" VerticalAlignment="Top" Margin="0,2,0,0"
+                                   IsHitTestVisible="False" IsTabStop="False"
+                                   Visibility="{Binding CanOpenSenderProfile, Converter={StaticResource InverseBool}}"
+                                   AutomationProperties.AccessibilityView="Raw"
+                                   ProfilePicture="{Binding AvatarPath, Converter={StaticResource PathToImageSource}}"
+                                   Initials="{Binding Initials}"
+                                   DisplayName="{Binding SenderActionText}" />
                 </Grid>
             </DataTemplate>
 
