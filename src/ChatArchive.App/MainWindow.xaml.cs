@@ -27,7 +27,7 @@ public sealed partial class MainWindow : Window
     private ScrollViewer? _messageScroll;
     private bool _messagePagingReady;
     private bool _statsLoaded;
-    private bool _suppressSearchFilterRefresh;
+    private readonly SearchOptionsReloadGate _searchOptionsReloadGate = new();
     private bool _isAddingBoundAccount;
     private PendingSearchOptionsReload? _pendingSearchOptionsReload;
 
@@ -1374,22 +1374,28 @@ public sealed partial class MainWindow : Window
     {
         long? conversationId = SearchConversationCombo.SelectedValue is long id ? id : null;
         var messageType = SearchMessageTypeCombo.SelectedValue as string;
-        _suppressSearchFilterRefresh = true;
+        _searchOptionsReloadGate.Begin();
+        SetSearchInteractionEnabled(false);
+
+        long generation;
         try
         {
-            var generation = _search.LoadOptions();
-            _pendingSearchOptionsReload = new PendingSearchOptionsReload(
-                generation,
-                conversationId,
-                messageType,
-                _search.HasSearched);
+            generation = _search.LoadOptions();
         }
         catch
         {
             _pendingSearchOptionsReload = null;
-            _suppressSearchFilterRefresh = false;
+            _searchOptionsReloadGate.CancelPending();
+            SetSearchInteractionEnabled(true);
             throw;
         }
+
+        _searchOptionsReloadGate.Own(generation);
+        _pendingSearchOptionsReload = new PendingSearchOptionsReload(
+            generation,
+            conversationId,
+            messageType,
+            _search.HasSearched);
     }
 
     private void SearchOptions_Reloaded(long generation, bool success)
@@ -1401,6 +1407,7 @@ public sealed partial class MainWindow : Window
         }
 
         var shouldRunSearch = false;
+        var interactionReleased = false;
         try
         {
             if (!success)
@@ -1422,29 +1429,59 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            _pendingSearchOptionsReload = null;
-            _suppressSearchFilterRefresh = false;
+            interactionReleased = _searchOptionsReloadGate.TryRelease(generation);
+            if (interactionReleased)
+            {
+                _pendingSearchOptionsReload = null;
+                SetSearchInteractionEnabled(true);
+            }
         }
 
-        if (shouldRunSearch)
+        if (interactionReleased && shouldRunSearch)
         {
             RunSearch();
         }
     }
 
+    private void SetSearchInteractionEnabled(bool isEnabled)
+    {
+        SearchBox.IsEnabled = isEnabled;
+        SearchButton.IsEnabled = isEnabled;
+        SearchPlatformCombo.IsEnabled = isEnabled;
+        SearchKindCombo.IsEnabled = isEnabled;
+        SearchSenderBox.IsEnabled = isEnabled;
+        SearchConversationCombo.IsEnabled = isEnabled;
+        SearchMessageTypeCombo.IsEnabled = isEnabled;
+        SearchDateFromPicker.IsEnabled = isEnabled;
+        SearchDateToPicker.IsEnabled = isEnabled;
+    }
+
     private void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (_searchOptionsReloadGate.IsLocked)
+        {
+            return;
+        }
+
         if (e.Key == Windows.System.VirtualKey.Enter)
         {
             RunSearch();
         }
     }
 
-    private void OnSearchClick(object sender, RoutedEventArgs e) => RunSearch();
+    private void OnSearchClick(object sender, RoutedEventArgs e)
+    {
+        if (_searchOptionsReloadGate.IsLocked)
+        {
+            return;
+        }
+
+        RunSearch();
+    }
 
     private void SearchFilter_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressSearchFilterRefresh || _search is null || !_search.HasSearched)
+        if (_searchOptionsReloadGate.IsLocked || _search is null || !_search.HasSearched)
         {
             return;
         }
@@ -1454,7 +1491,7 @@ public sealed partial class MainWindow : Window
 
     private void SearchFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressSearchFilterRefresh)
+        if (_searchOptionsReloadGate.IsLocked)
         {
             return;
         }
@@ -1464,6 +1501,11 @@ public sealed partial class MainWindow : Window
 
     private void SearchDate_Changed(CalendarDatePicker sender, CalendarDatePickerDateChangedEventArgs args)
     {
+        if (_searchOptionsReloadGate.IsLocked)
+        {
+            return;
+        }
+
         if (_search is not null && _search.HasSearched)
         {
             RunSearch();
@@ -1485,6 +1527,11 @@ public sealed partial class MainWindow : Window
 
     private void RunSearch()
     {
+        if (_searchOptionsReloadGate.IsLocked)
+        {
+            return;
+        }
+
         _search.Query = SearchBox.Text;
         _search.PlatformFilter = ComboTag(SearchPlatformCombo);
         _search.KindFilter = ComboTag(SearchKindCombo);

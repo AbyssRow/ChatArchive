@@ -480,7 +480,7 @@
                     </Grid.ColumnDefinitions>
                     <TextBox x:Name="SearchBox" PlaceholderText="输入关键词（≥3 字走全文索引，1-2 字自动子串匹配）"
                              KeyDown="SearchBox_KeyDown" />
-                    <Button Grid.Column="1" Content="搜索" Style="{StaticResource AccentButtonStyle}"
+                    <Button Grid.Column="1" x:Name="SearchButton" Content="搜索" Style="{StaticResource AccentButtonStyle}"
                             Click="OnSearchClick" />
                 </Grid>
 

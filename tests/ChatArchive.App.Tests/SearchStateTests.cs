@@ -115,6 +115,94 @@ public sealed class SearchStateTests
         Assert.False(result.ShouldRunSearch);
     }
 
+    [Fact]
+    public void Search_options_reload_gate_begin_locks_before_generation_is_owned()
+    {
+        var gate = new SearchOptionsReloadGate();
+
+        gate.Begin();
+
+        Assert.True(gate.IsLocked);
+        Assert.False(gate.TryRelease(1));
+        Assert.True(gate.IsLocked);
+    }
+
+    [Fact]
+    public void Search_options_reload_gate_stale_completion_cannot_release_latest_owner()
+    {
+        var gate = new SearchOptionsReloadGate();
+        gate.Begin();
+        gate.Own(2);
+
+        Assert.False(gate.TryRelease(1));
+        Assert.True(gate.IsLocked);
+    }
+
+    [Fact]
+    public void Search_options_reload_gate_latest_success_releases_interaction()
+    {
+        var gate = new SearchOptionsReloadGate();
+        gate.Begin();
+        gate.Own(7);
+
+        Assert.True(gate.TryRelease(7));
+        Assert.False(gate.IsLocked);
+    }
+
+    [Fact]
+    public void Search_options_reload_gate_latest_failure_uses_the_same_release_path()
+    {
+        var gate = new SearchOptionsReloadGate();
+        gate.Begin();
+        gate.Own(8);
+
+        Assert.True(gate.TryRelease(8));
+        Assert.False(gate.IsLocked);
+    }
+
+    [Fact]
+    public void Search_options_reload_gate_cancel_pending_releases_synchronous_failure()
+    {
+        var gate = new SearchOptionsReloadGate();
+        gate.Begin();
+
+        gate.CancelPending();
+
+        Assert.False(gate.IsLocked);
+    }
+
+    [Fact]
+    public void Search_options_reload_gate_rapid_replacement_releases_latest_generation_only()
+    {
+        var gate = new SearchOptionsReloadGate();
+        gate.Begin();
+        gate.Own(10);
+
+        gate.Begin();
+        Assert.False(gate.TryRelease(10));
+        gate.Own(11);
+
+        Assert.False(gate.TryRelease(10));
+        Assert.True(gate.IsLocked);
+        Assert.True(gate.TryRelease(11));
+        Assert.False(gate.IsLocked);
+    }
+
+    [Fact]
+    public void Search_options_reload_gate_rejects_invalid_pending_transitions()
+    {
+        var gate = new SearchOptionsReloadGate();
+
+        Assert.Throws<InvalidOperationException>((Action)(() => gate.Own(1)));
+
+        gate.Begin();
+        Assert.Throws<InvalidOperationException>((Action)(() => gate.Begin()));
+        gate.Own(1);
+
+        Assert.Throws<InvalidOperationException>((Action)gate.CancelPending);
+        Assert.True(gate.IsLocked);
+    }
+
     [Theory]
     [InlineData("qq", "QQ")]
     [InlineData("wechat", "微信")]
