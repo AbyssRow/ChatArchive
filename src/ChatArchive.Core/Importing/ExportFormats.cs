@@ -107,23 +107,23 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
             return false;
         }
 
-        _ = QqChunkManifest.ResolveChunkFiles(filePath);
+        var safeManifest = QqChunkManifest.ValidateManifestFile(filePath);
 
         if (!ChunkedJsonReader.ContainsRootProperties(
-                filePath,
+                safeManifest,
                 new[] { "chatInfo" }))
         {
             return false;
         }
 
         JsonObject? metadata = null;
-        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }))
+        if (ChunkedJsonReader.ContainsRootProperties(safeManifest, new[] { "metadata" }))
         {
-            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "metadata");
+            metadata = ChunkedJsonReader.ReadObjectProperty(safeManifest, "metadata");
         }
-        else if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "exporter" }))
+        else if (ChunkedJsonReader.ContainsRootProperties(safeManifest, new[] { "exporter" }))
         {
-            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "exporter");
+            metadata = ChunkedJsonReader.ReadObjectProperty(safeManifest, "exporter");
         }
 
         if (metadata == null)
@@ -132,7 +132,13 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
         }
 
         var name = ImportText.Clean(metadata["name"]);
-        return name.Contains(ExporterName, StringComparison.OrdinalIgnoreCase);
+        if (!name.Contains(ExporterName, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        _ = QqChunkManifest.ResolveChunkFiles(filePath);
+        return true;
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)

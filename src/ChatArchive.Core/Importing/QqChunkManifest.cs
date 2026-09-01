@@ -4,11 +4,8 @@ namespace ChatArchive.Core.Importing;
 
 internal static class QqChunkManifest
 {
-    internal static IReadOnlyList<string> ResolveChunkFiles(
-        string manifestPath,
-        CancellationToken cancellationToken = default)
+    internal static string ValidateManifestFile(string manifestPath)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             var fullManifest = Path.GetFullPath(manifestPath);
@@ -23,6 +20,29 @@ internal static class QqChunkManifest
                     manifestPath,
                     "manifest 不存在、不是普通文件或包含重解析点");
             }
+
+            return fullManifest;
+        }
+        catch (ImportFormatException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException
+                                   or UnauthorizedAccessException or NotSupportedException)
+        {
+            throw InvalidManifest(manifestPath, $"清单读取失败（{ex.Message}）", innerException: ex);
+        }
+    }
+
+    internal static IReadOnlyList<string> ResolveChunkFiles(
+        string manifestPath,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            var fullManifest = ValidateManifestFile(manifestPath);
+            var exportRoot = Path.GetDirectoryName(fullManifest)!;
 
             using var document = ImportText.ParseDocument(fullManifest);
             cancellationToken.ThrowIfCancellationRequested();

@@ -281,6 +281,35 @@ public class ImportDiscoveryTests : IDisposable
         Assert.Null(siblingResult.Error);
     }
 
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{\"chunks\":[{\"relativePath\":\"../outside.jsonl\"}]}")]
+    public void ImportDiscovery_ForeignManifestWithInvalidQqChunks_ContinuesToItsOwnMatcher(
+        string chunkedJson)
+    {
+        var exportRoot = Directory.CreateDirectory(
+            Path.Combine(_tempDir, "foreign-manifest")).FullName;
+        var manifest = Path.Combine(exportRoot, "manifest.json");
+        File.WriteAllText(
+            manifest,
+            $$"""
+            {
+              "weflow":{"version":"1.0.3"},
+              "session":{"wxid":"wxid_foreign","type":"私聊","remark":"Foreign manifest"},
+              "messages":[],
+              "chunked":{{chunkedJson}}
+            }
+            """);
+
+        var discovered = ImportDiscovery.Discover([exportRoot]);
+
+        var result = Assert.Single(
+            discovered,
+            item => string.Equals(item.FilePath, manifest, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("wechat", result.Platform);
+        Assert.Null(result.Error);
+    }
+
     [Fact]
     public void ImportDiscovery_MalformedStrictQqManifest_DoesNotPruneValidSiblingJsonl()
     {
