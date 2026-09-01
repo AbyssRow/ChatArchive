@@ -117,8 +117,23 @@ public sealed class QqChunkManifestTests : IDisposable
         var manifest = WriteManifest(
             """{"chunksDir":"missing","chunks":[{"relativePath":"data/a.jsonl"}]}""");
 
-        Assert.Throws<ImportFormatException>(
+        var error = Assert.Throws<ImportFormatException>(
             () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("chunksDir 不存在", error.Message);
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_ExplicitChunksDir_IsFullyValidatedForEmptyChunks()
+    {
+        var manifest = WriteManifest("""{"chunksDir":"missing","chunks":[]}""");
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("chunksDir 不存在", error.Message);
     }
 
     [Fact]
@@ -145,11 +160,20 @@ public sealed class QqChunkManifestTests : IDisposable
     [InlineData("chunks/../other")]
     public void ResolveChunkFiles_RejectsUnsafeChunksDir(string declared)
     {
+        Directory.CreateDirectory(Path.Combine(_root, "chunks", "nested"));
+        Directory.CreateDirectory(Path.Combine(_root, "other"));
         var json = JsonSerializer.Serialize(declared);
         var manifest = WriteManifest($"{{\"chunksDir\":{json},\"chunks\":[]}}");
 
-        Assert.Throws<ImportFormatException>(
+        var error = Assert.Throws<ImportFormatException>(
             () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("chunksDir", error.Message);
+        if (declared is "chunks//nested" or "chunks/./nested" or "chunks/../other")
+        {
+            Assert.Contains("chunksDir 含空段或点路径段", error.Message);
+        }
     }
 
     [Theory]
@@ -166,10 +190,33 @@ public sealed class QqChunkManifestTests : IDisposable
     public void ResolveChunkFiles_RejectsInvalidFileNameFallback(string fileNameJson)
     {
         Directory.CreateDirectory(Path.Combine(_root, "chunks"));
+        if (fileNameJson is "\"sub/a.jsonl\"" or "\"sub\\\\a.jsonl\"")
+        {
+            _ = WriteAt(Path.Combine(_root, "chunks", "sub", "a.jsonl"), "{}\n");
+        }
+        else if (fileNameJson == "\"a.json\"")
+        {
+            _ = WriteAt(Path.Combine(_root, "chunks", "a.json"), "{}\n");
+        }
+        else if (fileNameJson == "\"a.jsonl.tmp\"")
+        {
+            _ = WriteAt(Path.Combine(_root, "chunks", "a.jsonl.tmp"), "{}\n");
+        }
         var manifest = WriteManifest($"{{\"chunks\":[{{\"fileName\":{fileNameJson}}}]}}");
 
-        Assert.Throws<ImportFormatException>(
+        var error = Assert.Throws<ImportFormatException>(
             () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("fileName", error.Message);
+        if (fileNameJson is "null" or "123" or "\"\"" or "\"   \"")
+        {
+            Assert.Contains("缺少 relativePath 或有效 fileName", error.Message);
+        }
+        else
+        {
+            Assert.Contains("fileName 必须是 .jsonl basename", error.Message);
+        }
     }
 
     [Theory]
@@ -184,10 +231,74 @@ public sealed class QqChunkManifestTests : IDisposable
     [InlineData("\"chunks/a.json\"")]
     public void ResolveChunkFiles_RejectsInvalidRelativePath(string relativePathJson)
     {
+        if (relativePathJson == "\"chunks/a.json\"")
+        {
+            _ = WriteAt(Path.Combine(_root, "chunks", "a.json"), "{}\n");
+        }
         var manifest = WriteManifest($"{{\"chunks\":[{{\"relativePath\":{relativePathJson}}}]}}");
 
-        Assert.Throws<ImportFormatException>(
+        var error = Assert.Throws<ImportFormatException>(
             () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        if (relativePathJson is "null" or "123" or "\"\"")
+        {
+            Assert.Contains("relativePath 必须是非空字符串", error.Message);
+        }
+        else if (relativePathJson == "\"../outside/a.jsonl\"")
+        {
+            Assert.Contains("文件不存在、越界、不是普通文件或包含重解析点", error.Message);
+        }
+        else
+        {
+            Assert.Contains("路径必须是相对 .jsonl 文件", error.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData("sub/a.jsonl")]
+    [InlineData("sub\\a.jsonl")]
+    public void ResolveChunkFiles_RejectsNestedFileNameEvenWhenTargetExists(string declared)
+    {
+        _ = WriteAt(Path.Combine(_root, "chunks", "sub", "a.jsonl"), "{}\n");
+        var json = JsonSerializer.Serialize(declared);
+        var manifest = WriteManifest($"{{\"chunks\":[{{\"fileName\":{json}}}]}}");
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("fileName 必须是 .jsonl basename", error.Message);
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_RejectsEscapingRelativePathEvenWhenTargetExists()
+    {
+        var exportRoot = Directory.CreateDirectory(Path.Combine(_root, "export")).FullName;
+        _ = WriteAt(Path.Combine(_root, "outside", "a.jsonl"), "{}\n");
+        var manifest = WriteAt(
+            Path.Combine(exportRoot, "manifest.json"),
+            """{"chunked":{"chunks":[{"relativePath":"../outside/a.jsonl"}]}}""");
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("文件不存在、越界、不是普通文件或包含重解析点", error.Message);
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_RejectsWrongExtensionRelativePathEvenWhenTargetExists()
+    {
+        _ = WriteAt(Path.Combine(_root, "chunks", "a.json"), "{}\n");
+        var manifest = WriteManifest(
+            """{"chunks":[{"relativePath":"chunks/a.json"}]}""");
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("路径必须是相对 .jsonl 文件", error.Message);
     }
 
     [Fact]
