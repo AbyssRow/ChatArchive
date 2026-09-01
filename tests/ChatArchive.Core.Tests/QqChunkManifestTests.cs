@@ -1,4 +1,5 @@
 using ChatArchive.Core.Importing;
+using System.Text.Json;
 using Xunit;
 
 namespace ChatArchive.Core.Tests;
@@ -78,6 +79,238 @@ public sealed class QqChunkManifestTests : IDisposable
         var manifest = WriteManifest("""{"chunks":[]}""");
 
         Assert.Empty(QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_FileNameFallback_UsesDefaultChunksDirectory()
+    {
+        var chunk = WriteAt(Path.Combine(_root, "chunks", "a.jsonl"), "{}\n");
+        var manifest = WriteManifest("""{"chunks":[{"fileName":"a.jsonl"}]}""");
+
+        Assert.Equal(new[] { chunk }, QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_FileNameFallback_UsesCustomChunksDirectory()
+    {
+        var chunk = WriteAt(Path.Combine(_root, "custom", "a.jsonl"), "{}\n");
+        var manifest = WriteManifest(
+            """{"chunksDir":"custom","chunks":[{"fileName":"a.jsonl"}]}""");
+
+        Assert.Equal(new[] { chunk }, QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_RelativePath_DoesNotRequireImplicitChunksDirectory()
+    {
+        var chunk = WriteAt(Path.Combine(_root, "data", "a.jsonl"), "{}\n");
+        var manifest = WriteManifest(
+            """{"chunks":[{"relativePath":"data/a.jsonl"}]}""");
+
+        Assert.Equal(new[] { chunk }, QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_ExplicitChunksDir_IsValidatedEvenForRelativePathEntries()
+    {
+        _ = WriteAt(Path.Combine(_root, "data", "a.jsonl"), "{}\n");
+        var manifest = WriteManifest(
+            """{"chunksDir":"missing","chunks":[{"relativePath":"data/a.jsonl"}]}""");
+
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_RelativePath_TakesPrecedenceOverFileName()
+    {
+        var chunk = WriteAt(Path.Combine(_root, "data", "a.jsonl"), "{}\n");
+        var manifest = WriteManifest(
+            """{"chunks":[{"relativePath":"data/a.jsonl","fileName":"invalid/path.jsonl"}]}""");
+
+        Assert.Equal(new[] { chunk }, QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("https://example.test/chunks")]
+    [InlineData("C:\\outside")]
+    [InlineData("\\\\server\\share")]
+    [InlineData("/outside")]
+    [InlineData("chunks//nested")]
+    [InlineData(".")]
+    [InlineData("..")]
+    [InlineData("chunks/./nested")]
+    [InlineData("chunks/../other")]
+    public void ResolveChunkFiles_RejectsUnsafeChunksDir(string declared)
+    {
+        var json = JsonSerializer.Serialize(declared);
+        var manifest = WriteManifest($"{{\"chunksDir\":{json},\"chunks\":[]}}");
+
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("123")]
+    [InlineData("\"\"")]
+    [InlineData("\"   \"")]
+    [InlineData("\".\"")]
+    [InlineData("\"..\"")]
+    [InlineData("\"sub/a.jsonl\"")]
+    [InlineData("\"sub\\\\a.jsonl\"")]
+    [InlineData("\"a.json\"")]
+    [InlineData("\"a.jsonl.tmp\"")]
+    public void ResolveChunkFiles_RejectsInvalidFileNameFallback(string fileNameJson)
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "chunks"));
+        var manifest = WriteManifest($"{{\"chunks\":[{{\"fileName\":{fileNameJson}}}]}}");
+
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("123")]
+    [InlineData("\"\"")]
+    [InlineData("\"https://example.test/a.jsonl\"")]
+    [InlineData("\"C:\\\\outside\\\\a.jsonl\"")]
+    [InlineData("\"\\\\\\\\server\\\\share\\\\a.jsonl\"")]
+    [InlineData("\"/outside/a.jsonl\"")]
+    [InlineData("\"../outside/a.jsonl\"")]
+    [InlineData("\"chunks/a.json\"")]
+    public void ResolveChunkFiles_RejectsInvalidRelativePath(string relativePathJson)
+    {
+        var manifest = WriteManifest($"{{\"chunks\":[{{\"relativePath\":{relativePathJson}}}]}}");
+
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_RejectsMissingDeclaredFile()
+    {
+        var manifest = WriteManifest(
+            """{"chunks":[{"relativePath":"chunks/missing.jsonl"}]}""");
+
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_RejectsDeclaredDirectory()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "chunks", "a.jsonl"));
+        var manifest = WriteManifest(
+            """{"chunks":[{"relativePath":"chunks/a.jsonl"}]}""");
+
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_RejectsDuplicateCanonicalPaths()
+    {
+        _ = WriteAt(Path.Combine(_root, "chunks", "a.jsonl"), "{}\n");
+        var manifest = WriteManifest("""
+            {"chunks":[
+              {"relativePath":"chunks/a.jsonl"},
+              {"relativePath":"chunks\\a.jsonl"}
+            ]}
+            """);
+
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_RejectsManifestFileReparsePoint()
+    {
+        var target = WriteAt(Path.Combine(_root, "targets", "manifest.json"),
+            "{\"chunked\":{\"chunks\":[]}}");
+        var exportRoot = Directory.CreateDirectory(Path.Combine(_root, "manifest-link")).FullName;
+        var manifest = Path.Combine(exportRoot, "manifest.json");
+        CreateSymbolicLinkOrSkip(() => File.CreateSymbolicLink(manifest, target));
+        Assert.True(File.GetAttributes(manifest).HasFlag(FileAttributes.ReparsePoint));
+
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_RejectsReparsePointAtEveryChunkPathComponent()
+    {
+        var directoryTarget = Directory.CreateDirectory(
+            Path.Combine(_root, "targets", "component-directory")).FullName;
+        _ = WriteAt(Path.Combine(directoryTarget, "a.jsonl"), "{}\n");
+        var fileTarget = WriteAt(
+            Path.Combine(_root, "targets", "component-file.jsonl"), "{}\n");
+
+        var topExport = Directory.CreateDirectory(Path.Combine(_root, "top-component")).FullName;
+        var topLink = Path.Combine(topExport, "chunks");
+        CreateSymbolicLinkOrSkip(() => Directory.CreateSymbolicLink(topLink, directoryTarget));
+        Assert.True(File.GetAttributes(topLink).HasFlag(FileAttributes.ReparsePoint));
+        var topManifest = WriteAt(
+            Path.Combine(topExport, "manifest.json"),
+            "{\"chunked\":{\"chunks\":[{\"relativePath\":\"chunks/a.jsonl\"}]}}");
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(topManifest));
+
+        var nestedExport = Directory.CreateDirectory(Path.Combine(_root, "nested-component")).FullName;
+        Directory.CreateDirectory(Path.Combine(nestedExport, "chunks"));
+        var nestedLink = Path.Combine(nestedExport, "chunks", "nested");
+        CreateSymbolicLinkOrSkip(() => Directory.CreateSymbolicLink(nestedLink, directoryTarget));
+        Assert.True(File.GetAttributes(nestedLink).HasFlag(FileAttributes.ReparsePoint));
+        var nestedManifest = WriteAt(
+            Path.Combine(nestedExport, "manifest.json"),
+            "{\"chunked\":{\"chunks\":[{\"relativePath\":\"chunks/nested/a.jsonl\"}]}}");
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(nestedManifest));
+
+        var fileExport = Directory.CreateDirectory(Path.Combine(_root, "file-component")).FullName;
+        Directory.CreateDirectory(Path.Combine(fileExport, "chunks"));
+        var fileLink = Path.Combine(fileExport, "chunks", "a.jsonl");
+        CreateSymbolicLinkOrSkip(() => File.CreateSymbolicLink(fileLink, fileTarget));
+        Assert.True(File.GetAttributes(fileLink).HasFlag(FileAttributes.ReparsePoint));
+        var fileManifest = WriteAt(
+            Path.Combine(fileExport, "manifest.json"),
+            "{\"chunked\":{\"chunks\":[{\"relativePath\":\"chunks/a.jsonl\"}]}}");
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(fileManifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_LegacyModeRejectsReparseChunksDirectoryAndFiles()
+    {
+        var directoryTarget = Directory.CreateDirectory(
+            Path.Combine(_root, "targets", "legacy-directory")).FullName;
+        _ = WriteAt(Path.Combine(directoryTarget, "a.jsonl"), "{}\n");
+        var fileTarget = WriteAt(
+            Path.Combine(_root, "targets", "legacy-file.jsonl"), "{}\n");
+
+        var directoryExport = Directory.CreateDirectory(
+            Path.Combine(_root, "legacy-directory-export")).FullName;
+        var chunksLink = Path.Combine(directoryExport, "chunks");
+        CreateSymbolicLinkOrSkip(() => Directory.CreateSymbolicLink(chunksLink, directoryTarget));
+        Assert.True(File.GetAttributes(chunksLink).HasFlag(FileAttributes.ReparsePoint));
+        var directoryManifest = WriteAt(
+            Path.Combine(directoryExport, "manifest.json"), "{\"chatInfo\":{}}");
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(directoryManifest));
+
+        var fileExport = Directory.CreateDirectory(
+            Path.Combine(_root, "legacy-file-export")).FullName;
+        Directory.CreateDirectory(Path.Combine(fileExport, "chunks"));
+        var chunkLink = Path.Combine(fileExport, "chunks", "a.jsonl");
+        CreateSymbolicLinkOrSkip(() => File.CreateSymbolicLink(chunkLink, fileTarget));
+        Assert.True(File.GetAttributes(chunkLink).HasFlag(FileAttributes.ReparsePoint));
+        var fileManifest = WriteAt(
+            Path.Combine(fileExport, "manifest.json"), "{\"chatInfo\":{}}");
+        Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(fileManifest));
     }
 
     [Fact]
@@ -164,6 +397,20 @@ public sealed class QqChunkManifestTests : IDisposable
 
         Assert.Equal(manifest, error.FilePath);
         Assert.Contains("重解析点", error.Message);
+    }
+
+    private static void CreateSymbolicLinkOrSkip(Action create)
+    {
+        try
+        {
+            create();
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException
+                or NotSupportedException)
+        {
+            Assert.Skip("当前环境不允许创建符号链接");
+        }
     }
 
     public void Dispose()

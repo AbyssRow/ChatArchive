@@ -169,37 +169,120 @@ internal static class QqChunkManifest
         string? explicitChunksDir,
         ref string? validatedChunksDir)
     {
-        if (entry.ValueKind != JsonValueKind.Object
-            || !entry.TryGetProperty("relativePath", out var relativePathElement)
-            || relativePathElement.ValueKind != JsonValueKind.String)
+        if (entry.ValueKind != JsonValueKind.Object)
         {
-            throw InvalidManifest(manifestPath, $"chunks[{index}].relativePath 必须是字符串");
+            throw InvalidManifest(manifestPath, $"chunks[{index}] 必须是对象");
         }
 
-        var declaredPath = relativePathElement.GetString() ?? string.Empty;
-        var safe = ImportText.ResolveExistingRegularFileUnderRoot(exportRoot, declaredPath);
-        if (safe is null)
+        string declaredPath;
+        if (entry.TryGetProperty("relativePath", out var relativePath))
+        {
+            if (relativePath.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(relativePath.GetString()))
+            {
+                throw InvalidManifest(
+                    manifestPath,
+                    $"chunks[{index}].relativePath 必须是非空字符串");
+            }
+            declaredPath = relativePath.GetString()!;
+        }
+        else
+        {
+            if (!entry.TryGetProperty("fileName", out var fileNameElement)
+                || fileNameElement.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(fileNameElement.GetString()))
+            {
+                throw InvalidManifest(
+                    manifestPath,
+                    $"chunks[{index}] 缺少 relativePath 或有效 fileName");
+            }
+
+            var fileName = fileNameElement.GetString()!;
+            if (fileName is "." or ".."
+                || fileName.Contains('/')
+                || fileName.Contains('\\')
+                || !string.Equals(
+                    Path.GetExtension(fileName),
+                    ".jsonl",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw InvalidManifest(
+                    manifestPath,
+                    $"chunks[{index}].fileName 必须是 .jsonl basename",
+                    fileName);
+            }
+
+            validatedChunksDir ??= ValidateChunksDirectory(
+                manifestPath,
+                exportRoot,
+                explicitChunksDir ?? "chunks");
+            declaredPath = $"{validatedChunksDir}/{fileName}";
+        }
+
+        if (IsRootedOrUriLike(declaredPath)
+            || !string.Equals(
+                Path.GetExtension(declaredPath),
+                ".jsonl",
+                StringComparison.OrdinalIgnoreCase))
         {
             throw InvalidManifest(
                 manifestPath,
-                $"chunks[{index}].relativePath 不是导出目录内的普通文件",
+                $"chunks[{index}] 路径必须是相对 .jsonl 文件",
                 declaredPath);
         }
 
-        return safe;
+        var resolved = ImportText.ResolveExistingRegularFileUnderRoot(exportRoot, declaredPath);
+        if (resolved is null)
+        {
+            throw InvalidManifest(
+                manifestPath,
+                $"chunks[{index}] 文件不存在、越界、不是普通文件或包含重解析点",
+                declaredPath);
+        }
+
+        return resolved;
     }
 
     private static string ValidateChunksDirectory(
         string manifestPath,
         string exportRoot,
-        string declaredPath)
+        string declaredChunksDir)
     {
-        var safe = ImportText.ResolveExistingDirectoryUnderRoot(exportRoot, declaredPath);
-        return safe ?? throw InvalidManifest(
-            manifestPath,
-            "chunked.chunksDir 不是导出目录内的普通目录",
-            declaredPath);
+        if (string.IsNullOrWhiteSpace(declaredChunksDir)
+            || IsRootedOrUriLike(declaredChunksDir))
+        {
+            throw InvalidManifest(
+                manifestPath,
+                "chunksDir 必须是普通相对目录",
+                declaredChunksDir);
+        }
+
+        var normalized = declaredChunksDir.Replace('\\', '/');
+        var segments = normalized.Split('/');
+        if (segments.Any(segment => string.IsNullOrWhiteSpace(segment)
+                                    || segment is "." or ".."))
+        {
+            throw InvalidManifest(
+                manifestPath,
+                "chunksDir 含空段或点路径段",
+                declaredChunksDir);
+        }
+
+        var resolved = ImportText.ResolveExistingDirectoryUnderRoot(exportRoot, normalized);
+        if (resolved is null)
+        {
+            throw InvalidManifest(
+                manifestPath,
+                "chunksDir 不存在、越界、不是普通目录或包含重解析点",
+                declaredChunksDir);
+        }
+        return Path.GetRelativePath(exportRoot, resolved).Replace('\\', '/');
     }
+
+    private static bool IsRootedOrUriLike(string value) =>
+        value[0] is '/' or '\\'
+        || Path.IsPathRooted(value)
+        || Uri.TryCreate(value, UriKind.Absolute, out _);
 
     private static bool PathEquals(string? left, string right) =>
         left is not null && string.Equals(
