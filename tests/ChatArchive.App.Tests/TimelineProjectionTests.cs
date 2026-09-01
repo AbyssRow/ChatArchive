@@ -16,6 +16,41 @@ public sealed class TimelineProjectionTests : IDisposable
         Directory.CreateDirectory(_directory);
     }
 
+    [Theory]
+    [InlineData("photo.png", "预览图片：photo.png")]
+    [InlineData("  photo.png  ", "预览图片：photo.png")]
+    [InlineData(null, "预览图片")]
+    [InlineData("", "预览图片")]
+    [InlineData("   ", "预览图片")]
+    public void Attachment_preview_automation_name_uses_trimmed_filename_or_fallback(
+        string? filename,
+        string expected)
+    {
+        var entry = new AttachmentEntry("image", filename, null, true, true);
+
+        Assert.Equal(expected, entry.PreviewAutomationName);
+    }
+
+    [Theory]
+    [InlineData("张总", "工作号", "查看发送者：张总 · 工作号")]
+    [InlineData("李四", null, "查看发送者：李四")]
+    [InlineData("", null, "查看发送者")]
+    [InlineData("   ", null, "查看发送者")]
+    public void Sender_automation_name_uses_display_sender_or_fallback(
+        string senderName,
+        string? accountLabel,
+        string expected)
+    {
+        var message = new MessageItem(
+            1, 1, 100, senderName, "incoming", "text", null,
+            "你好", false, false, LocalTimestamp(2026, 8, 20, 10),
+            Array.Empty<AttachmentInfo>(),
+            AccountLabel: accountLabel);
+        var entry = new MessageEntry(message, new MediaLocator(_directory));
+
+        Assert.Equal(expected, entry.SenderAutomationName);
+    }
+
     [Fact]
     public void Available_attachment_hides_technical_content_and_keeps_real_caption()
     {

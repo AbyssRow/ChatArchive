@@ -63,6 +63,9 @@ public sealed class MessageEntry : TimelineEntry
     public string? AccountBadge => string.IsNullOrWhiteSpace(Message.AccountLabel) ? null : Message.AccountLabel;
     public string Initials => string.IsNullOrWhiteSpace(Message.SenderName) ? "?" : System.Globalization.StringInfo.GetNextTextElement(Message.SenderName.Trim());
     public string DisplaySenderName => string.IsNullOrWhiteSpace(AccountBadge) ? Message.SenderName : $"{Message.SenderName} · {AccountBadge}";
+    public string SenderAutomationName => string.IsNullOrWhiteSpace(DisplaySenderName)
+        ? "查看发送者"
+        : $"查看发送者：{DisplaySenderName.Trim()}";
 }
 
 public partial class TimelineViewModel : ObservableObject

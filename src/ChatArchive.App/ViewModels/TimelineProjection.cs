@@ -19,6 +19,10 @@ public sealed record AttachmentEntry(
         _ => "打开附件",
     };
 
+    public string PreviewAutomationName => string.IsNullOrWhiteSpace(Filename)
+        ? "预览图片"
+        : $"预览图片：{Filename.Trim()}";
+
     public string MissingText => string.IsNullOrWhiteSpace(Filename)
         ? "媒体缺失"
         : $"{Filename}（文件缺失）";
