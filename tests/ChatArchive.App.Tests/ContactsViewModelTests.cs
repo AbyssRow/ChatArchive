@@ -260,6 +260,26 @@ public sealed class ContactsViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task ContactDetailViewModel_BindSenderAsync_does_not_transfer_without_explicit_force()
+    {
+        var senderId = InsertSender("10086", "已有归属账号");
+        var oldContactId = _contactRepository.CreateContact(
+            "旧联系人",
+            initialBindings: [(senderId, "原账号", true)]);
+        var newContactId = _contactRepository.CreateContact("新联系人");
+        var detailVm = new ContactDetailViewModel(_contactRepository, _avatarStorage);
+        await detailVm.LoadAsync(newContactId);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => detailVm.BindSenderAsync(senderId));
+
+        Assert.Contains(
+            _contactRepository.GetContactDetail(oldContactId)!.Senders,
+            sender => sender.SenderId == senderId);
+        Assert.Empty(_contactRepository.GetContactDetail(newContactId)!.Senders);
+    }
+
+    [Fact]
     public async Task ContactDetailViewModel_UpdateAccountLabelAsync_UpdatesLabel()
     {
         var s1 = InsertSender("10001", "账号1");

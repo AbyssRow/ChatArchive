@@ -171,7 +171,7 @@ public partial class ContactDetailViewModel : ObservableObject
         long senderId,
         string? accountLabel = null,
         bool isPrimary = false,
-        bool forceRebind = true)
+        bool forceRebind = false)
     {
         await Task.Run(() => _contactRepository.BindSender(
             ContactId,
