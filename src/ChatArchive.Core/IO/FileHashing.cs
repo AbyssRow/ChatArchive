@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
+using ChatArchive.Core.Importing;
 
 namespace ChatArchive.Core.IO;
 
@@ -23,28 +24,18 @@ public static class FileHashing
     {
         cancellationToken.ThrowIfCancellationRequested();
         var manifestDir = Path.GetDirectoryName(Path.GetFullPath(manifestPath))!;
-        var chunkFiles = new List<string>();
-        var chunksSubdir = Path.Combine(manifestDir, "chunks");
-        if (Directory.Exists(chunksSubdir))
-        {
-            chunkFiles.AddRange(Directory.GetFiles(chunksSubdir, "*.jsonl"));
-        }
-        chunkFiles.AddRange(Directory.GetFiles(manifestDir, "*.jsonl"));
-
-        var sortedChunks = chunkFiles
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(p => Path.GetRelativePath(manifestDir, p).Replace('\\', '/'), StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var chunkFiles = QqChunkManifest.ResolveChunkFiles(manifestPath, cancellationToken);
 
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        using (var manifestStream = new FileStream(
-                   manifestPath,
-                   FileMode.Open,
-                   FileAccess.Read,
-                   FileShare.Read,
-                   bufferSize: 128 * 1024,
-                   FileOptions.SequentialScan))
+        try
         {
+            using var manifestStream = new FileStream(
+                manifestPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 128 * 1024,
+                FileOptions.SequentialScan);
             var buffer = ArrayPool<byte>.Shared.Rent(128 * 1024);
             try
             {
@@ -64,14 +55,40 @@ public static class FileHashing
                 ArrayPool<byte>.Shared.Return(buffer);
             }
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new ImportFormatException(
+                manifestPath,
+                $"读取清单失败（{ex.Message}）",
+                ex);
+        }
 
-        foreach (var chunkPath in sortedChunks)
+        foreach (var chunkPath in chunkFiles)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var relPath = Path.GetRelativePath(manifestDir, chunkPath).Replace('\\', '/');
-            var (chunkDigest, chunkSize) = HashFile(chunkPath, cancellationToken);
-            var entryHeader = Encoding.UTF8.GetBytes($"\nchunk:{relPath}:{chunkSize}:{chunkDigest}\n");
-            hash.AppendData(entryHeader);
+            try
+            {
+                var (chunkDigest, chunkSize) = HashFile(chunkPath, cancellationToken);
+                var header = Encoding.UTF8.GetBytes(
+                    $"\nchunk:{relPath}:{chunkSize}:{chunkDigest}\n");
+                hash.AppendData(header);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new ImportFormatException(
+                    manifestPath,
+                    $"读取声明分块失败（{relPath}：{ex.Message}）",
+                    ex);
+            }
         }
 
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();

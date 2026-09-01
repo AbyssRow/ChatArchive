@@ -1,4 +1,5 @@
 using ChatArchive.Core.IO;
+using ChatArchive.Core.Importing;
 using Xunit;
 
 namespace ChatArchive.Core.Tests;
@@ -72,9 +73,74 @@ public sealed class FileHashingTests : IDisposable
     }
 
     [Fact]
-    public void ComputeImportDigest_ForManifest_IncorporatesChunks()
+    public void ComputeImportDigest_AuthoritativeManifest_IgnoresUndeclaredChunks()
     {
-        var exportDir = Path.Combine(_directory, "qq-chunked");
+        var exportDir = Path.Combine(_directory, "qq-authoritative-sidecars");
+        var chunksDir = Path.Combine(exportDir, "chunks");
+        Directory.CreateDirectory(chunksDir);
+
+        var manifestPath = Path.Combine(exportDir, "manifest.json");
+        File.WriteAllText(
+            manifestPath,
+            """{"chunked":{"chunks":[{"relativePath":"chunks/declared.jsonl"}]}}""");
+        File.WriteAllText(Path.Combine(chunksDir, "declared.jsonl"), "{\"msg\":1}\n");
+        var rootSidecar = Path.Combine(exportDir, "old-root.jsonl");
+        var chunksSidecar = Path.Combine(chunksDir, "old-chunks.jsonl");
+        File.WriteAllText(rootSidecar, "{\"old\":1}\n");
+        File.WriteAllText(chunksSidecar, "{\"old\":1}\n");
+
+        var digestBefore = FileHashing.ComputeImportDigest(manifestPath);
+
+        File.WriteAllText(rootSidecar, "{\"old\":2}\n");
+        File.WriteAllText(chunksSidecar, "{\"old\":2}\n");
+        var digestAfter = FileHashing.ComputeImportDigest(manifestPath);
+
+        Assert.Equal(digestBefore, digestAfter);
+    }
+
+    [Fact]
+    public void ComputeImportDigest_AuthoritativeManifest_ChangesWhenDeclaredChunkChanges()
+    {
+        var exportDir = Path.Combine(_directory, "qq-authoritative-declared");
+        var chunksDir = Path.Combine(exportDir, "chunks");
+        Directory.CreateDirectory(chunksDir);
+
+        var manifestPath = Path.Combine(exportDir, "manifest.json");
+        File.WriteAllText(
+            manifestPath,
+            """{"chunked":{"chunks":[{"relativePath":"chunks/declared.jsonl"}]}}""");
+        var declaredChunk = Path.Combine(chunksDir, "declared.jsonl");
+        File.WriteAllText(declaredChunk, "{\"msg\":1}\n");
+
+        var digestBefore = FileHashing.ComputeImportDigest(manifestPath);
+
+        File.WriteAllText(declaredChunk, "{\"msg\":2}\n");
+        var digestAfter = FileHashing.ComputeImportDigest(manifestPath);
+
+        Assert.NotEqual(digestBefore, digestAfter);
+    }
+
+    [Fact]
+    public void ComputeImportDigest_AuthoritativeEmptyChunks_HashesOnlyManifestBytes()
+    {
+        var exportDir = Path.Combine(_directory, "qq-authoritative-empty");
+        var chunksDir = Path.Combine(exportDir, "chunks");
+        Directory.CreateDirectory(chunksDir);
+
+        var manifestPath = Path.Combine(exportDir, "manifest.json");
+        File.WriteAllText(manifestPath, """{"chunked":{"chunks":[]}}""");
+        File.WriteAllText(Path.Combine(exportDir, "old-root.jsonl"), "{\"old\":1}\n");
+        File.WriteAllText(Path.Combine(chunksDir, "old-chunks.jsonl"), "{\"old\":1}\n");
+
+        Assert.Equal(
+            FileHashing.Sha256File(manifestPath),
+            FileHashing.ComputeImportDigest(manifestPath));
+    }
+
+    [Fact]
+    public void ComputeImportDigest_LegacyManifest_StillIncorporatesConventionChunks()
+    {
+        var exportDir = Path.Combine(_directory, "qq-legacy");
         var chunksDir = Path.Combine(exportDir, "chunks");
         Directory.CreateDirectory(chunksDir);
 
@@ -98,12 +164,45 @@ public sealed class FileHashingTests : IDisposable
         Assert.NotEqual(digest2, digest3);
     }
 
+    [Fact]
+    public void QqChunkedOpenAndDigest_RejectManifestFileReparsePoint()
+    {
+        Directory.CreateDirectory(Path.Combine(_directory, "qq-manifest-target"));
+        var target = Write(
+            Path.Combine("qq-manifest-target", "manifest.json"),
+            """{"chunked":{"chunks":[]}}""");
+        var exportDir = Path.Combine(_directory, "qq-manifest-link");
+        Directory.CreateDirectory(exportDir);
+        var manifestPath = Path.Combine(exportDir, "manifest.json");
+        CreateSymbolicLinkOrSkip(() => File.CreateSymbolicLink(manifestPath, target));
+        Assert.True(File.GetAttributes(manifestPath).HasFlag(FileAttributes.ReparsePoint));
+
+        Assert.Throws<ImportFormatException>(
+            () => new QqChunkedExportFormat().Open(manifestPath));
+        Assert.Throws<ImportFormatException>(
+            () => FileHashing.ComputeImportDigest(manifestPath));
+    }
+
     private string Write(string filename, string content)
     {
         Directory.CreateDirectory(_directory);
         var path = Path.Combine(_directory, filename);
         File.WriteAllText(path, content);
         return path;
+    }
+
+    private static void CreateSymbolicLinkOrSkip(Action create)
+    {
+        try
+        {
+            create();
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException
+                or NotSupportedException)
+        {
+            Assert.Skip("当前环境不允许创建符号链接");
+        }
     }
 
     public void Dispose()

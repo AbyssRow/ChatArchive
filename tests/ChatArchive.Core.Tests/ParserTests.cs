@@ -445,6 +445,44 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
+    public void QqChunkedExportFormat_AuthoritativeManifest_ImportsOnlyDeclaredChunksInManifestOrder()
+    {
+        var chunkedDir = Path.Combine(_dir, "qq-authoritative-chunked");
+        var chunksDir = Path.Combine(chunkedDir, "chunks");
+        Directory.CreateDirectory(chunksDir);
+
+        var manifestPath = Path.Combine(chunkedDir, "manifest.json");
+        File.WriteAllText(manifestPath, """
+            {
+              "metadata": {"name": "QQChatExporter", "version": "0.2.0"},
+              "chatInfo": {"selfUid": "u_self", "peerUid": "u_group", "name": "QQ交流群", "type": "group"},
+              "chunked": {
+                "chunks": [
+                  {"relativePath": "chunks/b.jsonl"},
+                  {"relativePath": "chunks/a.jsonl"}
+                ]
+              }
+            }
+            """);
+
+        File.WriteAllText(
+            Path.Combine(chunksDir, "b.jsonl"),
+            """{"id":"b","timestamp":1700000000,"sender":{"uid":"u_self","name":"我自己"},"content":{"type":"text","text":"b"}}""" + "\n");
+        File.WriteAllText(
+            Path.Combine(chunksDir, "a.jsonl"),
+            """{"id":"a","timestamp":1700000001,"sender":{"uid":"u_peer","name":"群友"},"content":{"type":"text","text":"a"}}""" + "\n");
+        File.WriteAllText(
+            Path.Combine(chunksDir, "old.jsonl"),
+            """{"id":"old","timestamp":1700000002,"sender":{"uid":"u_peer","name":"群友"},"content":{"type":"text","text":"old"}}""" + "\n");
+
+        using var exportFile = new QqChunkedExportFormat().Open(manifestPath);
+
+        Assert.Equal(
+            new[] { "b", "a" },
+            exportFile.EnumerateMessages().Select(message => message.NativeId));
+    }
+
+    [Fact]
     public void Qq_rejects_wrong_exporter_metadata_name()
     {
         var path = Path.Combine(_dir, "qq-wrong-exporter.json");
