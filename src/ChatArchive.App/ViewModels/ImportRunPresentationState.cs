@@ -46,3 +46,53 @@ internal sealed class ImportRunPresentationState
         }
     }
 }
+
+internal sealed class ImportRunCancellationState
+{
+    private readonly object _gate = new();
+    private CancellationTokenSource? _source;
+    private bool _cancellationRequested;
+
+    public CancellationToken Begin()
+    {
+        lock (_gate)
+        {
+            if (_source is not null)
+            {
+                throw new InvalidOperationException("An import run is already active.");
+            }
+
+            _source = new CancellationTokenSource();
+            _cancellationRequested = false;
+            return _source.Token;
+        }
+    }
+
+    public bool RequestCancellation()
+    {
+        lock (_gate)
+        {
+            if (_source is null || _cancellationRequested)
+            {
+                return false;
+            }
+
+            _cancellationRequested = true;
+            _source.Cancel();
+            return true;
+        }
+    }
+
+    public void End()
+    {
+        CancellationTokenSource? source;
+        lock (_gate)
+        {
+            source = _source;
+            _source = null;
+            _cancellationRequested = false;
+        }
+
+        source?.Dispose();
+    }
+}

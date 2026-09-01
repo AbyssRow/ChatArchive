@@ -26,11 +26,15 @@ public partial class ImportViewModel : ObservableObject
     private readonly ArchiveDatabase _database;
     private readonly DispatcherQueue _dispatcher;
     private readonly ImportRunPresentationState _presentationState = new();
+    private readonly ImportRunCancellationState _cancellationState = new();
 
     public ObservableCollection<string> Paths { get; } = new();
 
     [ObservableProperty]
     public partial bool IsRunning { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsCancellationRequested { get; set; }
 
     [ObservableProperty]
     public partial string StatusText { get; set; } = InitialStatusText;
@@ -64,6 +68,18 @@ public partial class ImportViewModel : ObservableObject
     private void ClearPaths() => Paths.Clear();
 
     [RelayCommand]
+    private void Cancel()
+    {
+        if (!IsRunning || !_cancellationState.RequestCancellation())
+        {
+            return;
+        }
+
+        IsCancellationRequested = true;
+        StatusText = "正在安全取消导入…";
+    }
+
+    [RelayCommand]
     private void Start()
     {
         if (IsRunning || Paths.Count == 0)
@@ -73,7 +89,9 @@ public partial class ImportViewModel : ObservableObject
 
         var roots = Paths.ToList();
         var generation = _presentationState.Begin();
+        var cancellationToken = _cancellationState.Begin();
         IsRunning = true;
+        IsCancellationRequested = false;
         ProgressValue = 0;
         ProgressMaximum = 1;
         StatusText = "正在发现导出文件…";
@@ -87,7 +105,8 @@ public partial class ImportViewModel : ObservableObject
                 var service = new ImportService(_database, mediaDir);
                 var progress = new Progress<ImportProgress>(p => _dispatcher.TryEnqueue(() =>
                 {
-                    if (!_presentationState.CanApplyProgress(generation))
+                    if (!_presentationState.CanApplyProgress(generation)
+                        || IsCancellationRequested)
                     {
                         return;
                     }
@@ -104,11 +123,18 @@ public partial class ImportViewModel : ObservableObject
                     };
                 }));
 
-                var result = await service.RunAsync(roots, progress).ConfigureAwait(false);
+                var result = await service.RunAsync(
+                    roots,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
                 terminalText =
                     $"完成：文件 导入{result.FilesImported}/跳过{result.FilesSkipped}/失败{result.FilesFailed}；" +
                     $"消息 新增{result.Added} 重复{result.Duplicates} 版本{result.Revised} 变体{result.Variants}；" +
                     $"附件 {result.Attachments}（缺媒体 {result.MissingMedia}）";
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                terminalText = "导入已取消；已完成的文件会保留，稍后重新导入时会自动跳过重复内容。";
             }
             catch (Exception ex)
             {
@@ -117,20 +143,26 @@ public partial class ImportViewModel : ObservableObject
 
             if (!_presentationState.TryTerminate(generation))
             {
+                _cancellationState.End();
                 return;
             }
 
-            _dispatcher.TryEnqueue(() =>
+            if (!_dispatcher.TryEnqueue(() =>
             {
                 if (!_presentationState.IsCurrentTerminal(generation))
                 {
                     return;
                 }
 
+                _cancellationState.End();
                 StatusText = terminalText;
+                IsCancellationRequested = false;
                 IsRunning = false;
                 ImportFinished?.Invoke();
-            });
+            }))
+            {
+                _cancellationState.End();
+            }
         });
     }
 }

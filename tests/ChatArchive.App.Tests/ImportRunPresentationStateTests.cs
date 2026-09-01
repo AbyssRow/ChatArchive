@@ -97,4 +97,22 @@ public sealed class ImportRunPresentationStateTests
 
         Assert.Equal(new[] { "second" }, publishedStatuses);
     }
+
+    [Fact]
+    public void Import_cancellation_is_idempotent_and_only_affects_the_active_run()
+    {
+        var state = new ImportRunCancellationState();
+        var first = state.Begin();
+
+        Assert.False(first.IsCancellationRequested);
+        Assert.True(state.RequestCancellation());
+        Assert.True(first.IsCancellationRequested);
+        Assert.False(state.RequestCancellation());
+
+        state.End();
+        Assert.False(state.RequestCancellation());
+
+        var second = state.Begin();
+        Assert.False(second.IsCancellationRequested);
+    }
 }

@@ -28,6 +28,9 @@ public sealed partial class MainWindow : Window
     private bool _messagePagingReady;
     private bool _statsLoaded;
     private readonly SearchOptionsReloadGate _searchOptionsReloadGate = new();
+    private readonly LatestRequestGate _searchResultActivationGate = new();
+    private readonly LatestRequestGate _contactSelectionGate = new();
+    private readonly ExclusiveInteractionGate _senderProfileGate = new();
     private bool _isAddingBoundAccount;
     private PendingSearchOptionsReload? _pendingSearchOptionsReload;
 
@@ -120,24 +123,11 @@ public sealed partial class MainWindow : Window
             };
             _timeline.InitialPageLoaded += PositionTimelineAtBottom;
             _timeline.FocusMessageLoaded += FocusTimelineMessage;
-            _search.ResultActivated += hit => DispatcherQueue.TryEnqueue(async () =>
+            _search.ResultActivated += hit =>
             {
-                SelectNavItem("conversations");
-                _messagePagingReady = false;
-                try
-                {
-                    var detail = await Task.Run(() => AppServices.Instance.Conversations.GetConversation(hit.ConversationId));
-                    if (detail?.Conversation is { } info)
-                    {
-                        _conversations.Activate(info);
-                        ConversationListControl.SelectedItem = _conversations.Conversations.FirstOrDefault(c => c.Id == info.Id) ?? info;
-                    }
-                }
-                catch
-                {
-                }
-                _timeline.JumpToMessage(hit.MessageId);
-            });
+                var request = _searchResultActivationGate.Next();
+                DispatcherQueue.TryEnqueue(() => OpenSearchResult(hit, request));
+            };
             _search.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName == nameof(SearchViewModel.IsLoading))
@@ -172,7 +162,10 @@ public sealed partial class MainWindow : Window
             {
                 if (e.PropertyName == nameof(ImportViewModel.IsRunning))
                 {
-                    ImportButton.IsEnabled = !_import.IsRunning;
+                    ImportButton.IsEnabled = true;
+                    ImportButton.Content = _import.IsRunning
+                        ? "查看导入进度…"
+                        : "导入聊天记录";
                 }
             };
 
@@ -323,6 +316,8 @@ public sealed partial class MainWindow : Window
             var clear = new Button { Content = "清空列表" };
             clear.Click += (_, _) => _import.ClearPathsCommand.Execute(null);
             var start = new Button { Content = "开始导入", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+            var cancel = new Button { Content = "取消导入" };
+            cancel.Click += (_, _) => _import.CancelCommand.Execute(null);
             ContentDialog? dialog = null;
             start.Click += (_, _) =>
             {
@@ -339,10 +334,12 @@ public sealed partial class MainWindow : Window
                 addFolder.IsEnabled = !_import.IsRunning;
                 clear.IsEnabled = !_import.IsRunning;
                 start.IsEnabled = !_import.IsRunning && _import.Paths.Count > 0;
+                cancel.IsEnabled = _import.IsRunning && !_import.IsCancellationRequested;
+                cancel.Visibility = _import.IsRunning ? Visibility.Visible : Visibility.Collapsed;
                 if (dialog is not null)
                 {
-                    dialog.IsPrimaryButtonEnabled = !_import.IsRunning;
-                    dialog.PrimaryButtonText = _import.IsRunning ? "正在导入…" : "关闭";
+                    dialog.IsPrimaryButtonEnabled = true;
+                    dialog.PrimaryButtonText = _import.IsRunning ? "后台运行" : "关闭";
                 }
             }
 
@@ -360,13 +357,16 @@ public sealed partial class MainWindow : Window
             buttonsRow.Children.Add(addFolder);
             buttonsRow.Children.Add(clear);
             buttonsRow.Children.Add(start);
+            buttonsRow.Children.Add(cancel);
             pathsPanel.Children.Add(buttonsRow);
             pathsPanel.Children.Add(progress);
             pathsPanel.Children.Add(status);
 
             System.ComponentModel.PropertyChangedEventHandler importChanged = (_, e) =>
             {
-                if (e.PropertyName is nameof(ImportViewModel.StatusText) or nameof(ImportViewModel.IsRunning))
+                if (e.PropertyName is nameof(ImportViewModel.StatusText)
+                    or nameof(ImportViewModel.IsRunning)
+                    or nameof(ImportViewModel.IsCancellationRequested))
                 {
                     DispatcherQueue.TryEnqueue(RefreshButtons);
                 }
@@ -383,22 +383,15 @@ public sealed partial class MainWindow : Window
                 Content = pathsPanel,
             };
 
-            void ImportDialogClosing(ContentDialog sender, ContentDialogClosingEventArgs args)
-            {
-                args.Cancel = _import.IsRunning;
-            }
-
             try
             {
                 _import.PropertyChanged += importChanged;
                 _import.Paths.CollectionChanged += pathsChanged;
-                dialog.Closing += ImportDialogClosing;
                 RefreshButtons();
                 await dialog.ShowSafeAsync();
             }
             finally
             {
-                dialog.Closing -= ImportDialogClosing;
                 _import.PropertyChanged -= importChanged;
                 _import.Paths.CollectionChanged -= pathsChanged;
             }
@@ -548,7 +541,8 @@ public sealed partial class MainWindow : Window
     private async void OnSenderClick(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: MessageEntry entry }
-            && entry.Message.SenderId is long senderId)
+            && entry.Message.SenderId is long senderId
+            && _senderProfileGate.TryEnter())
         {
             try
             {
@@ -557,6 +551,10 @@ public sealed partial class MainWindow : Window
             catch (Exception ex)
             {
                 ShowError($"查看发送者信息失败: {ex.Message}");
+            }
+            finally
+            {
+                _senderProfileGate.Exit();
             }
         }
     }
@@ -641,6 +639,8 @@ public sealed partial class MainWindow : Window
 
     private async void ContactsListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        _contactSelectionGate.Next();
+
         if (_isRefreshingContacts)
         {
             return;
@@ -911,6 +911,33 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(detail.IdentityToken))
+        {
+            ShowError("无法确认目标联系人身份，请刷新联系人后重试");
+            return;
+        }
+
+        var target = new ContactTargetSnapshot(
+            detail.ContactId,
+            detail.IdentityToken,
+            detail.DisplayName);
+        var targetSelectionVersion = _contactSelectionGate.Next();
+        bool EnsureTargetIsCurrent()
+        {
+            if (_contactSelectionGate.IsCurrent(targetSelectionVersion)
+                && target.IsCurrent(
+                    _contacts.SelectedContact?.Id,
+                    _contacts.SelectedContact?.IdentityToken,
+                    _contacts.SelectedDetail?.ContactId,
+                    _contacts.SelectedDetail?.IdentityToken))
+            {
+                return true;
+            }
+
+            ShowError("当前联系人已更改，请在目标联系人上重新打开“绑定账号”");
+            return false;
+        }
+
         _isAddingBoundAccount = true;
         AddBoundAccountButton.IsEnabled = false;
 
@@ -923,19 +950,19 @@ public sealed partial class MainWindow : Window
 
             var availableSenders = new List<BoundSenderInfo>();
             var isSenderPickerOpen = true;
-            async Task RefreshAvailable(string? kw, CancellationToken cancellationToken = default)
+            async Task<bool> RefreshAvailable(string? kw, CancellationToken cancellationToken = default)
             {
                 try
                 {
                     if (cancellationToken.IsCancellationRequested || !isSenderPickerOpen)
                     {
-                        return;
+                        return false;
                     }
 
                     var items = await detail.LoadAvailableSendersAsync(kw);
                     if (cancellationToken.IsCancellationRequested || !isSenderPickerOpen)
                     {
-                        return;
+                        return false;
                     }
 
                     availableSenders.Clear();
@@ -954,6 +981,8 @@ public sealed partial class MainWindow : Window
                             Tag = item,
                         });
                     }
+
+                    return true;
                 }
                 catch (Exception ex)
                 {
@@ -961,10 +990,15 @@ public sealed partial class MainWindow : Window
                     {
                         ShowError($"加载发送者失败: {ex.Message}");
                     }
+
+                    return false;
                 }
             }
 
-            await RefreshAvailable(null);
+            if (!await RefreshAvailable(null) || !EnsureTargetIsCurrent())
+            {
+                return;
+            }
 
             CancellationTokenSource? searchCts = null;
             searchBox.TextChanged += (_, _) =>
@@ -992,17 +1026,37 @@ public sealed partial class MainWindow : Window
             {
                 Spacing = 10,
                 MinWidth = 460,
-                Children = { searchBox, list, labelBox, primaryCheck },
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = $"目标联系人：{target.DisplayName}",
+                        TextWrapping = TextWrapping.Wrap,
+                        Opacity = 0.8,
+                    },
+                    searchBox,
+                    list,
+                    labelBox,
+                    primaryCheck,
+                },
             };
 
             var dialog = new ContentDialog
             {
                 XamlRoot = Content.XamlRoot,
-                Title = "绑定/合并账号",
+                Title = $"绑定/合并账号到“{target.DisplayName}”",
                 PrimaryButtonText = "确认绑定",
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Primary,
+                IsPrimaryButtonEnabled = false,
                 Content = panel,
+            };
+            list.SelectionChanged += (_, _) =>
+            {
+                dialog.IsPrimaryButtonEnabled = list.SelectedItem is ListViewItem
+                {
+                    Tag: BoundSenderInfo,
+                };
             };
 
             BoundSenderInfo selectedSender;
@@ -1032,17 +1086,30 @@ public sealed partial class MainWindow : Window
                 searchCts?.Dispose();
             }
 
-            long? expectedSourceContactId = null;
-            var hasBoundContactName = !string.IsNullOrWhiteSpace(selectedSender.BoundContactName);
-            if (selectedSender.BoundContactId.HasValue || hasBoundContactName)
+            if (!EnsureTargetIsCurrent())
             {
-                if (!selectedSender.BoundContactId.HasValue || !hasBoundContactName)
+                return;
+            }
+
+            long? expectedSourceContactId = null;
+            string? expectedSourceIdentityToken = null;
+            var hasBoundContactName = !string.IsNullOrWhiteSpace(selectedSender.BoundContactName);
+            var hasBoundContactIdentityToken =
+                !string.IsNullOrWhiteSpace(selectedSender.BoundContactIdentityToken);
+            if (selectedSender.BoundContactId.HasValue
+                || hasBoundContactName
+                || hasBoundContactIdentityToken)
+            {
+                if (!selectedSender.BoundContactId.HasValue
+                    || !hasBoundContactName
+                    || !hasBoundContactIdentityToken)
                 {
                     ShowError("账号归属信息已发生变化，请重新选择账号后重试");
                     return;
                 }
 
                 expectedSourceContactId = selectedSender.BoundContactId.Value;
+                expectedSourceIdentityToken = selectedSender.BoundContactIdentityToken;
                 var oldContactName = selectedSender.BoundContactName!.Trim();
                 var confirm = new ContentDialog
                 {
@@ -1052,7 +1119,7 @@ public sealed partial class MainWindow : Window
                     CloseButtonText = "取消",
                     DefaultButton = ContentDialogButton.Close,
                     Content = $"账号“{selectedSender.OriginalName}”当前属于“{oldContactName}”。\n"
-                              + $"确认将其转移到“{detail.DisplayName}”吗？\n\n"
+                              + $"确认将其转移到“{target.DisplayName}”吗？\n\n"
                               + "旧联系人如果没有其他账号、备注或自定义头像，可能会被自动清理。",
                 };
 
@@ -1062,12 +1129,19 @@ public sealed partial class MainWindow : Window
                 }
             }
 
-            var currentId = detail.ContactId;
+            if (!EnsureTargetIsCurrent())
+            {
+                return;
+            }
+
+            var currentId = target.ContactId;
             if (expectedSourceContactId.HasValue)
             {
                 await detail.TransferSenderFromExpectedContactAsync(
                     selectedSender.SenderId,
+                    target.IdentityToken,
                     expectedSourceContactId.Value,
+                    expectedSourceIdentityToken!,
                     selectedLabel,
                     selectedPrimary);
             }
@@ -1522,6 +1596,39 @@ public sealed partial class MainWindow : Window
         if (e.ClickedItem is SearchHitProxy proxy)
         {
             _search.NotifyResultActivated(proxy.Hit);
+        }
+    }
+
+    private async void OpenSearchResult(SearchHit hit, long request)
+    {
+        try
+        {
+            var detail = await Task.Run(() =>
+                AppServices.Instance.Conversations.GetConversation(hit.ConversationId));
+            if (!_searchResultActivationGate.IsCurrent(request))
+            {
+                return;
+            }
+
+            if (detail?.Conversation is not { } info)
+            {
+                ShowError("打开搜索结果失败：未找到对应会话");
+                return;
+            }
+
+            SelectNavItem("conversations");
+            _messagePagingReady = false;
+            _conversations.Activate(info);
+            ConversationListControl.SelectedItem =
+                _conversations.Conversations.FirstOrDefault(c => c.Id == info.Id) ?? info;
+            _timeline.JumpToMessage(hit.MessageId);
+        }
+        catch (Exception ex)
+        {
+            if (_searchResultActivationGate.IsCurrent(request))
+            {
+                ShowError($"打开搜索结果失败：{ex.Message}");
+            }
         }
     }
 

@@ -14,6 +14,7 @@ public partial class ContactDetailViewModel : ObservableObject
     private long _loadGeneration;
 
     public long ContactId { get; private set; }
+    public string IdentityToken { get; private set; } = string.Empty;
 
     public ObservableCollection<BoundSenderInfo> BoundSenders { get; } = new();
     public ObservableCollection<SenderConversationInfo> Conversations { get; } = new();
@@ -50,6 +51,7 @@ public partial class ContactDetailViewModel : ObservableObject
     {
         var generation = Interlocked.Increment(ref _loadGeneration);
         ContactId = contactId;
+        IdentityToken = string.Empty;
         IsLoading = true;
         ErrorMessage = string.Empty;
 
@@ -75,6 +77,7 @@ public partial class ContactDetailViewModel : ObservableObject
                 }
 
                 DisplayName = detail.DisplayName;
+                IdentityToken = detail.IdentityToken;
                 CustomAvatarPath = detail.CustomAvatarPath;
                 Note = detail.Note;
                 TotalMessageCount = detail.TotalMessageCount;
@@ -185,14 +188,18 @@ public partial class ContactDetailViewModel : ObservableObject
 
     public async Task TransferSenderFromExpectedContactAsync(
         long senderId,
+        string expectedTargetIdentityToken,
         long expectedSourceContactId,
+        string expectedSourceIdentityToken,
         string? accountLabel = null,
         bool isPrimary = false)
     {
         await Task.Run(() => _contactRepository.TransferSenderFromExpectedContact(
             ContactId,
+            expectedTargetIdentityToken,
             senderId,
             expectedSourceContactId,
+            expectedSourceIdentityToken,
             accountLabel,
             isPrimary));
 

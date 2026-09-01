@@ -299,6 +299,8 @@ public sealed class ContactsViewModelTests : IDisposable
             await detailVm.LoadAvailableSendersAsync(),
             item => item.SenderId == senderId);
         Assert.Equal(confirmedSourceId, candidate.BoundContactId);
+        Assert.False(string.IsNullOrWhiteSpace(candidate.BoundContactIdentityToken));
+        Assert.False(string.IsNullOrWhiteSpace(detailVm.IdentityToken));
 
         _contactRepository.BindSender(
             currentOwnerId,
@@ -310,7 +312,9 @@ public sealed class ContactsViewModelTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             detailVm.TransferSenderFromExpectedContactAsync(
                 senderId,
+                detailVm.IdentityToken,
                 candidate.BoundContactId!.Value,
+                candidate.BoundContactIdentityToken!,
                 accountLabel: "不应写入",
                 isPrimary: true));
 
@@ -319,6 +323,43 @@ public sealed class ContactsViewModelTests : IDisposable
         Assert.True(currentDetail.Senders.Single(item => item.SenderId == currentOwnerSenderId).IsPrimary);
         Assert.Empty(Assert.IsType<ContactDetail>(_contactRepository.GetContactDetail(targetId)).Senders);
         Assert.Empty(detailVm.BoundSenders);
+    }
+
+    [Fact]
+    public async Task ContactDetailViewModel_Transfer_rejects_reused_target_contact_id()
+    {
+        var senderId = InsertSender("10089", "待转移账号");
+        var sourceId = _contactRepository.CreateContact(
+            "来源联系人",
+            note: "保留来源",
+            initialBindings: [(senderId, "来源标签", true)]);
+        var targetId = _contactRepository.CreateContact("确认时的目标");
+        var detailVm = new ContactDetailViewModel(_contactRepository, _avatarStorage);
+        Assert.True(await detailVm.LoadAsync(targetId));
+
+        var candidate = Assert.Single(
+            await detailVm.LoadAvailableSendersAsync(),
+            item => item.SenderId == senderId);
+        var confirmedTargetToken = detailVm.IdentityToken;
+
+        _contactRepository.DeleteContact(targetId);
+        var replacementId = _contactRepository.CreateContact("复用 ID 的新联系人");
+        Assert.Equal(targetId, replacementId);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            detailVm.TransferSenderFromExpectedContactAsync(
+                senderId,
+                confirmedTargetToken,
+                candidate.BoundContactId!.Value,
+                candidate.BoundContactIdentityToken!,
+                accountLabel: "不应写入",
+                isPrimary: true));
+
+        Assert.Contains(
+            Assert.IsType<ContactDetail>(_contactRepository.GetContactDetail(sourceId)).Senders,
+            sender => sender.SenderId == senderId);
+        Assert.Empty(
+            Assert.IsType<ContactDetail>(_contactRepository.GetContactDetail(replacementId)).Senders);
     }
 
     [Fact]
