@@ -313,6 +313,7 @@ public sealed partial class MainWindow : Window
             var clear = new Button { Content = "清空列表" };
             clear.Click += (_, _) => _import.ClearPathsCommand.Execute(null);
             var start = new Button { Content = "开始导入", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+            ContentDialog? dialog = null;
             start.Click += (_, _) =>
             {
                 _import.StartCommand.Execute(null);
@@ -328,6 +329,11 @@ public sealed partial class MainWindow : Window
                 addFolder.IsEnabled = !_import.IsRunning;
                 clear.IsEnabled = !_import.IsRunning;
                 start.IsEnabled = !_import.IsRunning && _import.Paths.Count > 0;
+                if (dialog is not null)
+                {
+                    dialog.IsPrimaryButtonEnabled = !_import.IsRunning;
+                    dialog.PrimaryButtonText = _import.IsRunning ? "正在导入…" : "关闭";
+                }
             }
 
             pathsPanel.Children.Add(new TextBlock
@@ -357,10 +363,8 @@ public sealed partial class MainWindow : Window
             };
             System.Collections.Specialized.NotifyCollectionChangedEventHandler pathsChanged = (_, _) =>
                 DispatcherQueue.TryEnqueue(RefreshButtons);
-            _import.PropertyChanged += importChanged;
-            _import.Paths.CollectionChanged += pathsChanged;
 
-            var dialog = new ContentDialog
+            dialog = new ContentDialog
             {
                 XamlRoot = Content.XamlRoot,
                 Title = "导入聊天记录",
@@ -368,13 +372,23 @@ public sealed partial class MainWindow : Window
                 DefaultButton = ContentDialogButton.Primary,
                 Content = pathsPanel,
             };
+
+            void ImportDialogClosing(ContentDialog sender, ContentDialogClosingEventArgs args)
+            {
+                args.Cancel = _import.IsRunning;
+            }
+
             try
             {
+                _import.PropertyChanged += importChanged;
+                _import.Paths.CollectionChanged += pathsChanged;
+                dialog.Closing += ImportDialogClosing;
                 RefreshButtons();
                 await dialog.ShowSafeAsync();
             }
             finally
             {
+                dialog.Closing -= ImportDialogClosing;
                 _import.PropertyChanged -= importChanged;
                 _import.Paths.CollectionChanged -= pathsChanged;
             }
