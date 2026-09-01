@@ -55,26 +55,33 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         _sheets = new HashSet<OpenXmlSheet>(sheets);
     }
 
-    public static OpenXmlWorkbookReader Open(string filePath)
+    public static OpenXmlWorkbookReader Open(
+        string filePath,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         XlsxPackageHandle? package = null;
         SpreadsheetDocument? document = null;
         try
         {
-            package = XlsxPackagePreflight.OpenValidated(filePath);
+            package = XlsxPackagePreflight.OpenValidated(filePath, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             ValidateWorkbookEntryContentType(package, filePath);
             document = SpreadsheetDocument.Open(package.Stream, isEditable: false);
-            var workbookPart = RequireWorkbookPart(document, package, filePath);
+            cancellationToken.ThrowIfCancellationRequested();
+            var workbookPart = RequireWorkbookPart(document, package, filePath, cancellationToken);
             ValidateContainerRelationships(
                 document,
                 package.EntryPaths,
                 filePath,
                 "_rels/.rels",
+                cancellationToken,
                 allowExternalHyperlinks: false);
-            ValidateWorkbookRelationships(workbookPart, package, filePath);
-            ValidateWorkbookPartContentTypes(workbookPart, package, filePath);
-            var workbookMap = ReadSheets(workbookPart, package, filePath);
-            var sharedStrings = ReadSharedStrings(workbookPart, package, filePath);
+            ValidateWorkbookRelationships(workbookPart, package, filePath, cancellationToken);
+            ValidateWorkbookPartContentTypes(workbookPart, package, filePath, cancellationToken);
+            var workbookMap = ReadSheets(workbookPart, package, filePath, cancellationToken);
+            var sharedStrings = ReadSharedStrings(workbookPart, package, filePath, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             var reader = new OpenXmlWorkbookReader(
                 filePath,
                 package,
@@ -88,10 +95,12 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         }
         catch (ImportFormatException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
         catch (Exception ex) when (IsPackageFailure(ex))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             throw new ImportFormatException(filePath, $"XLSX 包读取失败（{ex.Message}）");
         }
         finally
@@ -132,10 +141,12 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             }
             catch (ImportFormatException)
             {
+                token.ThrowIfCancellationRequested();
                 throw;
             }
             catch (Exception ex) when (IsPackageFailure(ex))
             {
+                token.ThrowIfCancellationRequested();
                 throw Error(_filePath, sheet.EntryPath, $"工作表解析失败（{ex.Message}）");
             }
 
@@ -153,8 +164,16 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         var sawSheetData = false;
         var insideSheetData = false;
         uint previousRowIndex = 0;
-        while (reader.Read())
+        while (true)
         {
+            token.ThrowIfCancellationRequested();
+            var hasElement = reader.Read();
+            token.ThrowIfCancellationRequested();
+            if (!hasElement)
+            {
+                break;
+            }
+
             if (reader.IsStartElement && IsSpreadsheetElement(reader, "worksheet"))
             {
                 if (reader.Depth != 0 || sawWorksheet)
@@ -207,7 +226,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             }
 
             token.ThrowIfCancellationRequested();
-            var rowText = GetAttribute(reader, "r", string.Empty);
+            var rowText = GetAttribute(reader, "r", string.Empty, token);
             if (!uint.TryParse(rowText, NumberStyles.None, CultureInfo.InvariantCulture, out var rowIndex)
                 || rowIndex is 0 or > MaximumRowIndex)
             {
@@ -241,8 +260,16 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     {
         var rowDepth = reader.Depth;
         var cells = new Dictionary<int, OpenXmlCell>();
-        while (reader.Read())
+        while (true)
         {
+            token.ThrowIfCancellationRequested();
+            var hasElement = reader.Read();
+            token.ThrowIfCancellationRequested();
+            if (!hasElement)
+            {
+                break;
+            }
+
             if (reader.IsEndElement
                 && reader.Depth == rowDepth
                 && IsSpreadsheetElement(reader, "row"))
@@ -295,7 +322,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             token.ThrowIfCancellationRequested();
             var element = reader.LoadCurrentElement() as Cell
                 ?? throw Error(_filePath, entryPath, $"行 {rowIndex} 中 c 元素无效");
-            var cell = ReadCell(element, entryPath, rowIndex, hyperlinks);
+            token.ThrowIfCancellationRequested();
+            var cell = ReadCell(element, entryPath, rowIndex, hyperlinks, token);
             if (!cells.TryAdd(cell.ColumnIndex, cell))
             {
                 throw CellError(
@@ -313,10 +341,12 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         Cell cell,
         string entryPath,
         uint rowIndex,
-        IReadOnlyDictionary<string, string> hyperlinks)
+        IReadOnlyDictionary<string, string> hyperlinks,
+        CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         var reference = cell.GetAttribute("r", string.Empty).Value ?? string.Empty;
-        var (columnIndex, referencedRow, normalizedReference) = ParseCellReference(reference, entryPath);
+        var (columnIndex, referencedRow, normalizedReference) = ParseCellReference(reference, entryPath, token);
         if (referencedRow != rowIndex)
         {
             throw CellError(_filePath, entryPath, reference, $"引用行 {referencedRow} 与所在行 {rowIndex} 不一致");
@@ -329,6 +359,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         var inlineText = new StringBuilder();
         foreach (var element in cell.Descendants())
         {
+            token.ThrowIfCancellationRequested();
             if (IsSpreadsheetElement(element, "c"))
             {
                 throw CellError(_filePath, entryPath, reference, "c 不能嵌套");
@@ -354,7 +385,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                     throw CellError(_filePath, entryPath, reference, "f 必须是 c 的直接文本子元素");
                 }
 
-                _ = ReadValidatedLeafText(element, entryPath, reference, "f");
+                _ = ReadValidatedLeafText(element, entryPath, reference, "f", token);
                 hasFormula = true;
                 continue;
             }
@@ -372,7 +403,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 }
 
                 hasCachedValue = true;
-                cachedValue = ReadValidatedLeafText(element, entryPath, reference, "v");
+                cachedValue = ReadValidatedLeafText(element, entryPath, reference, "v", token);
                 continue;
             }
 
@@ -396,7 +427,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                     "t 只允许位于 is/t、is/r/t 或 is/rPh/t");
             }
 
-            var text = ReadValidatedLeafText(element, entryPath, reference, "t");
+            var text = ReadValidatedLeafText(element, entryPath, reference, "t", token);
             if (type == "inlineStr")
             {
                 inlineText.Append(text);
@@ -469,8 +500,16 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             var sawWorksheet = false;
             var sawHyperlinks = false;
             var insideHyperlinks = false;
-            while (reader.Read())
+            while (true)
             {
+                token.ThrowIfCancellationRequested();
+                var hasElement = reader.Read();
+                token.ThrowIfCancellationRequested();
+                if (!hasElement)
+                {
+                    break;
+                }
+
                 if (reader.IsStartElement && IsSpreadsheetElement(reader, "worksheet"))
                 {
                     if (reader.Depth != 0 || sawWorksheet)
@@ -534,9 +573,9 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 }
 
                 hyperlinkDeclarations++;
-                var reference = GetAttribute(reader, "ref", string.Empty) ?? string.Empty;
-                var (_, _, normalizedReference) = ParseCellReference(reference, sheet.EntryPath);
-                var relationshipId = GetAttribute(reader, "id", OfficeRelationshipNamespace);
+                var reference = GetAttribute(reader, "ref", string.Empty, token) ?? string.Empty;
+                var (_, _, normalizedReference) = ParseCellReference(reference, sheet.EntryPath, token);
+                var relationshipId = GetAttribute(reader, "id", OfficeRelationshipNamespace, token);
                 if (string.IsNullOrWhiteSpace(relationshipId))
                 {
                     throw CellError(_filePath, sheet.EntryPath, reference, "超链接缺少关系 ID");
@@ -544,6 +583,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
                 var hyperlink = reader.LoadCurrentElement() as Hyperlink
                     ?? throw Error(_filePath, sheet.EntryPath, "hyperlink 元素无效");
+                token.ThrowIfCancellationRequested();
                 if (!string.IsNullOrEmpty(hyperlink.InnerXml))
                 {
                     throw CellError(
@@ -621,7 +661,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             if (relationship.IsExternal)
             {
                 var target = relationship.Target.OriginalString;
-                if (IsSafeExternalHyperlinkTarget(worksheetPart, target))
+                if (IsSafeExternalHyperlinkTarget(worksheetPart, target, token))
                 {
                     result.Add(reference, target);
                 }
@@ -653,7 +693,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     private static void ValidateWorkbookRelationships(
         WorkbookPart workbookPart,
         XlsxPackageHandle package,
-        string filePath)
+        string filePath,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -662,6 +703,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 package.EntryPaths,
                 filePath,
                 "xl/_rels/workbook.xml.rels",
+                cancellationToken,
                 allowExternalHyperlinks: false);
         }
         catch (ImportFormatException error) when (
@@ -669,17 +711,19 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             || error.Message.Contains("doesn't exist in the package", StringComparison.Ordinal)
             || error.Message.Contains("Specified part does not exist", StringComparison.Ordinal))
         {
-            ValidateConventionalReferencedPartContentTypes(package, filePath);
+            ValidateConventionalReferencedPartContentTypes(package, filePath, cancellationToken);
             throw;
         }
     }
 
     private static void ValidateConventionalReferencedPartContentTypes(
         XlsxPackageHandle package,
-        string filePath)
+        string filePath,
+        CancellationToken cancellationToken)
     {
         foreach (var entryPath in package.EntryPaths)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (entryPath.StartsWith("xl/worksheets/", StringComparison.Ordinal)
                 && entryPath.EndsWith(".xml", StringComparison.Ordinal))
             {
@@ -701,18 +745,26 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     private static WorkbookPart RequireWorkbookPart(
         SpreadsheetDocument document,
         XlsxPackageHandle package,
-        string filePath)
+        string filePath,
+        CancellationToken cancellationToken)
     {
-        var workbookParts = document.Parts
-            .Select(pair => pair.OpenXmlPart)
-            .OfType<WorkbookPart>()
-            .ToArray();
-        if (workbookParts.Length != 1)
+        cancellationToken.ThrowIfCancellationRequested();
+        var workbookParts = new List<WorkbookPart>();
+        foreach (var pair in document.Parts)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pair.OpenXmlPart is WorkbookPart candidateWorkbookPart)
+            {
+                workbookParts.Add(candidateWorkbookPart);
+            }
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        if (workbookParts.Count != 1)
         {
             throw Error(
                 filePath,
                 "_rels/.rels",
-                $"工作簿部件数量必须为 1，实际为 {workbookParts.Length}");
+                $"工作簿部件数量必须为 1，实际为 {workbookParts.Count}");
         }
 
         var workbookPart = workbookParts[0];
@@ -736,11 +788,13 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     private static void ValidateWorkbookPartContentTypes(
         WorkbookPart workbookPart,
         XlsxPackageHandle package,
-        string filePath)
+        string filePath,
+        CancellationToken cancellationToken)
     {
         var sharedStringParts = 0;
         foreach (var pair in workbookPart.Parts)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var expected = pair.OpenXmlPart.RelationshipType switch
             {
                 WorksheetRelationship => WorksheetContentType,
@@ -777,7 +831,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     private static WorkbookMap ReadSheets(
         WorkbookPart workbookPart,
         XlsxPackageHandle package,
-        string filePath)
+        string filePath,
+        CancellationToken cancellationToken)
     {
         return WithEntryFormatErrors(filePath, WorkbookEntry, () =>
         {
@@ -788,8 +843,16 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             var sawWorkbook = false;
             var sawSheets = false;
             var insideSheets = false;
-            while (reader.Read())
+            while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var hasElement = reader.Read();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!hasElement)
+                {
+                    break;
+                }
+
                 if (reader.IsStartElement && IsSpreadsheetElement(reader, "workbook"))
                 {
                     if (reader.Depth != 0 || sawWorkbook)
@@ -899,7 +962,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                     leaf,
                     leafLocalName,
                     allowText: leaf is OpenXmlLeafTextElement,
-                    message => Error(filePath, WorkbookEntry, message));
+                    message => Error(filePath, WorkbookEntry, message),
+                    cancellationToken);
             }
 
             if (!sawWorkbook)
@@ -910,24 +974,32 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             return new WorkbookMap(
                 Array.AsReadOnly(sheets.ToArray()),
                 parts);
-        });
+        }, cancellationToken);
     }
 
     private static IReadOnlyList<string> ReadSharedStrings(
         WorkbookPart workbookPart,
         XlsxPackageHandle package,
-        string filePath)
+        string filePath,
+        CancellationToken cancellationToken)
     {
-        var sharedStringParts = workbookPart.Parts
-            .Select(pair => pair.OpenXmlPart)
-            .OfType<SharedStringTablePart>()
-            .ToArray();
-        if (sharedStringParts.Length == 0)
+        cancellationToken.ThrowIfCancellationRequested();
+        var sharedStringParts = new List<SharedStringTablePart>();
+        foreach (var pair in workbookPart.Parts)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pair.OpenXmlPart is SharedStringTablePart candidateSharedStringPart)
+            {
+                sharedStringParts.Add(candidateSharedStringPart);
+            }
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        if (sharedStringParts.Count == 0)
         {
             return Array.Empty<string>();
         }
 
-        if (sharedStringParts.Length != 1)
+        if (sharedStringParts.Count != 1)
         {
             throw Error(
                 filePath,
@@ -943,8 +1015,16 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             var values = new List<string>();
             using var reader = SdkOpenXmlReader.Create(sharedStringPart);
             var sawSharedStrings = false;
-            while (reader.Read())
+            while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var hasElement = reader.Read();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!hasElement)
+                {
+                    break;
+                }
+
                 if (reader.IsStartElement && reader.Depth == 0)
                 {
                     if (reader.ElementType != typeof(SharedStringTable))
@@ -974,6 +1054,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                 var value = new StringBuilder();
                 foreach (var element in item.Descendants())
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (IsSpreadsheetElement(element, "si"))
                     {
                         throw SharedStringError(
@@ -995,7 +1076,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                                     filePath,
                                     entryPath,
                                     position,
-                                    message));
+                                    message),
+                                cancellationToken);
                         }
 
                         continue;
@@ -1018,7 +1100,8 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                             filePath,
                             entryPath,
                             position,
-                            message)));
+                            message),
+                        cancellationToken));
                 }
 
                 values.Add(value.ToString());
@@ -1030,7 +1113,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             }
 
             return values;
-        });
+        }, cancellationToken);
     }
 
     private static IReadOnlyDictionary<string, SdkRelationship> SnapshotRelationships(
@@ -1117,6 +1200,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                     Part: null), isHyperlink: false);
             }
 
+            token.ThrowIfCancellationRequested();
             return result;
         }
         catch (OperationCanceledException)
@@ -1125,10 +1209,12 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         }
         catch (ImportFormatException)
         {
+            token.ThrowIfCancellationRequested();
             throw;
         }
         catch (Exception ex) when (IsPackageFailure(ex))
         {
+            token.ThrowIfCancellationRequested();
             throw Error(filePath, relationshipEntry, $"关系解析失败（{ex.Message}）");
         }
     }
@@ -1226,17 +1312,19 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         IReadOnlySet<string> entryPaths,
         string filePath,
         string relationshipEntry,
+        CancellationToken cancellationToken,
         bool allowExternalHyperlinks)
     {
         var relationships = SnapshotRelationships(
             owner,
             filePath,
             relationshipEntry,
-            CancellationToken.None,
+            cancellationToken,
             maximumRelationships: null,
             allowExternalHyperlinks: allowExternalHyperlinks);
         foreach (var relationship in relationships.Values)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (relationship.IsExternal || relationship.Type != HyperlinkRelationship)
             {
                 continue;
@@ -1288,40 +1376,54 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
     private static bool IsSafeExternalHyperlinkTarget(
         WorksheetPart worksheetPart,
-        string target)
+        string target,
+        CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(target)
-            || target.Length != target.Trim().Length
-            || target[0] == '/'
-            || target.Contains('\\')
-            || target.Contains('?')
-            || target.Contains('#')
-            || Path.IsPathRooted(target)
-            || IsDrivePath(target)
-            || Uri.TryCreate(target, UriKind.Absolute, out _))
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrEmpty(target)
+            || char.IsWhiteSpace(target[0])
+            || char.IsWhiteSpace(target[^1])
+            || target[0] == '/')
         {
             return false;
         }
 
         foreach (var character in target)
         {
-            if (char.IsControl(character))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (char.IsControl(character) || character is '\\' or '?' or '#')
             {
                 return false;
             }
         }
 
-        return Uri.TryCreate(target, UriKind.Relative, out var targetUri)
-            && ResolvesWithinPackageRoot(worksheetPart, targetUri);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Path.IsPathRooted(target)
+            || IsDrivePath(target)
+            || Uri.TryCreate(target, UriKind.Absolute, out _))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return false;
+        }
+
+        var isRelative = Uri.TryCreate(target, UriKind.Relative, out var targetUri);
+        cancellationToken.ThrowIfCancellationRequested();
+        return isRelative && ResolvesWithinPackageRoot(worksheetPart, targetUri!);
     }
 
     private (int ColumnIndex, uint RowIndex, string NormalizedReference) ParseCellReference(
         string reference,
-        string entryPath)
+        string entryPath,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrEmpty(reference))
         {
             throw CellError(_filePath, entryPath, "<缺失>", "引用无效");
+        }
+        if (reference.Length > 10)
+        {
+            throw CellError(_filePath, entryPath, reference, "引用无效");
         }
 
         var position = 0;
@@ -1330,6 +1432,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         {
             while (position < reference.Length && IsAsciiLetter(reference[position]))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 columnIndex = checked(
                     columnIndex * 26
                     + char.ToUpperInvariant(reference[position]) - 'A'
@@ -1353,6 +1456,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         var rowStart = position;
         while (position < reference.Length && reference[position] is >= '0' and <= '9')
         {
+            cancellationToken.ThrowIfCancellationRequested();
             position++;
         }
 
@@ -1366,6 +1470,7 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         var normalized = string.Concat(
             reference.AsSpan(0, rowStart).ToString().ToUpperInvariant(),
             rowIndex.ToString(CultureInfo.InvariantCulture));
+        cancellationToken.ThrowIfCancellationRequested();
         return (columnIndex, rowIndex, normalized);
     }
 
@@ -1373,23 +1478,27 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         OpenXmlElement element,
         string entryPath,
         string reference,
-        string localName)
+        string localName,
+        CancellationToken cancellationToken)
     {
         return ReadValidatedLeafText(
             element,
             localName,
-            message => CellError(_filePath, entryPath, reference, message));
+            message => CellError(_filePath, entryPath, reference, message),
+            cancellationToken);
     }
 
     private static string ReadOrValidateLeafContent(
         OpenXmlElement element,
         string localName,
         bool allowText,
-        Func<string, ImportFormatException> invalid)
+        Func<string, ImportFormatException> invalid,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (allowText)
         {
-            return ReadValidatedLeafText(element, localName, invalid);
+            return ReadValidatedLeafText(element, localName, invalid, cancellationToken);
         }
 
         if (element is not OpenXmlLeafElement leaf)
@@ -1397,7 +1506,9 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
             throw invalid($"{localName} 叶元素无效");
         }
 
-        if (!string.IsNullOrEmpty(leaf.InnerXml))
+        var innerXml = leaf.InnerXml;
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!string.IsNullOrEmpty(innerXml))
         {
             throw invalid($"{localName} 必须为空，不能包含子元素或文本内容");
         }
@@ -1408,8 +1519,10 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     private static string ReadValidatedLeafText(
         OpenXmlElement element,
         string localName,
-        Func<string, ImportFormatException> invalid)
+        Func<string, ImportFormatException> invalid,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (element is not OpenXmlLeafTextElement leaf)
         {
             throw invalid($"{localName} 文本元素无效");
@@ -1417,7 +1530,12 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
 
         var normalized = (OpenXmlLeafTextElement)leaf.CloneNode(deep: false);
         normalized.Text = leaf.Text ?? string.Empty;
-        if (string.Equals(leaf.InnerXml, normalized.InnerXml, StringComparison.Ordinal))
+        cancellationToken.ThrowIfCancellationRequested();
+        var leafInnerXml = leaf.InnerXml;
+        cancellationToken.ThrowIfCancellationRequested();
+        var normalizedInnerXml = normalized.InnerXml;
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.Equals(leafInnerXml, normalizedInnerXml, StringComparison.Ordinal))
         {
             return leaf.Text ?? string.Empty;
         }
@@ -1425,29 +1543,37 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         return ReadCharacterDataOnlyLeafText(
             leaf,
             localName,
-            invalid);
+            invalid,
+            cancellationToken);
     }
 
     private static string ReadCharacterDataOnlyLeafText(
         OpenXmlLeafTextElement leaf,
         string localName,
-        Func<string, ImportFormatException> invalid)
+        Func<string, ImportFormatException> invalid,
+        CancellationToken cancellationToken)
     {
         try
         {
             // SDK leaf shadow content exposes decoded ampersands; reserve a legal XML
             // character so the SDK fragment parser can still classify every node in order.
-            var sentinel = FindUnusedXmlTextSentinel(leaf.InnerXml);
+            cancellationToken.ThrowIfCancellationRequested();
+            var innerXml = leaf.InnerXml;
+            cancellationToken.ThrowIfCancellationRequested();
+            var sentinel = FindUnusedXmlTextSentinel(innerXml, cancellationToken);
             var fragmentInnerXml = sentinel is null
-                ? leaf.InnerXml
-                : leaf.InnerXml.Replace('&', sentinel.Value);
+                ? innerXml
+                : innerXml.Replace('&', sentinel.Value);
+            cancellationToken.ThrowIfCancellationRequested();
             var fragment = new OpenXmlUnknownElement("fragment")
             {
                 InnerXml = fragmentInnerXml,
             };
+            cancellationToken.ThrowIfCancellationRequested();
             var text = new StringBuilder();
             foreach (var child in fragment.ChildElements)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (child is not OpenXmlMiscNode node)
                 {
                     throw InvalidLeafMarkup(localName, invalid);
@@ -1458,12 +1584,12 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
                     case System.Xml.XmlNodeType.Text:
                     case System.Xml.XmlNodeType.Whitespace:
                     case System.Xml.XmlNodeType.SignificantWhitespace:
-                        text.Append(RestoreXmlTextSentinel(node.OuterXml, sentinel));
+                        text.Append(RestoreXmlTextSentinel(node.OuterXml, sentinel, cancellationToken));
                         break;
                     case System.Xml.XmlNodeType.CDATA:
                         const string CDataStart = "<![CDATA[";
                         const string CDataEnd = "]]>";
-                        var outerXml = RestoreXmlTextSentinel(node.OuterXml, sentinel);
+                        var outerXml = RestoreXmlTextSentinel(node.OuterXml, sentinel, cancellationToken);
                         if (!outerXml.StartsWith(CDataStart, StringComparison.Ordinal)
                             || !outerXml.EndsWith(CDataEnd, StringComparison.Ordinal))
                         {
@@ -1489,26 +1615,33 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         }
     }
 
-    private static char? FindUnusedXmlTextSentinel(string innerXml)
+    private static char? FindUnusedXmlTextSentinel(
+        string innerXml,
+        CancellationToken cancellationToken)
     {
-        if (!innerXml.Contains('&'))
-        {
-            return null;
-        }
-
+        cancellationToken.ThrowIfCancellationRequested();
         const char FirstPrivateUseCharacter = '\uE000';
         const char LastPrivateUseCharacter = '\uF8FF';
         var used = new bool[LastPrivateUseCharacter - FirstPrivateUseCharacter + 1];
+        var hasAmpersand = false;
         foreach (var character in innerXml)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            hasAmpersand |= character == '&';
             if (character >= FirstPrivateUseCharacter && character <= LastPrivateUseCharacter)
             {
                 used[character - FirstPrivateUseCharacter] = true;
             }
         }
 
+        if (!hasAmpersand)
+        {
+            return null;
+        }
+
         for (var offset = 0; offset < used.Length; offset++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!used[offset])
             {
                 return (char)(FirstPrivateUseCharacter + offset);
@@ -1518,11 +1651,17 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         throw new InvalidOperationException("Unable to reserve an XML text sentinel.");
     }
 
-    private static string RestoreXmlTextSentinel(string value, char? sentinel)
+    private static string RestoreXmlTextSentinel(
+        string value,
+        char? sentinel,
+        CancellationToken cancellationToken)
     {
-        return sentinel is null
+        cancellationToken.ThrowIfCancellationRequested();
+        var restored = sentinel is null
             ? value
             : value.Replace(sentinel.Value, '&');
+        cancellationToken.ThrowIfCancellationRequested();
+        return restored;
     }
 
     private static ImportFormatException InvalidLeafMarkup(
@@ -1585,20 +1724,28 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
     private static string? GetAttribute(
         SdkOpenXmlReader reader,
         string localName,
-        string namespaceUri)
+        string namespaceUri,
+        CancellationToken cancellationToken)
     {
         foreach (var attribute in reader.Attributes)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (attribute.LocalName == localName && attribute.NamespaceUri == namespaceUri)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 return attribute.Value;
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return null;
     }
 
-    private static T WithEntryFormatErrors<T>(string filePath, string entryPath, Func<T> read)
+    private static T WithEntryFormatErrors<T>(
+        string filePath,
+        string entryPath,
+        Func<T> read,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -1610,10 +1757,12 @@ internal sealed class OpenXmlWorkbookReader : IDisposable
         }
         catch (ImportFormatException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
         catch (Exception ex) when (IsPackageFailure(ex))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             throw Error(filePath, entryPath, $"解析失败（{ex.Message}）");
         }
     }

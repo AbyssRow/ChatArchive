@@ -195,7 +195,7 @@ public static class ImportDiscovery
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var matches = format.Matches(filePath);
+                var matches = format.Matches(filePath, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 return matches;
             }
@@ -291,7 +291,7 @@ public static class ImportDiscovery
                 bool matches;
                 try
                 {
-                    matches = format.Matches(full);
+                    matches = format.Matches(full, cancellationToken);
                 }
                 catch (Exception ex) when (
                     ex is IOException or UnauthorizedAccessException or ImportFormatException or JsonException)

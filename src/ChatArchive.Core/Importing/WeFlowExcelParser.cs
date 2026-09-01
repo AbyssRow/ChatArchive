@@ -8,8 +8,9 @@ internal static class WeFlowExcelParser
     private static readonly string[] PrivateHeaders = ["序号", "时间", "发送者昵称", "发送者微信ID", "发送者备注", "发送者身份", "消息类型", "内容"];
     private static readonly string[] GroupHeaders = ["序号", "时间", "发送者昵称", "发送者微信ID", "发送者备注", "群昵称", "发送者身份", "消息类型", "内容"];
 
-    internal static bool Matches(string filePath)
+    internal static bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".xlsx", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -17,18 +18,19 @@ internal static class WeFlowExcelParser
 
         try
         {
-            using var workbook = OpenXmlWorkbookReader.Open(filePath);
-            return TryReadProfile(workbook, CancellationToken.None, out _);
+            using var workbook = OpenXmlWorkbookReader.Open(filePath, cancellationToken);
+            return TryReadProfile(workbook, cancellationToken, out _);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ImportFormatException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return false;
         }
     }
 
     internal static ParsedConversation ReadConversation(string filePath, CancellationToken cancellationToken)
     {
-        using var workbook = OpenXmlWorkbookReader.Open(filePath);
+        using var workbook = OpenXmlWorkbookReader.Open(filePath, cancellationToken);
         var profile = ReadProfile(workbook, filePath, cancellationToken);
         var nativeId = MetadataValue(profile.Metadata, "微信ID");
         if (nativeId.Length == 0)
@@ -51,7 +53,7 @@ internal static class WeFlowExcelParser
         ParsedConversation conversation,
         CancellationToken cancellationToken)
     {
-        using var workbook = OpenXmlWorkbookReader.Open(filePath);
+        using var workbook = OpenXmlWorkbookReader.Open(filePath, cancellationToken);
         var profile = ReadProfile(workbook, filePath, cancellationToken);
         var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
         var messageCount = 0;
@@ -158,7 +160,15 @@ internal static class WeFlowExcelParser
     private static bool TryReadProfile(OpenXmlWorkbookReader workbook, CancellationToken cancellationToken, out Profile profile)
     {
         profile = null!;
-        var sheets = workbook.Sheets.Where(candidate => candidate.Name == "聊天记录").ToList();
+        var sheets = new List<OpenXmlSheet>();
+        foreach (var candidate in workbook.Sheets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (candidate.Name == "聊天记录")
+            {
+                sheets.Add(candidate);
+            }
+        }
         if (sheets.Count != 1)
         {
             return false;

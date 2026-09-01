@@ -353,7 +353,7 @@ public class ImportDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void ImportDiscovery_ObservesCancellationBetweenFormatSniffs()
+    public void ImportDiscovery_PropagatesCancellationThrownInsideMatcher()
     {
         File.WriteAllText(Path.Combine(_tempDir, "candidate.json"), "{}");
         using var cancellation = new CancellationTokenSource();
@@ -365,6 +365,7 @@ public class ImportDiscoveryTests : IDisposable
                 [format],
                 cancellationToken: cancellation.Token));
         Assert.Equal(1, format.MatchCount);
+        Assert.True(format.CancellationObservedInsideMatcher);
     }
 
     private static string WriteValidChatLabJsonl(string directory, string fileName, string id)
@@ -398,11 +399,24 @@ public class ImportDiscoveryTests : IDisposable
         public string Platform => "test";
         public int MatchCount { get; private set; }
 
-        public bool Matches(string filePath)
+        public bool CancellationObservedInsideMatcher { get; private set; }
+
+        public bool Matches(
+            string filePath,
+            CancellationToken cancellationToken = default)
         {
             MatchCount++;
             cancellation.Cancel();
-            return false;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return false;
+            }
+            catch (OperationCanceledException)
+            {
+                CancellationObservedInsideMatcher = true;
+                throw;
+            }
         }
 
         public ExportFile Open(

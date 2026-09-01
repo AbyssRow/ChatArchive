@@ -9,7 +9,7 @@ public class ExportFormatsTests
     private sealed class DummyFormat(string platform) : IChatExportFormat
     {
         public string Platform => platform;
-        public bool Matches(string filePath) => false;
+        public bool Matches(string filePath, CancellationToken cancellationToken = default) => false;
         public ExportFile Open(string filePath, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
     }

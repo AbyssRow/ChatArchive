@@ -14,8 +14,9 @@ internal static class QqExcelParser
     private static readonly string[] ResourceHeaders =
         ["序号", "时间", "发送者", "发送者QQ号", "资源类型", "文件名", "大小(字节)", "URL"];
 
-    internal static bool Matches(string filePath)
+    internal static bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".xlsx", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -23,18 +24,19 @@ internal static class QqExcelParser
 
         try
         {
-            using var workbook = OpenXmlWorkbookReader.Open(filePath);
-            return TryReadProfile(workbook, CancellationToken.None, out _);
+            using var workbook = OpenXmlWorkbookReader.Open(filePath, cancellationToken);
+            return TryReadProfile(workbook, cancellationToken, out _);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ImportFormatException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return false;
         }
     }
 
     internal static ParsedConversation ReadConversation(string filePath, CancellationToken cancellationToken)
     {
-        using var workbook = OpenXmlWorkbookReader.Open(filePath);
+        using var workbook = OpenXmlWorkbookReader.Open(filePath, cancellationToken);
         _ = ReadProfile(workbook, filePath, cancellationToken);
         return new ParsedConversation(
             "qq",
@@ -49,7 +51,7 @@ internal static class QqExcelParser
         ParsedConversation conversation,
         CancellationToken cancellationToken)
     {
-        using var workbook = OpenXmlWorkbookReader.Open(filePath);
+        using var workbook = OpenXmlWorkbookReader.Open(filePath, cancellationToken);
         var profile = ReadProfile(workbook, filePath, cancellationToken);
         var keyCounts = CountMessageKeys(workbook, profile, filePath, cancellationToken);
         if (keyCounts.Count == 0)
@@ -237,8 +239,20 @@ internal static class QqExcelParser
         out Profile profile)
     {
         profile = null!;
-        var messageSheets = workbook.Sheets.Where(sheet => sheet.Name == "聊天记录").ToList();
-        var resourceSheets = workbook.Sheets.Where(sheet => sheet.Name == "资源列表").ToList();
+        var messageSheets = new List<OpenXmlSheet>();
+        var resourceSheets = new List<OpenXmlSheet>();
+        foreach (var sheet in workbook.Sheets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (sheet.Name == "聊天记录")
+            {
+                messageSheets.Add(sheet);
+            }
+            else if (sheet.Name == "资源列表")
+            {
+                resourceSheets.Add(sheet);
+            }
+        }
         if (messageSheets.Count != 1 || resourceSheets.Count > 1)
         {
             return false;

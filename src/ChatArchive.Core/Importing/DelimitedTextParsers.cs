@@ -7,7 +7,9 @@ namespace ChatArchive.Core.Importing;
 /// <summary>RFC 4180 compatible streaming CSV reader.</summary>
 public static class Rfc4180CsvReader
 {
-    public static IEnumerable<IReadOnlyList<string>> ReadRecords(TextReader reader)
+    public static IEnumerable<IReadOnlyList<string>> ReadRecords(
+        TextReader reader,
+        CancellationToken cancellationToken = default)
     {
         var record = new List<string>();
         var field = new StringBuilder();
@@ -15,7 +17,9 @@ public static class Rfc4180CsvReader
         var hasField = false;
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var next = reader.Read();
+            cancellationToken.ThrowIfCancellationRequested();
             if (next == -1)
             {
                 if (hasField || record.Count > 0)
@@ -67,21 +71,28 @@ public static class WeFlowCsvParser
 {
     private static readonly string[] CurrentHeaders = ["id", "MsgSvrID", "type_name", "is_sender", "talker", "msg", "src", "CreateTime"];
 
-    public static bool Matches(string filePath)
+    public static bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".csv", StringComparison.OrdinalIgnoreCase)) return false;
         try
         {
             using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(stream, Encoding.UTF8, true);
-            return HeadersMatch(Rfc4180CsvReader.ReadRecords(reader).FirstOrDefault());
+            return HeadersMatch(Rfc4180CsvReader.ReadRecords(reader, cancellationToken).FirstOrDefault());
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return false;
+        }
     }
 
-    public static ParsedConversation ReadConversation(string filePath)
+    public static ParsedConversation ReadConversation(
+        string filePath,
+        CancellationToken cancellationToken = default)
     {
-        if (!Matches(filePath)) throw new ImportFormatException(filePath, "不是当前 WeFlow CSV 导出");
+        if (!Matches(filePath, cancellationToken)) throw new ImportFormatException(filePath, "不是当前 WeFlow CSV 导出");
         return new ParsedConversation("wechat", "wechat-default", ImportText.StableFileNativeId(filePath), "private", Path.GetFileNameWithoutExtension(filePath));
     }
 
@@ -90,10 +101,10 @@ public static class WeFlowCsvParser
         var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 64 * 1024, FileOptions.SequentialScan);
         using var reader = new StreamReader(stream, Encoding.UTF8, true);
-        if (!HeadersMatch(Rfc4180CsvReader.ReadRecords(reader).FirstOrDefault())) throw new ImportFormatException(filePath, "不是当前 WeFlow CSV 导出");
+        if (!HeadersMatch(Rfc4180CsvReader.ReadRecords(reader, cancellationToken).FirstOrDefault())) throw new ImportFormatException(filePath, "不是当前 WeFlow CSV 导出");
 
         var rowNumber = 1;
-        foreach (var row in Rfc4180CsvReader.ReadRecords(reader))
+        foreach (var row in Rfc4180CsvReader.ReadRecords(reader, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
             rowNumber++;
@@ -147,8 +158,9 @@ public static class WeFlowMarkdownParser
     private static readonly Regex MessageHeaderRegex = new(@"^##\s+(?<time>\d{4}-\d{1,2}-\d{1,2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\s+(?<sender>.+?)\s*$", RegexOptions.Compiled);
     private static readonly Regex MarkdownLinkRegex = new(@"!?\[(?<label>[^\]]*)\]\((?<path>[^)]+)\)", RegexOptions.Compiled);
 
-    public static bool Matches(string filePath)
+    public static bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".md", StringComparison.OrdinalIgnoreCase)) return false;
         try
         {
@@ -159,9 +171,16 @@ public static class WeFlowMarkdownParser
             var sessionType = false;
             var messageHeader = false;
             var nonEmptyLines = 0;
-            string? line;
-            while (nonEmptyLines < 100 && (line = reader.ReadLine()) is not null)
+            while (nonEmptyLines < 100)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var line = reader.ReadLine();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (line is null)
+                {
+                    break;
+                }
+
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 nonEmptyLines++;
                 exporter |= string.Equals(line, "- 导出工具: WeFlow", StringComparison.Ordinal);
@@ -171,15 +190,22 @@ public static class WeFlowMarkdownParser
                 var header = MessageHeaderRegex.Match(line);
                 messageHeader |= header.Success && ImportText.TryParseFlexibleTimestamp(header.Groups["time"].Value, out _);
             }
+            cancellationToken.ThrowIfCancellationRequested();
             return exporter && sessionId && sessionType && messageHeader;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return false;
+        }
     }
 
-    public static ParsedConversation ReadConversation(string filePath)
+    public static ParsedConversation ReadConversation(
+        string filePath,
+        CancellationToken cancellationToken = default)
     {
-        if (!Matches(filePath)) throw new ImportFormatException(filePath, "不是当前 WeFlow Markdown 导出");
-        var metadata = ReadMetadata(filePath);
+        if (!Matches(filePath, cancellationToken)) throw new ImportFormatException(filePath, "不是当前 WeFlow Markdown 导出");
+        var metadata = ReadMetadata(filePath, cancellationToken);
         return new ParsedConversation("wechat", "wechat-default", metadata.SessionId, metadata.Kind, metadata.Title);
     }
 
@@ -217,8 +243,9 @@ public static class WeFlowMarkdownParser
         yield return BuildMessage(filePath, exportRoot, conversation, index, timestamp, sender, body);
     }
 
-    private static Metadata ReadMetadata(string filePath)
+    private static Metadata ReadMetadata(string filePath, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -226,9 +253,16 @@ public static class WeFlowMarkdownParser
             string? title = null;
             string? sessionId = null;
             string? kind = null;
-            string? line;
-            while ((line = reader.ReadLine()) is not null)
+            while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var line = reader.ReadLine();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (line is null)
+                {
+                    break;
+                }
+
                 if (title is null && line.StartsWith("# ", StringComparison.Ordinal)) title = line[2..].Trim();
                 var id = SessionIdRegex.Match(line);
                 if (id.Success) sessionId = id.Groups["id"].Value.Trim();
@@ -305,31 +339,50 @@ public static class WeFlowTextParser
 {
     private static readonly Regex MessageHeaderRegex = new(@"^(?<time>\d{4}-\d{1,2}-\d{1,2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\s+'(?<sender>[^'\r\n]+)'\s*$", RegexOptions.Compiled);
 
-    public static bool Matches(string filePath)
+    public static bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".txt", StringComparison.OrdinalIgnoreCase)) return false;
         try
         {
             using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(stream, Encoding.UTF8, true);
             var awaitingContent = false;
-            string? line;
-            while ((line = reader.ReadLine()) is not null)
+            while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var line = reader.ReadLine();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (line is null)
+                {
+                    break;
+                }
+
                 var header = MessageHeaderRegex.Match(line);
                 var isValidHeader = header.Success
                     && ImportText.TryParseFlexibleTimestamp(header.Groups["time"].Value, out _);
-                if (awaitingContent && !isValidHeader) return true;
+                if (awaitingContent && !isValidHeader)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return true;
+                }
                 awaitingContent = isValidHeader;
             }
+            cancellationToken.ThrowIfCancellationRequested();
             return false;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return false;
+        }
     }
 
-    public static ParsedConversation ReadConversation(string filePath)
+    public static ParsedConversation ReadConversation(
+        string filePath,
+        CancellationToken cancellationToken = default)
     {
-        if (!Matches(filePath)) throw new ImportFormatException(filePath, "不是当前 WeFlow TXT 导出");
+        if (!Matches(filePath, cancellationToken)) throw new ImportFormatException(filePath, "不是当前 WeFlow TXT 导出");
         return new ParsedConversation("wechat", "wechat-default", ImportText.StableFileNativeId(filePath), "private", Path.GetFileNameWithoutExtension(filePath));
     }
 

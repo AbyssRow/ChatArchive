@@ -10,7 +10,7 @@ public interface IChatExportFormat
     string Platform { get; }
 
     /// <summary>判断一个文件是否属于本格式（轻量嗅探，可读文件头）。</summary>
-    bool Matches(string filePath);
+    bool Matches(string filePath, CancellationToken cancellationToken = default);
 
     /// <summary>打开文件：解析文档、读取会话信息，并提供消息枚举。</summary>
     ExportFile Open(string filePath, CancellationToken cancellationToken = default);

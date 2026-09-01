@@ -15,8 +15,9 @@ public sealed class WeFlowSqlExportFormat : IChatExportFormat
 
     public string Platform => "wechat";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!SqlExportSupport.IsSql(filePath))
         {
             return false;
@@ -25,7 +26,7 @@ public sealed class WeFlowSqlExportFormat : IChatExportFormat
         try
         {
             var found = false;
-            foreach (var row in SqlExportSupport.ReadRows(filePath, CancellationToken.None))
+            foreach (var row in SqlExportSupport.ReadRows(filePath, cancellationToken))
             {
                 if (!string.Equals(row.Table, Table, StringComparison.Ordinal)
                     || !SqlExportSupport.HasExactColumns(row, Columns))
@@ -38,6 +39,7 @@ public sealed class WeFlowSqlExportFormat : IChatExportFormat
         }
         catch (Exception ex) when (SqlExportSupport.IsMatchFailure(ex))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return false;
         }
     }
@@ -173,8 +175,9 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
 
     public string Platform => "wechat";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!SqlExportSupport.IsSql(filePath))
         {
             return false;
@@ -182,11 +185,12 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
 
         try
         {
-            _ = ReadProfile(filePath, CancellationToken.None);
+            _ = ReadProfile(filePath, cancellationToken);
             return true;
         }
         catch (Exception ex) when (SqlExportSupport.IsMatchFailure(ex))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return false;
         }
     }

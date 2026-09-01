@@ -631,7 +631,9 @@ internal static class SqlInsertReader
         internal int Read()
         {
             CancellationToken.ThrowIfCancellationRequested();
-            return _pushback.Count > 0 ? _pushback.Pop() : reader.Read();
+            var value = _pushback.Count > 0 ? _pushback.Pop() : reader.Read();
+            CancellationToken.ThrowIfCancellationRequested();
+            return value;
         }
 
         internal int Peek()

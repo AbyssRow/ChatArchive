@@ -649,12 +649,31 @@ public static class ImportText
         return extension.Length > 0 && MimeByExtension.TryGetValue(extension, out var mime) ? mime : null;
     }
 
-    public static JsonDocument ParseDocument(string filePath)
+    public static JsonDocument ParseDocument(
+        string filePath,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            var text = File.ReadAllText(filePath);
-            return JsonDocument.Parse(text);
+            using var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var document = JsonDocument.ParseAsync(
+                    stream,
+                    cancellationToken: cancellationToken)
+                .GetAwaiter()
+                .GetResult();
+            cancellationToken.ThrowIfCancellationRequested();
+            return document;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (JsonException ex)
         {

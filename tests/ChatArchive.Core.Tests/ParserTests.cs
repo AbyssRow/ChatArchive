@@ -1,3 +1,6 @@
+using System.IO.Pipes;
+using System.Runtime.Versioning;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ChatArchive.Core.Importing;
@@ -442,6 +445,18 @@ public class ParserTests : IDisposable
         Assert.Equal("image", msg2.MediaType);
         var attachment = Assert.Single(msg2.Attachments);
         Assert.Equal("resources/images/img.jpg", attachment.DeclaredPath);
+    }
+
+    [Fact]
+    public void ParseDocument_PropagatesCancellationBeforeWholeDocumentRead()
+    {
+        var path = Path.Combine(_dir, "cancel.json");
+        File.WriteAllText(path, "{}");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            ImportText.ParseDocument(path, cancellation.Token));
     }
 
     [Fact]
@@ -1413,6 +1428,63 @@ public class ParserTests : IDisposable
         Assert.DoesNotContain(discovered, d => d.FilePath == Path.GetFullPath(generic));
     }
 
+    [Fact]
+    [SupportedOSPlatform("windows")]
+    public async Task WeFlowSql_Matches_PropagatesCancellationWhileSniffing()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var pipeName = $"chatarchive-match-{Guid.NewGuid():N}.sql";
+        var path = $@"\\.\pipe\{pipeName}";
+        using var server = new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.Out,
+            maxNumberOfServerInstances: 1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous);
+        using var cancellation = new CancellationTokenSource();
+        var matchTask = Task.Run(() =>
+            new WeFlowSqlExportFormat().Matches(path, cancellation.Token));
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await server.WaitForConnectionAsync(timeout.Token);
+            await server.WriteAsync(Encoding.UTF8.GetBytes("--x"), timeout.Token);
+            await server.FlushAsync(timeout.Token);
+            await Task.Run(() => server.WaitForPipeDrain()).WaitAsync(timeout.Token);
+
+            cancellation.Cancel();
+            try
+            {
+                await server.WriteAsync(Encoding.UTF8.GetBytes("y"), timeout.Token);
+                await server.FlushAsync(timeout.Token);
+            }
+            catch (IOException) when (cancellation.IsCancellationRequested)
+            {
+                // The parser may observe cancellation before its next blocking read.
+            }
+
+            var error = await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+                await matchTask.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Contains(nameof(SqlInsertReader), error.StackTrace ?? string.Empty, StringComparison.Ordinal);
+        }
+        finally
+        {
+            server.Dispose();
+            try
+            {
+                await matchTask.WaitAsync(TimeSpan.FromSeconds(1));
+            }
+            catch
+            {
+                // The asserted cancellation is expected; disposal only releases a failed regression.
+            }
+        }
+    }
+
     [Theory]
     [InlineData("2024年03月15日 14:30:00")]
     [InlineData("2024-03-15 14:30:00")]
@@ -1708,7 +1780,7 @@ public class ParserTests : IDisposable
     {
         public string Platform => "test";
 
-        public bool Matches(string filePath) => false;
+        public bool Matches(string filePath, CancellationToken cancellationToken = default) => false;
 
         public ExportFile Open(string filePath, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

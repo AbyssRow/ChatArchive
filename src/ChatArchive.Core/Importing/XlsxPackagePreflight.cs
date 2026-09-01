@@ -56,8 +56,11 @@ internal static class XlsxPackagePreflight
     private const string ContentTypesEntry = "[Content_Types].xml";
     private const string ContentTypesNamespace = "http://schemas.openxmlformats.org/package/2006/content-types";
 
-    internal static XlsxPackageHandle OpenValidated(string filePath)
+    internal static XlsxPackageHandle OpenValidated(
+        string filePath,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".xlsx", StringComparison.OrdinalIgnoreCase))
         {
             throw new ImportFormatException(filePath, "XLSX 导入只接受 .xlsx 文件");
@@ -67,14 +70,17 @@ internal static class XlsxPackagePreflight
         try
         {
             stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            cancellationToken.ThrowIfCancellationRequested();
             IReadOnlySet<string> entries;
             PackageContentTypes contentTypes;
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true))
             {
-                entries = IndexEntries(archive, filePath);
-                contentTypes = ReadContentTypes(archive, entries, filePath);
+                cancellationToken.ThrowIfCancellationRequested();
+                entries = IndexEntries(archive, filePath, cancellationToken);
+                contentTypes = ReadContentTypes(archive, entries, filePath, cancellationToken);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             stream.Position = 0;
             var result = new XlsxPackageHandle(
                 stream, entries, contentTypes.Overrides, contentTypes.Defaults);
@@ -82,6 +88,11 @@ internal static class XlsxPackagePreflight
             return result;
         }
         catch (ImportFormatException)
+        {
+            stream?.Dispose();
+            throw;
+        }
+        catch (OperationCanceledException)
         {
             stream?.Dispose();
             throw;
@@ -108,13 +119,16 @@ internal static class XlsxPackagePreflight
             || path.StartsWith("xl/embeddings/", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static IReadOnlySet<string> IndexEntries(ZipArchive archive, string filePath)
+    private static IReadOnlySet<string> IndexEntries(
+        ZipArchive archive,
+        string filePath,
+        CancellationToken cancellationToken)
     {
         var entries = new HashSet<string>(StringComparer.Ordinal);
         var entryNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in archive.Entries)
         {
-            CancellationToken.None.ThrowIfCancellationRequested();
+            cancellationToken.ThrowIfCancellationRequested();
             var path = entry.FullName;
             ValidateEntryPath(path, filePath);
             var identity = path.EndsWith("/", StringComparison.Ordinal) ? path[..^1] : path;
@@ -171,7 +185,8 @@ internal static class XlsxPackagePreflight
     private static PackageContentTypes ReadContentTypes(
         ZipArchive archive,
         IReadOnlySet<string> entryPaths,
-        string filePath)
+        string filePath,
+        CancellationToken cancellationToken)
     {
         return WithEntryFormatErrors(filePath, ContentTypesEntry, () =>
         {
@@ -183,10 +198,19 @@ internal static class XlsxPackagePreflight
             var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var sawTypes = false;
+            cancellationToken.ThrowIfCancellationRequested();
             using var stream = entry.Open();
             using var reader = CreateXmlReader(stream);
-            while (reader.Read())
+            while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var hasNode = reader.Read();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!hasNode)
+                {
+                    break;
+                }
+
                 if (reader.NodeType == XmlNodeType.Element && reader.Depth == 0)
                 {
                     if (reader.LocalName != "Types" || reader.NamespaceURI != ContentTypesNamespace)
@@ -203,7 +227,6 @@ internal static class XlsxPackagePreflight
                     continue;
                 }
 
-                CancellationToken.None.ThrowIfCancellationRequested();
                 var contentType = reader.GetAttribute("ContentType");
                 if (reader.Depth != 1 || reader.LocalName is not ("Default" or "Override"))
                 {
@@ -263,7 +286,7 @@ internal static class XlsxPackagePreflight
             }
 
             return new PackageContentTypes(overrides, defaults);
-        });
+        }, cancellationToken);
     }
 
     private static void RejectForbiddenContentType(string contentType, string filePath)
@@ -293,7 +316,11 @@ internal static class XlsxPackagePreflight
         });
     }
 
-    private static T WithEntryFormatErrors<T>(string filePath, string entryPath, Func<T> read)
+    private static T WithEntryFormatErrors<T>(
+        string filePath,
+        string entryPath,
+        Func<T> read,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -301,6 +328,7 @@ internal static class XlsxPackagePreflight
         }
         catch (ImportFormatException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
         catch (Exception ex) when (ex is
@@ -311,6 +339,7 @@ internal static class XlsxPackagePreflight
             or ArgumentException
             or NotSupportedException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             throw Error(filePath, entryPath, $"解析失败（{ex.Message}）");
         }
     }

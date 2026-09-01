@@ -366,14 +366,52 @@ public class SqlScriptParserTests
     }
 
     [Fact]
-    public void Enumerate_ObservesCancellation()
+    public void Enumerate_ObservesCancellationInsideCharacterReadLoop()
     {
-        using var reader = new StringReader("INSERT INTO messages (id) VALUES (1);");
         using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
+        var sql = "--" + new string('x', 10_000)
+            + Environment.NewLine
+            + "INSERT INTO messages (id) VALUES (1);";
+        using var reader = new CancellingTextReader(sql, cancellation, cancelAfterCharacters: 64);
 
         Assert.Throws<OperationCanceledException>(() =>
             SqlInsertReader.Enumerate(reader, cancellation.Token).ToList());
+
+        Assert.Equal(64, reader.CharactersRead);
+        Assert.True(reader.CharactersRead < sql.Length);
+    }
+
+    private sealed class CancellingTextReader(
+        string text,
+        CancellationTokenSource cancellation,
+        int cancelAfterCharacters) : TextReader
+    {
+        private readonly StringReader _inner = new(text);
+
+        internal int CharactersRead { get; private set; }
+
+        public override int Read()
+        {
+            var value = _inner.Read();
+            if (value >= 0)
+            {
+                CharactersRead++;
+                if (CharactersRead == cancelAfterCharacters)
+                {
+                    cancellation.Cancel();
+                }
+            }
+            return value;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _inner.Dispose();
+            }
+            base.Dispose(disposing);
+        }
     }
 
     private sealed class CountingTextReader(string text) : TextReader

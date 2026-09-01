@@ -44,7 +44,7 @@ internal static class QqChunkManifest
             var fullManifest = ValidateManifestFile(manifestPath);
             var exportRoot = Path.GetDirectoryName(fullManifest)!;
 
-            using var document = ImportText.ParseDocument(fullManifest);
+            using var document = ImportText.ParseDocument(fullManifest, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
@@ -132,7 +132,11 @@ internal static class QqChunkManifest
         string exportRoot,
         CancellationToken cancellationToken)
     {
-        var candidates = new List<string>();
+        var comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        var validated = new List<string>();
+        var seen = new HashSet<string>(comparer);
         var chunksPath = Path.Combine(exportRoot, "chunks");
         if (Path.Exists(chunksPath))
         {
@@ -144,41 +148,71 @@ internal static class QqChunkManifest
                     "legacy chunks 目录不是普通目录或包含重解析点",
                     "chunks");
             }
-            candidates.AddRange(Directory.GetFiles(
+            AddValidatedCandidates(Directory.EnumerateFiles(
                 safeChunks,
                 "*.jsonl",
                 SearchOption.TopDirectoryOnly));
         }
-        candidates.AddRange(Directory.GetFiles(
+        AddValidatedCandidates(Directory.EnumerateFiles(
             exportRoot,
             "*.jsonl",
             SearchOption.TopDirectoryOnly));
 
-        var comparer = OperatingSystem.IsWindows()
-            ? StringComparer.OrdinalIgnoreCase
-            : StringComparer.Ordinal;
-        var validated = new List<string>();
-        foreach (var candidate in candidates)
+        try
         {
+            var sorted = validated
+                .OrderBy(
+                    path =>
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var fileName = Path.GetFileName(path);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        return fileName;
+                    },
+                    new CancellationAwareNaturalStringComparer(cancellationToken))
+                .ToList();
             cancellationToken.ThrowIfCancellationRequested();
-            var relative = Path.GetRelativePath(exportRoot, candidate).Replace('\\', '/');
-            var safe = ImportText.ResolveManifestRegularFileUnderRoot(exportRoot, relative);
-            if (safe is null)
-            {
-                throw InvalidManifest(
-                    manifestPath,
-                    "legacy 分块不是普通文件或包含重解析点",
-                    relative);
-            }
-            if (!validated.Contains(safe, comparer))
-            {
-                validated.Add(safe);
-            }
+            return sorted;
+        }
+        catch (InvalidOperationException ex) when (
+            ex.InnerException is OperationCanceledException cancellation)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(cancellation)
+                .Throw();
+            throw;
         }
 
-        return validated
-            .OrderBy(Path.GetFileName, NaturalStringComparer.Instance)
-            .ToList();
+        void AddValidatedCandidates(IEnumerable<string> candidates)
+        {
+            using var enumerator = candidates.GetEnumerator();
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var hasCandidate = enumerator.MoveNext();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!hasCandidate)
+                {
+                    return;
+                }
+
+                var candidate = enumerator.Current;
+                var relative = Path.GetRelativePath(exportRoot, candidate).Replace('\\', '/');
+                var safe = ImportText.ResolveManifestRegularFileUnderRoot(exportRoot, relative);
+                if (safe is null)
+                {
+                    throw InvalidManifest(
+                        manifestPath,
+                        "legacy 分块不是普通文件或包含重解析点",
+                        relative);
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                if (seen.Add(safe))
+                {
+                    validated.Add(safe);
+                }
+            }
+        }
     }
 
     private static string ResolveChunkDeclaration(
@@ -374,6 +408,18 @@ internal static class QqChunkManifest
             }
 
             return x.Length.CompareTo(y.Length);
+        }
+    }
+
+    private sealed class CancellationAwareNaturalStringComparer(
+        CancellationToken cancellationToken) : IComparer<string?>
+    {
+        public int Compare(string? x, string? y)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = NaturalStringComparer.Instance.Compare(x, y);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
         }
     }
 }

@@ -222,9 +222,10 @@ public sealed class ImportService
                 }
             }
 
-            var format = _formats.FirstOrDefault(f => f.Matches(filePath))
+            var format = _formats.FirstOrDefault(f => f.Matches(filePath, cancellationToken))
                 ?? _formats.FirstOrDefault(f => string.Equals(f.Platform, platform, StringComparison.OrdinalIgnoreCase))
                 ?? throw new ImportFormatException(filePath, $"未找到支持的导出格式解析器（平台: {platform}）");
+            cancellationToken.ThrowIfCancellationRequested();
             using var exportFile = format.Open(filePath, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 

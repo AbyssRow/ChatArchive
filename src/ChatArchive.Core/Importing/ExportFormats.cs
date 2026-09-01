@@ -10,8 +10,9 @@ public sealed class QqExportFormat : IChatExportFormat
 
     public string Platform => "qq";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase)
             || string.Equals(Path.GetFileName(filePath), "manifest.json", StringComparison.OrdinalIgnoreCase))
         {
@@ -20,19 +21,20 @@ public sealed class QqExportFormat : IChatExportFormat
 
         if (!ChunkedJsonReader.ContainsRootProperties(
                 filePath,
-                new[] { "chatInfo" }))
+                new[] { "chatInfo" },
+                cancellationToken))
         {
             return false;
         }
 
         JsonObject? metadata = null;
-        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }))
+        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }, cancellationToken))
         {
-            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "metadata");
+            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "metadata", cancellationToken);
         }
-        else if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "exporter" }))
+        else if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "exporter" }, cancellationToken))
         {
-            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "exporter");
+            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "exporter", cancellationToken);
         }
 
         if (metadata == null)
@@ -100,30 +102,33 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
 
     public string Platform => "qq";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetFileName(filePath), "manifest.json", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
         var safeManifest = QqChunkManifest.ValidateManifestFile(filePath);
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (!ChunkedJsonReader.ContainsRootProperties(
                 safeManifest,
-                new[] { "chatInfo" }))
+                new[] { "chatInfo" },
+                cancellationToken))
         {
             return false;
         }
 
         JsonObject? metadata = null;
-        if (ChunkedJsonReader.ContainsRootProperties(safeManifest, new[] { "metadata" }))
+        if (ChunkedJsonReader.ContainsRootProperties(safeManifest, new[] { "metadata" }, cancellationToken))
         {
-            metadata = ChunkedJsonReader.ReadObjectProperty(safeManifest, "metadata");
+            metadata = ChunkedJsonReader.ReadObjectProperty(safeManifest, "metadata", cancellationToken);
         }
-        else if (ChunkedJsonReader.ContainsRootProperties(safeManifest, new[] { "exporter" }))
+        else if (ChunkedJsonReader.ContainsRootProperties(safeManifest, new[] { "exporter" }, cancellationToken))
         {
-            metadata = ChunkedJsonReader.ReadObjectProperty(safeManifest, "exporter");
+            metadata = ChunkedJsonReader.ReadObjectProperty(safeManifest, "exporter", cancellationToken);
         }
 
         if (metadata == null)
@@ -137,7 +142,7 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
             return false;
         }
 
-        _ = QqChunkManifest.ResolveChunkFiles(filePath);
+        _ = QqChunkManifest.ResolveChunkFiles(filePath, cancellationToken);
         return true;
     }
 
@@ -268,8 +273,9 @@ public sealed class WeFlowExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -277,7 +283,8 @@ public sealed class WeFlowExportFormat : IChatExportFormat
 
         return ChunkedJsonReader.ContainsRootProperties(
             filePath,
-            new[] { "weflow", "session" });
+            new[] { "weflow", "session" },
+            cancellationToken);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
@@ -323,8 +330,9 @@ public sealed class CipherTalkDetailedJsonFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -332,12 +340,13 @@ public sealed class CipherTalkDetailedJsonFormat : IChatExportFormat
 
         if (!ChunkedJsonReader.ContainsRootProperties(
                 filePath,
-                new[] { "exportInfo", "session", "messages" }))
+                new[] { "exportInfo", "session", "messages" },
+                cancellationToken))
         {
             return false;
         }
 
-        var exportInfo = ChunkedJsonReader.ReadObjectProperty(filePath, "exportInfo");
+        var exportInfo = ChunkedJsonReader.ReadObjectProperty(filePath, "exportInfo", cancellationToken);
         var generator = ImportText.Clean(exportInfo["generator"]);
         var format = ImportText.Clean(exportInfo["format"]);
         return string.Equals(generator, "CipherTalk", StringComparison.OrdinalIgnoreCase)
@@ -390,8 +399,9 @@ public sealed class ChatLabJsonExportFormat : IChatExportFormat
 
     public string Platform => "wechat";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -399,12 +409,13 @@ public sealed class ChatLabJsonExportFormat : IChatExportFormat
 
         if (!ChunkedJsonReader.ContainsRootProperties(
                 filePath,
-                new[] { "chatlab", "meta" }))
+                new[] { "chatlab", "meta" },
+                cancellationToken))
         {
             return false;
         }
 
-        var chatlab = ChunkedJsonReader.ReadObjectProperty(filePath, "chatlab");
+        var chatlab = ChunkedJsonReader.ReadObjectProperty(filePath, "chatlab", cancellationToken);
         var version = ImportText.Clean(chatlab["version"]);
         return string.Equals(version, SupportedVersion, StringComparison.Ordinal);
     }
@@ -484,8 +495,9 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
 
     public string Platform => "wechat";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             using var stream = new FileStream(
@@ -497,9 +509,16 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
                 FileOptions.SequentialScan);
             using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
 
-            string? line;
-            while ((line = reader.ReadLine()) != null)
+            while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var line = reader.ReadLine();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (line is null)
+                {
+                    return false;
+                }
+
                 var trimmed = line.Trim();
                 if (trimmed.Length == 0)
                 {
@@ -508,31 +527,36 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
 
                 if (!trimmed.Contains("\"_type\"", StringComparison.Ordinal) || !trimmed.Contains("\"chatlab\"", StringComparison.Ordinal))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     return false;
                 }
 
-                if (System.Text.Json.Nodes.JsonNode.Parse(trimmed) is System.Text.Json.Nodes.JsonObject obj)
+                var parsed = System.Text.Json.Nodes.JsonNode.Parse(trimmed);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (parsed is System.Text.Json.Nodes.JsonObject obj)
                 {
                     var typeTag = ImportText.Clean(obj["_type"]);
                     if (!string.Equals(typeTag, "header", StringComparison.OrdinalIgnoreCase))
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         return false;
                     }
 
                     if (obj["chatlab"] is System.Text.Json.Nodes.JsonObject chatlab)
                     {
                         var version = ImportText.Clean(chatlab["version"]);
+                        cancellationToken.ThrowIfCancellationRequested();
                         return string.Equals(version, SupportedVersion, StringComparison.Ordinal);
                     }
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 return false;
             }
-
-            return false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return false;
         }
     }
@@ -661,14 +685,14 @@ public sealed class WeFlowCsvExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
-        return WeFlowCsvParser.Matches(filePath);
+        return WeFlowCsvParser.Matches(filePath, cancellationToken);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var conversation = WeFlowCsvParser.ReadConversation(filePath);
+        var conversation = WeFlowCsvParser.ReadConversation(filePath, cancellationToken);
         return new ExportFile(
             conversation,
             token => WeFlowCsvParser.IterateMessages(filePath, conversation, token));
@@ -680,14 +704,14 @@ public sealed class WeFlowMarkdownExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
-        return WeFlowMarkdownParser.Matches(filePath);
+        return WeFlowMarkdownParser.Matches(filePath, cancellationToken);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var conversation = WeFlowMarkdownParser.ReadConversation(filePath);
+        var conversation = WeFlowMarkdownParser.ReadConversation(filePath, cancellationToken);
         return new ExportFile(
             conversation,
             token => WeFlowMarkdownParser.IterateMessages(filePath, conversation, token));
@@ -699,9 +723,9 @@ public sealed class QqTextExportFormat : IChatExportFormat
 {
     public string Platform => "qq";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
-        return QqTextParser.Matches(filePath);
+        return QqTextParser.Matches(filePath, cancellationToken);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
@@ -718,14 +742,14 @@ public sealed class WeFlowTextExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
-        return WeFlowTextParser.Matches(filePath);
+        return WeFlowTextParser.Matches(filePath, cancellationToken);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var conversation = WeFlowTextParser.ReadConversation(filePath);
+        var conversation = WeFlowTextParser.ReadConversation(filePath, cancellationToken);
         return new ExportFile(
             conversation,
             token => WeFlowTextParser.IterateMessages(filePath, conversation, token));

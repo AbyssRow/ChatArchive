@@ -19,8 +19,9 @@ internal static class CipherTalkExcelParser
         [.. CoreHeaders, "头像链接", "聊天记录详情"],
     ];
 
-    internal static bool Matches(string filePath)
+    internal static bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".xlsx", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -28,18 +29,19 @@ internal static class CipherTalkExcelParser
 
         try
         {
-            using var workbook = OpenXmlWorkbookReader.Open(filePath);
-            return TryReadProfile(workbook, CancellationToken.None, out _);
+            using var workbook = OpenXmlWorkbookReader.Open(filePath, cancellationToken);
+            return TryReadProfile(workbook, cancellationToken, out _);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ImportFormatException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return false;
         }
     }
 
     internal static ParsedConversation ReadConversation(string filePath, CancellationToken cancellationToken)
     {
-        using var workbook = OpenXmlWorkbookReader.Open(filePath);
+        using var workbook = OpenXmlWorkbookReader.Open(filePath, cancellationToken);
         var profile = ReadProfile(workbook, filePath, cancellationToken);
         return new ParsedConversation(
             "wechat",
@@ -54,7 +56,7 @@ internal static class CipherTalkExcelParser
         ParsedConversation conversation,
         CancellationToken cancellationToken)
     {
-        using var workbook = OpenXmlWorkbookReader.Open(filePath);
+        using var workbook = OpenXmlWorkbookReader.Open(filePath, cancellationToken);
         var profile = ReadProfile(workbook, filePath, cancellationToken);
         var messageCount = 0;
         foreach (var row in workbook.ReadRows(profile.Sheet, cancellationToken))

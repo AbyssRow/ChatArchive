@@ -22,8 +22,9 @@ public static class QqTextParser
     private static readonly Regex SenderRegex = new(@"^(?<value>.+):$", RegexOptions.Compiled);
     private static readonly Regex SenderTitleRegex = new(@"^\[(?<title>[^\]]+)\]\s+(?<sender>.+)$", RegexOptions.Compiled);
 
-    public static bool Matches(string filePath)
+    public static bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".txt", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -31,11 +32,12 @@ public static class QqTextParser
 
         try
         {
-            _ = ReadHeader(filePath, CancellationToken.None);
+            _ = ReadHeader(filePath, cancellationToken);
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ImportFormatException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return false;
         }
     }
@@ -291,17 +293,26 @@ public static class QqTextParser
         cancellationToken.ThrowIfCancellationRequested();
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.SequentialScan);
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        if (!string.Equals(reader.ReadLine(), Signature, StringComparison.Ordinal))
+        cancellationToken.ThrowIfCancellationRequested();
+        var signature = reader.ReadLine();
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!string.Equals(signature, Signature, StringComparison.Ordinal))
         {
             throw new ImportFormatException(filePath, "不是 QQ Chat Exporter V5 TXT 导出");
         }
 
         string? title = null;
         string? type = null;
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var line = reader.ReadLine();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (line is null)
+            {
+                break;
+            }
+
             var titleMatch = TitleRegex.Match(line);
             var typeMatch = ChatTypeRegex.Match(line);
             if (titleMatch.Success)
@@ -318,6 +329,8 @@ public static class QqTextParser
                 break;
             }
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(type))
         {
