@@ -1,6 +1,7 @@
 using ChatArchive.App.ViewModels;
 using ChatArchive.Core.Data;
 using ChatArchive.Core.Models;
+using ChatArchive.Core.Repositories;
 using Xunit;
 
 namespace ChatArchive.App.Tests;
@@ -82,6 +83,93 @@ public sealed class SearchStateTests
         var proxy = new SearchHitProxy(hit);
         Assert.NotNull(proxy.TimeText);
         Assert.NotEmpty(proxy.TimeText);
+    }
+
+    [Fact]
+    public void LoadOptions_newer_success_wins_when_older_success_finishes_last()
+    {
+        var first = new TaskCompletionSource<SearchOptionsSnapshot>();
+        var second = new TaskCompletionSource<SearchOptionsSnapshot>();
+        var loads = new Queue<Task<SearchOptionsSnapshot>>([first.Task, second.Task]);
+        var viewModel = CreateOptionsViewModel(() => loads.Dequeue());
+        var notifications = new List<(long Generation, bool Success)>();
+        viewModel.OptionsReloaded += (generation, success) =>
+            notifications.Add((generation, success));
+
+        var generation1 = viewModel.LoadOptions();
+        var generation2 = viewModel.LoadOptions();
+        second.SetResult(OptionsSnapshot(2, "新会话", "image"));
+
+        Assert.Equal(generation1 + 1, generation2);
+        Assert.Equal((generation2, true), Assert.Single(notifications));
+        Assert.Equal(new long?[] { null, 2 }, viewModel.ConversationOptions.Select(item => item.Id));
+
+        first.SetResult(OptionsSnapshot(1, "旧会话", "text"));
+
+        Assert.Single(notifications);
+        Assert.Equal(new long?[] { null, 2 }, viewModel.ConversationOptions.Select(item => item.Id));
+        Assert.Equal(new string?[] { null, "image" }, viewModel.MessageTypeOptions.Select(item => item.Value));
+    }
+
+    [Fact]
+    public void LoadOptions_latest_failure_preserves_option_instances_and_notifies_failure()
+    {
+        var load = new TaskCompletionSource<SearchOptionsSnapshot>();
+        var viewModel = CreateOptionsViewModel(() => load.Task);
+        var conversation = new SearchConversationOption(7, "保留会话");
+        var messageType = new SearchMessageTypeOption("image", "图片");
+        viewModel.ConversationOptions.Add(conversation);
+        viewModel.MessageTypeOptions.Add(messageType);
+        (long Generation, bool Success)? notification = null;
+        viewModel.OptionsReloaded += (generation, success) => notification = (generation, success);
+
+        var generation = viewModel.LoadOptions();
+        load.SetException(new InvalidOperationException("database unavailable"));
+
+        Assert.Equal((generation, false), notification);
+        Assert.Same(conversation, viewModel.ConversationOptions[1]);
+        Assert.Same(messageType, viewModel.MessageTypeOptions[1]);
+        Assert.Contains("database unavailable", viewModel.ErrorMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadOptions_stale_failure_does_not_overwrite_latest_state_or_notify()
+    {
+        var first = new TaskCompletionSource<SearchOptionsSnapshot>();
+        var second = new TaskCompletionSource<SearchOptionsSnapshot>();
+        var loads = new Queue<Task<SearchOptionsSnapshot>>([first.Task, second.Task]);
+        var viewModel = CreateOptionsViewModel(() => loads.Dequeue());
+        var notifications = new List<(long Generation, bool Success)>();
+        viewModel.OptionsReloaded += (generation, success) =>
+            notifications.Add((generation, success));
+
+        _ = viewModel.LoadOptions();
+        var latest = viewModel.LoadOptions();
+        second.SetResult(OptionsSnapshot(2, "最新", "image"));
+        first.SetException(new InvalidOperationException("stale failure"));
+
+        Assert.Equal((latest, true), Assert.Single(notifications));
+        Assert.Empty(viewModel.ErrorMessage);
+        Assert.Equal(new long?[] { null, 2 }, viewModel.ConversationOptions.Select(item => item.Id));
+    }
+
+    private static SearchViewModel CreateOptionsViewModel(
+        Func<Task<SearchOptionsSnapshot>> loader)
+    {
+        var database = new ArchiveDatabase(Path.Combine(
+            Path.GetTempPath(),
+            $"chatarchive-options-{Guid.NewGuid():N}.db"));
+        return new SearchViewModel(new SearchRepository(database), loader);
+    }
+
+    private static SearchOptionsSnapshot OptionsSnapshot(long id, string title, string messageType)
+    {
+        var conversation = new ConversationInfo(
+            id, "qq", "account", $"native-{id}", "private", title,
+            null, null, 1, null, 0);
+        return new SearchOptionsSnapshot(
+            [conversation],
+            new FilterOptions([new FilterOptionItem(messageType, 1)], []));
     }
 
     private static DateTimeOffset LocalDate(int year, int month, int day)

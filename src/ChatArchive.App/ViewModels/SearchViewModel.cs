@@ -7,11 +7,16 @@ using Microsoft.UI.Dispatching;
 
 namespace ChatArchive.App.ViewModels;
 
+internal sealed record SearchOptionsSnapshot(
+    IReadOnlyList<ConversationInfo> Conversations,
+    FilterOptions Filters);
+
 public partial class SearchViewModel : ObservableObject
 {
     private readonly SearchRepository _repository;
-    private readonly ConversationRepository _conversations;
     private readonly DispatcherQueue? _dispatcher;
+    private readonly Func<Task<SearchOptionsSnapshot>> _optionsLoader;
+    private long _optionsGeneration;
     private readonly SearchRequestState _requestState = new();
 
     public ObservableCollection<SearchHitProxy> Results { get; } = new();
@@ -58,72 +63,116 @@ public partial class SearchViewModel : ObservableObject
     public partial string ErrorMessage { get; set; } = string.Empty;
 
     public event Action<SearchHit>? ResultActivated;
+    public event Action<long, bool>? OptionsReloaded;
 
     public SearchViewModel(
         SearchRepository repository,
         ConversationRepository conversations,
         DispatcherQueue? dispatcher = null)
+        : this(
+            repository,
+            () => Task.Run(() => new SearchOptionsSnapshot(
+                conversations.ListConversations(limit: 1000),
+                repository.GetFilterOptions())),
+            dispatcher)
+    {
+    }
+
+    internal SearchViewModel(
+        SearchRepository repository,
+        Func<Task<SearchOptionsSnapshot>> optionsLoader,
+        DispatcherQueue? dispatcher = null)
     {
         _repository = repository;
-        _conversations = conversations;
+        _optionsLoader = optionsLoader;
         _dispatcher = dispatcher;
         ConversationOptions.Add(new SearchConversationOption(null, "全部会话"));
         MessageTypeOptions.Add(new SearchMessageTypeOption(null, "全部消息类型"));
     }
 
-    public void LoadOptions()
+    public long LoadOptions()
     {
-        ErrorMessage = string.Empty;
-        Task.Run(() => (
-            Conversations: _conversations.ListConversations(limit: 1000),
-            Filters: _repository.GetFilterOptions())).ContinueWith(task =>
+        var generation = Interlocked.Increment(ref _optionsGeneration);
+        Task<SearchOptionsSnapshot> loadTask;
+        try
         {
-            void Apply()
+            loadTask = _optionsLoader();
+        }
+        catch (Exception ex)
+        {
+            loadTask = Task.FromException<SearchOptionsSnapshot>(ex);
+        }
+
+        _ = loadTask.ContinueWith(
+            completed => PostOptionsResult(generation, completed),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return generation;
+    }
+
+    private void PostOptionsResult(long generation, Task<SearchOptionsSnapshot> completed)
+    {
+        void Apply()
+        {
+            if (generation != Interlocked.Read(ref _optionsGeneration))
             {
-                if (!task.IsCompletedSuccessfully)
-                {
-                    var message = task.Exception?.GetBaseException().Message ?? "未知错误";
-                    ErrorMessage = $"加载搜索筛选项失败：{message}";
-                    return;
-                }
-
-                ConversationOptions.Clear();
-                ConversationOptions.Add(new SearchConversationOption(null, "全部会话"));
-                foreach (var conversation in task.Result.Conversations)
-                {
-                    var platform = conversation.Platform?.ToLowerInvariant() switch
-                    {
-                        "qq" => "QQ",
-                        "wechat" => "微信",
-                        "text" => "文本",
-                        "html" => "网页",
-                        "sql" => "SQL",
-                        _ => conversation.Platform ?? string.Empty,
-                    };
-                    ConversationOptions.Add(new SearchConversationOption(
-                        conversation.Id,
-                        $"{platform} · {conversation.Title}"));
-                }
-
-                MessageTypeOptions.Clear();
-                MessageTypeOptions.Add(new SearchMessageTypeOption(null, "全部消息类型"));
-                foreach (var option in task.Result.Filters.MessageTypes)
-                {
-                    MessageTypeOptions.Add(new SearchMessageTypeOption(
-                        option.Value,
-                        MessageTypeLabel(option.Value, option.Amount)));
-                }
+                return;
             }
 
-            if (_dispatcher is not null)
+            if (!completed.IsCompletedSuccessfully)
             {
-                _dispatcher.TryEnqueue(Apply);
+                var message = completed.Exception?.GetBaseException().Message
+                              ?? (completed.IsCanceled ? "操作已取消" : "未知错误");
+                ErrorMessage = $"加载搜索筛选项失败：{message}";
+                OptionsReloaded?.Invoke(generation, false);
+                return;
             }
-            else
+
+            var conversations = new List<SearchConversationOption> { new(null, "全部会话") };
+            foreach (var conversation in completed.Result.Conversations)
             {
-                Apply();
+                var platform = conversation.Platform?.ToLowerInvariant() switch
+                {
+                    "qq" => "QQ",
+                    "wechat" => "微信",
+                    "text" => "文本",
+                    "html" => "网页",
+                    "sql" => "SQL",
+                    _ => conversation.Platform ?? string.Empty,
+                };
+                conversations.Add(new(conversation.Id, $"{platform} · {conversation.Title}"));
             }
-        });
+
+            var messageTypes = new List<SearchMessageTypeOption> { new(null, "全部消息类型") };
+            foreach (var option in completed.Result.Filters.MessageTypes)
+            {
+                messageTypes.Add(new(option.Value, MessageTypeLabel(option.Value, option.Amount)));
+            }
+
+            ConversationOptions.Clear();
+            foreach (var option in conversations)
+            {
+                ConversationOptions.Add(option);
+            }
+            MessageTypeOptions.Clear();
+            foreach (var option in messageTypes)
+            {
+                MessageTypeOptions.Add(option);
+            }
+
+            ErrorMessage = string.Empty;
+            OptionsReloaded?.Invoke(generation, true);
+        }
+
+        if (_dispatcher is null)
+        {
+            Apply();
+        }
+        else
+        {
+            _ = _dispatcher.TryEnqueue(Apply);
+        }
     }
 
     [RelayCommand]
