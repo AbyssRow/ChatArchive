@@ -55,6 +55,66 @@ public sealed class SearchStateTests
         Assert.Equal(DateUtil.DateToExclusiveEndMs("2026-08-20"), filter.DateToExclusiveMs);
     }
 
+    [Fact]
+    public void Search_option_refresh_preserves_existing_values_without_requesting_search()
+    {
+        var result = SearchOptionRefresh.Restore(
+            42,
+            "image",
+            true,
+            [new SearchConversationOption(null, "全部会话"), new SearchConversationOption(42, "保留会话")],
+            [new SearchMessageTypeOption(null, "全部类型"), new SearchMessageTypeOption("image", "图片")]);
+
+        Assert.Equal(42L, result.ConversationId);
+        Assert.Equal("image", result.MessageType);
+        Assert.False(result.ShouldRunSearch);
+    }
+
+    [Fact]
+    public void Search_option_refresh_clears_missing_conversation_and_requests_prior_search()
+    {
+        var result = SearchOptionRefresh.Restore(
+            42,
+            "image",
+            true,
+            [new SearchConversationOption(null, "全部会话"), new SearchConversationOption(7, "新会话")],
+            [new SearchMessageTypeOption(null, "全部类型"), new SearchMessageTypeOption("image", "图片")]);
+
+        Assert.Null(result.ConversationId);
+        Assert.Equal("image", result.MessageType);
+        Assert.True(result.ShouldRunSearch);
+    }
+
+    [Fact]
+    public void Search_option_refresh_clears_ordinally_missing_message_type_and_requests_prior_search()
+    {
+        var result = SearchOptionRefresh.Restore(
+            42,
+            "IMAGE",
+            true,
+            [new SearchConversationOption(null, "全部会话"), new SearchConversationOption(42, "保留会话")],
+            [new SearchMessageTypeOption(null, "全部类型"), new SearchMessageTypeOption("image", "图片")]);
+
+        Assert.Equal(42L, result.ConversationId);
+        Assert.Null(result.MessageType);
+        Assert.True(result.ShouldRunSearch);
+    }
+
+    [Fact]
+    public void Search_option_refresh_clears_missing_values_without_requesting_initial_search()
+    {
+        var result = SearchOptionRefresh.Restore(
+            42,
+            "image",
+            false,
+            [new SearchConversationOption(null, "全部会话")],
+            [new SearchMessageTypeOption(null, "全部类型")]);
+
+        Assert.Null(result.ConversationId);
+        Assert.Null(result.MessageType);
+        Assert.False(result.ShouldRunSearch);
+    }
+
     [Theory]
     [InlineData("qq", "QQ")]
     [InlineData("wechat", "微信")]
