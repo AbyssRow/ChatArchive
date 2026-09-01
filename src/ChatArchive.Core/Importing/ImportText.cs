@@ -13,6 +13,15 @@ public sealed class ImportFormatException : Exception
     {
         FilePath = filePath;
     }
+
+    public ImportFormatException(
+        string filePath,
+        string message,
+        Exception innerException)
+        : base($"{filePath}: {message}", innerException)
+    {
+        FilePath = filePath;
+    }
 }
 
 public enum MediaResolutionPolicy
@@ -190,6 +199,37 @@ public static class ImportText
         }
     }
 
+    internal static string? ResolveExistingRegularFileUnderRoot(
+        string root,
+        string declaredRelativePath)
+    {
+        var candidate = SafeExportPath(root, declaredRelativePath);
+        return candidate is not null
+               && File.Exists(candidate)
+               && HasSafePathComponents(root, candidate, SafePathTarget.ExistingRegularFile)
+            ? candidate
+            : null;
+    }
+
+    internal static string? ResolveExistingDirectoryUnderRoot(
+        string root,
+        string declaredRelativePath)
+    {
+        var candidate = SafeExportPath(root, declaredRelativePath);
+        return candidate is not null
+               && Directory.Exists(candidate)
+               && HasSafePathComponents(root, candidate, SafePathTarget.ExistingDirectory)
+            ? candidate
+            : null;
+    }
+
+    private enum SafePathTarget
+    {
+        ExistingRegularFile,
+        ExistingDirectory,
+        PotentialRegularFile,
+    }
+
     private static string? ResolveExistingRegularFile(
         string root,
         string relativePath,
@@ -198,7 +238,7 @@ public static class ImportText
         var candidate = SafeExportPath(root, relativePath);
         var exists = candidate is not null && File.Exists(candidate);
         unsafeExistingCandidate = exists
-            && !HasSafePathComponents(root, candidate!, requireExistingRegularFile: true);
+            && !HasSafePathComponents(root, candidate!, SafePathTarget.ExistingRegularFile);
         return exists && !unsafeExistingCandidate
             ? candidate
             : null;
@@ -207,7 +247,7 @@ public static class ImportText
     private static bool HasSafePathComponents(
         string root,
         string candidate,
-        bool requireExistingRegularFile)
+        SafePathTarget target)
     {
         try
         {
@@ -240,7 +280,7 @@ public static class ImportText
 
                 if (!exists)
                 {
-                    return !requireExistingRegularFile;
+                    return target == SafePathTarget.PotentialRegularFile;
                 }
 
                 if (attributes.HasFlag(FileAttributes.ReparsePoint))
@@ -251,7 +291,13 @@ public static class ImportText
                 var isLast = index == segments.Length - 1;
                 if (isLast)
                 {
-                    return !attributes.HasFlag(FileAttributes.Directory);
+                    return target switch
+                    {
+                        SafePathTarget.ExistingRegularFile => !attributes.HasFlag(FileAttributes.Directory),
+                        SafePathTarget.ExistingDirectory => attributes.HasFlag(FileAttributes.Directory),
+                        SafePathTarget.PotentialRegularFile => !attributes.HasFlag(FileAttributes.Directory),
+                        _ => false,
+                    };
                 }
 
                 if (!attributes.HasFlag(FileAttributes.Directory))
@@ -395,7 +441,7 @@ public static class ImportText
 
         return !unsafeExistingCandidate
             && direct is not null
-            && HasSafePathComponents(exportRoot, direct, requireExistingRegularFile: false)
+            && HasSafePathComponents(exportRoot, direct, SafePathTarget.PotentialRegularFile)
                 ? direct
                 : null;
     }
@@ -540,11 +586,11 @@ public static class ImportText
         }
         catch (JsonException ex)
         {
-            throw new ImportFormatException(filePath, $"JSON 解析失败（{ex.Message}）");
+            throw new ImportFormatException(filePath, $"JSON 解析失败（{ex.Message}）", ex);
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            throw new ImportFormatException(filePath, $"读取失败（{ex.Message}）");
+            throw new ImportFormatException(filePath, $"读取失败（{ex.Message}）", ex);
         }
     }
 }
