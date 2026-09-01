@@ -28,6 +28,7 @@ public sealed partial class MainWindow : Window
     private bool _messagePagingReady;
     private bool _statsLoaded;
     private bool _suppressSearchFilterRefresh;
+    private bool _isAddingBoundAccount;
     private PendingSearchOptionsReload? _pendingSearchOptionsReload;
 
     private sealed record PendingSearchOptionsReload(
@@ -905,6 +906,14 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        if (_isAddingBoundAccount)
+        {
+            return;
+        }
+
+        _isAddingBoundAccount = true;
+        AddBoundAccountButton.IsEnabled = false;
+
         try
         {
             var searchBox = new TextBox { PlaceholderText = "搜索未绑定发送者 (姓名/平台ID/QQ号)..." };
@@ -913,11 +922,22 @@ public sealed partial class MainWindow : Window
             var primaryCheck = new CheckBox { Content = "设为主账号", IsChecked = detail.BoundSenders.Count == 0 };
 
             var availableSenders = new List<BoundSenderInfo>();
-            async Task RefreshAvailable(string? kw)
+            var isSenderPickerOpen = true;
+            async Task RefreshAvailable(string? kw, CancellationToken cancellationToken = default)
             {
                 try
                 {
+                    if (cancellationToken.IsCancellationRequested || !isSenderPickerOpen)
+                    {
+                        return;
+                    }
+
                     var items = await detail.LoadAvailableSendersAsync(kw);
+                    if (cancellationToken.IsCancellationRequested || !isSenderPickerOpen)
+                    {
+                        return;
+                    }
+
                     availableSenders.Clear();
                     availableSenders.AddRange(items);
                     list.Items.Clear();
@@ -937,7 +957,10 @@ public sealed partial class MainWindow : Window
                 }
                 catch (Exception ex)
                 {
-                    ShowError($"加载发送者失败: {ex.Message}");
+                    if (!cancellationToken.IsCancellationRequested && isSenderPickerOpen)
+                    {
+                        ShowError($"加载发送者失败: {ex.Message}");
+                    }
                 }
             }
 
@@ -956,9 +979,9 @@ public sealed partial class MainWindow : Window
                     {
                         DispatcherQueue.TryEnqueue(async () =>
                         {
-                            if (!token.IsCancellationRequested)
+                            if (!token.IsCancellationRequested && isSenderPickerOpen)
                             {
-                                await RefreshAvailable(query);
+                                await RefreshAvailable(query, token);
                             }
                         });
                     }
@@ -1004,14 +1027,23 @@ public sealed partial class MainWindow : Window
             }
             finally
             {
+                isSenderPickerOpen = false;
                 searchCts?.Cancel();
                 searchCts?.Dispose();
             }
 
-            var forceRebind = false;
-            if (!string.IsNullOrWhiteSpace(selectedSender.BoundContactName))
+            long? expectedSourceContactId = null;
+            var hasBoundContactName = !string.IsNullOrWhiteSpace(selectedSender.BoundContactName);
+            if (selectedSender.BoundContactId.HasValue || hasBoundContactName)
             {
-                var oldContactName = selectedSender.BoundContactName.Trim();
+                if (!selectedSender.BoundContactId.HasValue || !hasBoundContactName)
+                {
+                    ShowError("账号归属信息已发生变化，请重新选择账号后重试");
+                    return;
+                }
+
+                expectedSourceContactId = selectedSender.BoundContactId.Value;
+                var oldContactName = selectedSender.BoundContactName!.Trim();
                 var confirm = new ContentDialog
                 {
                     XamlRoot = Content.XamlRoot,
@@ -1028,21 +1060,35 @@ public sealed partial class MainWindow : Window
                 {
                     return;
                 }
-
-                forceRebind = true;
             }
 
             var currentId = detail.ContactId;
-            await detail.BindSenderAsync(
-                selectedSender.SenderId,
-                selectedLabel,
-                selectedPrimary,
-                forceRebind);
+            if (expectedSourceContactId.HasValue)
+            {
+                await detail.TransferSenderFromExpectedContactAsync(
+                    selectedSender.SenderId,
+                    expectedSourceContactId.Value,
+                    selectedLabel,
+                    selectedPrimary);
+            }
+            else
+            {
+                await detail.BindSenderAsync(
+                    selectedSender.SenderId,
+                    selectedLabel,
+                    selectedPrimary,
+                    forceRebind: false);
+            }
             await ReloadContactsAsync(currentId);
         }
         catch (Exception ex)
         {
             ShowError($"绑定账号失败: {ex.Message}");
+        }
+        finally
+        {
+            _isAddingBoundAccount = false;
+            AddBoundAccountButton.IsEnabled = true;
         }
     }
 

@@ -183,6 +183,22 @@ public partial class ContactDetailViewModel : ObservableObject
         await LoadAsync(ContactId);
     }
 
+    public async Task TransferSenderFromExpectedContactAsync(
+        long senderId,
+        long expectedSourceContactId,
+        string? accountLabel = null,
+        bool isPrimary = false)
+    {
+        await Task.Run(() => _contactRepository.TransferSenderFromExpectedContact(
+            ContactId,
+            senderId,
+            expectedSourceContactId,
+            accountLabel,
+            isPrimary));
+
+        await LoadAsync(ContactId);
+    }
+
     public async Task UnbindSenderAsync(long senderId)
     {
         await Task.Run(() => _contactRepository.UnbindSender(ContactId, senderId));

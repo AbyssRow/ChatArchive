@@ -18,7 +18,10 @@ public sealed record BoundSenderInfo(
     string? AccountLabel,
     bool IsPrimary,
     long MessageCount,
-    string? BoundContactName = null);
+    string? BoundContactName = null)
+{
+    public long? BoundContactId { get; init; }
+}
 
 public sealed record ContactDetail(
     long Id,

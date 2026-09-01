@@ -280,6 +280,48 @@ public sealed class ContactsViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task ContactDetailViewModel_TransferSenderFromExpectedContactAsync_ForwardsExpectedOwnerAndRejectsStaleOwnership()
+    {
+        var senderId = InsertSender("10087", "待转移账号");
+        var currentOwnerSenderId = InsertSender("10088", "现任主账号");
+        var confirmedSourceId = _contactRepository.CreateContact(
+            "确认时的联系人",
+            note: "保留",
+            initialBindings: [(senderId, "确认时标签", true)]);
+        var currentOwnerId = _contactRepository.CreateContact(
+            "当前联系人",
+            initialBindings: [(currentOwnerSenderId, "现任主账号", true)]);
+        var targetId = _contactRepository.CreateContact("目标联系人");
+        var detailVm = new ContactDetailViewModel(_contactRepository, _avatarStorage);
+        await detailVm.LoadAsync(targetId);
+
+        var candidate = Assert.Single(
+            await detailVm.LoadAvailableSendersAsync(),
+            item => item.SenderId == senderId);
+        Assert.Equal(confirmedSourceId, candidate.BoundContactId);
+
+        _contactRepository.BindSender(
+            currentOwnerId,
+            senderId,
+            accountLabel: "现任标签",
+            isPrimary: false,
+            forceRebind: true);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            detailVm.TransferSenderFromExpectedContactAsync(
+                senderId,
+                candidate.BoundContactId!.Value,
+                accountLabel: "不应写入",
+                isPrimary: true));
+
+        var currentDetail = Assert.IsType<ContactDetail>(_contactRepository.GetContactDetail(currentOwnerId));
+        Assert.Equal("现任标签", currentDetail.Senders.Single(item => item.SenderId == senderId).AccountLabel);
+        Assert.True(currentDetail.Senders.Single(item => item.SenderId == currentOwnerSenderId).IsPrimary);
+        Assert.Empty(Assert.IsType<ContactDetail>(_contactRepository.GetContactDetail(targetId)).Senders);
+        Assert.Empty(detailVm.BoundSenders);
+    }
+
+    [Fact]
     public async Task ContactDetailViewModel_UpdateAccountLabelAsync_UpdatesLabel()
     {
         var s1 = InsertSender("10001", "账号1");

@@ -119,6 +119,27 @@ public sealed class ContactRepository
         transaction.Commit();
     }
 
+    public void TransferSenderFromExpectedContact(
+        long targetContactId,
+        long senderId,
+        long expectedSourceContactId,
+        string? accountLabel = null,
+        bool isPrimary = false)
+    {
+        using var connection = _db.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        BindSenderInternal(
+            connection,
+            transaction,
+            targetContactId,
+            senderId,
+            accountLabel,
+            isPrimary,
+            forceRebind: false,
+            expectedSourceContactId);
+        transaction.Commit();
+    }
+
     public void UnbindSender(long contactId, long senderId)
     {
         using var connection = _db.OpenConnection();
@@ -470,7 +491,7 @@ public sealed class ContactRepository
 
         cmd.CommandText = $"""
             SELECT s.id, s.platform, s.native_id, s.current_name,
-                   c.display_name AS bound_contact_name, cs.account_label,
+                   c.display_name AS bound_contact_name, c.id AS bound_contact_id, cs.account_label,
                    (SELECT COUNT(*) FROM messages m WHERE m.sender_id = s.id) AS msg_count
             FROM senders s
             LEFT JOIN contact_senders cs ON cs.sender_id = s.id
@@ -479,7 +500,7 @@ public sealed class ContactRepository
             ORDER BY msg_count DESC, s.id DESC;
             """;
 
-        var rawList = new List<(long SenderId, string Platform, string NativeId, string CurrentName, string? BoundContactName, string? AccountLabel, long MessageCount)>();
+        var rawList = new List<(long SenderId, string Platform, string NativeId, string CurrentName, string? BoundContactName, long? BoundContactId, string? AccountLabel, long MessageCount)>();
         using (var reader = cmd.ExecuteReader())
         {
             while (reader.Read())
@@ -490,8 +511,9 @@ public sealed class ContactRepository
                     reader.GetString(2),
                     reader.GetString(3),
                     reader.IsDBNull(4) ? null : reader.GetString(4),
-                    reader.IsDBNull(5) ? null : reader.GetString(5),
-                    reader.GetInt64(6)
+                    reader.IsDBNull(5) ? null : reader.GetInt64(5),
+                    reader.IsDBNull(6) ? null : reader.GetString(6),
+                    reader.GetInt64(7)
                 ));
             }
         }
@@ -524,7 +546,7 @@ public sealed class ContactRepository
                 false,
                 raw.MessageCount,
                 raw.BoundContactName
-            ));
+            ) { BoundContactId = raw.BoundContactId });
         }
 
         return result;
@@ -621,7 +643,8 @@ public sealed class ContactRepository
         long senderId,
         string? accountLabel,
         bool isPrimary,
-        bool forceRebind)
+        bool forceRebind,
+        long? expectedSourceContactId = null)
     {
         using (var cmd = connection.CreateCommand())
         {
@@ -656,6 +679,52 @@ public sealed class ContactRepository
             {
                 existingContactId = Convert.ToInt64(res);
             }
+        }
+
+        if (expectedSourceContactId.HasValue)
+        {
+            if (!existingContactId.HasValue
+                || existingContactId.Value != expectedSourceContactId.Value
+                || existingContactId.Value == contactId)
+            {
+                throw new InvalidOperationException("账号归属已发生变化，请重新选择账号后重试");
+            }
+
+            using (var cmd = connection.CreateCommand())
+            {
+                cmd.Transaction = transaction;
+                cmd.CommandText = "DELETE FROM contact_senders WHERE sender_id = @sid AND contact_id = @expectedCid;";
+                cmd.Parameters.AddWithValue("@sid", senderId);
+                cmd.Parameters.AddWithValue("@expectedCid", expectedSourceContactId.Value);
+                if (cmd.ExecuteNonQuery() != 1)
+                {
+                    throw new InvalidOperationException("账号归属已发生变化，请重新选择账号后重试");
+                }
+            }
+
+            using (var cleanCmd = connection.CreateCommand())
+            {
+                cleanCmd.Transaction = transaction;
+                cleanCmd.CommandText = """
+                    DELETE FROM contacts
+                    WHERE id = @oldCid
+                      AND NOT EXISTS (SELECT 1 FROM contact_senders WHERE contact_id = @oldCid)
+                      AND (note IS NULL OR note = '')
+                      AND (custom_avatar_path IS NULL OR custom_avatar_path = '');
+                    """;
+                cleanCmd.Parameters.AddWithValue("@oldCid", expectedSourceContactId.Value);
+                cleanCmd.ExecuteNonQuery();
+            }
+
+            using (var cmd = connection.CreateCommand())
+            {
+                cmd.Transaction = transaction;
+                cmd.CommandText = "UPDATE contacts SET updated_at = CURRENT_TIMESTAMP WHERE id = @cid;";
+                cmd.Parameters.AddWithValue("@cid", expectedSourceContactId.Value);
+                cmd.ExecuteNonQuery();
+            }
+
+            existingContactId = null;
         }
 
         if (existingContactId.HasValue)
