@@ -37,7 +37,7 @@ public class ArchiveDatabaseTests : IDisposable
         using var connection = db.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT value FROM app_metadata WHERE key='schema_version'";
-        Assert.Equal("3", command.ExecuteScalar());
+        Assert.Equal("4", command.ExecuteScalar());
 
         // Verify contacts and contact_senders tables
         Execute(connection, """
@@ -57,6 +57,20 @@ public class ArchiveDatabaseTests : IDisposable
 
         Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM contacts WHERE id = 1"));
         Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM contact_senders WHERE contact_id = 1 AND sender_id = 10"));
+        var firstIdentityToken = ScalarText(connection, "SELECT identity_token FROM contacts WHERE id = 1");
+        Assert.NotNull(firstIdentityToken);
+        Assert.Equal(32, firstIdentityToken.Length);
+        Execute(connection, "INSERT INTO contacts(id, display_name) VALUES (3, '王五');");
+        var secondIdentityToken = ScalarText(connection, "SELECT identity_token FROM contacts WHERE id = 3");
+        Assert.NotNull(secondIdentityToken);
+        Assert.Equal(32, secondIdentityToken.Length);
+        Assert.NotEqual(firstIdentityToken, secondIdentityToken);
+        Assert.Equal(1L, Scalar(connection, "SELECT [unique] FROM pragma_index_list('contacts') WHERE name='ux_contacts_identity_token'"));
+        Assert.Throws<SqliteException>(() =>
+            Execute(connection, """
+                INSERT INTO contacts(id, identity_token, display_name)
+                SELECT 4, identity_token, '重复身份' FROM contacts WHERE id = 1;
+                """));
 
         // Verify unique index on sender_id
         Assert.Throws<SqliteException>(() =>
@@ -73,7 +87,7 @@ public class ArchiveDatabaseTests : IDisposable
     }
 
     [Fact]
-    public void EnsureSchema_UpgradesFromVersion1ToVersion3()
+    public void EnsureSchema_UpgradesFromVersion1ToVersion4()
     {
         // 1. Manually create v1 database with existing data
         using (var connection = new SqliteConnection($"Data Source={_databasePath}"))
@@ -158,11 +172,11 @@ public class ArchiveDatabaseTests : IDisposable
         var db = new ArchiveDatabase(_databasePath);
         db.EnsureSchema();
 
-        // 3. Verify upgraded to v3 and existing data intact
+        // 3. Verify upgraded to v4 and existing data intact
         using (var connection = db.OpenConnection())
         {
             var version = ScalarText(connection, "SELECT value FROM app_metadata WHERE key='schema_version'");
-            Assert.Equal("3", version);
+            Assert.Equal("4", version);
 
             // Existing data intact
             Assert.Equal("Alice", ScalarText(connection, "SELECT current_name FROM senders WHERE id = 1"));
@@ -196,7 +210,7 @@ public class ArchiveDatabaseTests : IDisposable
     }
 
     [Fact]
-    public void EnsureSchema_UpgradesFromVersion2ToVersion3_RelaxingCheckConstraints()
+    public void EnsureSchema_UpgradesFromVersion2ToVersion4_RelaxingCheckConstraints()
     {
         // 1. Manually create v2 database with narrow check constraints (qq, wechat only)
         using (var connection = new SqliteConnection($"Data Source={_databasePath}"))
@@ -357,11 +371,11 @@ public class ArchiveDatabaseTests : IDisposable
         var db = new ArchiveDatabase(_databasePath);
         db.EnsureSchema();
 
-        // 3. Verify upgraded to v3 and check constraints relaxed
+        // 3. Verify upgraded to v4 and check constraints relaxed
         using (var connection = db.OpenConnection())
         {
             var version = ScalarText(connection, "SELECT value FROM app_metadata WHERE key='schema_version'");
-            Assert.Equal("3", version);
+            Assert.Equal("4", version);
 
             // Existing data intact
             Assert.Equal("Alice", ScalarText(connection, "SELECT current_name FROM senders WHERE id = 1"));
@@ -405,6 +419,121 @@ public class ArchiveDatabaseTests : IDisposable
 
         // 4. Ensure idempotent
         db.EnsureSchema();
+    }
+
+    [Fact]
+    public void EnsureSchema_UpgradesVersion3ContactsWithStableUniqueIdentityTokensIdempotently()
+    {
+        using (var connection = new SqliteConnection($"Data Source={_databasePath}"))
+        {
+            connection.Open();
+            Execute(connection, "PRAGMA foreign_keys = ON;");
+            Execute(connection, """
+                CREATE TABLE app_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                INSERT INTO app_metadata(key, value) VALUES ('schema_version', '3');
+
+                CREATE TABLE contacts (
+                    id INTEGER PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    custom_avatar_path TEXT,
+                    note TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX ix_contacts_display_name ON contacts(display_name);
+
+                CREATE TABLE senders (
+                    id INTEGER PRIMARY KEY,
+                    current_name TEXT NOT NULL
+                );
+                CREATE TABLE contact_senders (
+                    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+                    sender_id INTEGER NOT NULL REFERENCES senders(id) ON DELETE CASCADE,
+                    account_label TEXT,
+                    is_primary INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (contact_id, sender_id)
+                );
+                CREATE UNIQUE INDEX ux_contact_senders_sender ON contact_senders(sender_id);
+                CREATE INDEX ix_contact_senders_contact ON contact_senders(contact_id);
+
+                INSERT INTO contacts(id, display_name) VALUES (4, '旧联系人一'), (9, '旧联系人二');
+                INSERT INTO senders(id, current_name) VALUES (20, '旧账号');
+                INSERT INTO contact_senders(contact_id, sender_id, is_primary) VALUES (4, 20, 1);
+                """);
+        }
+
+        var db = new ArchiveDatabase(_databasePath);
+        db.EnsureSchema();
+
+        string firstToken;
+        string secondToken;
+        using (var connection = db.OpenConnection())
+        {
+            Assert.Equal("4", ScalarText(connection, "SELECT value FROM app_metadata WHERE key='schema_version'"));
+            Assert.Equal(1L, Scalar(connection, "SELECT [notnull] FROM pragma_table_info('contacts') WHERE name='identity_token'"));
+            Assert.Equal(1L, Scalar(connection, "SELECT [unique] FROM pragma_index_list('contacts') WHERE name='ux_contacts_identity_token'"));
+            firstToken = Assert.IsType<string>(ScalarText(connection, "SELECT identity_token FROM contacts WHERE id = 4"));
+            secondToken = Assert.IsType<string>(ScalarText(connection, "SELECT identity_token FROM contacts WHERE id = 9"));
+            Assert.Equal(32, firstToken.Length);
+            Assert.Equal(32, secondToken.Length);
+            Assert.NotEqual(firstToken, secondToken);
+            Assert.Equal(1L, Scalar(connection, "SELECT COUNT(*) FROM contact_senders WHERE contact_id = 4 AND sender_id = 20"));
+            Assert.Equal(
+                "contacts",
+                ScalarText(connection, "SELECT [table] FROM pragma_foreign_key_list('contact_senders') WHERE [from]='contact_id'"));
+            Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
+        }
+
+        db.EnsureSchema();
+
+        using var reopened = db.OpenConnection();
+        Assert.Equal(firstToken, ScalarText(reopened, "SELECT identity_token FROM contacts WHERE id = 4"));
+        Assert.Equal(secondToken, ScalarText(reopened, "SELECT identity_token FROM contacts WHERE id = 9"));
+        Execute(reopened, "DELETE FROM contacts WHERE id = 4;");
+        Assert.Equal(0L, Scalar(reopened, "SELECT COUNT(*) FROM contact_senders WHERE contact_id = 4"));
+        Assert.Equal(0L, Scalar(reopened, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
+    }
+
+    [Fact]
+    public void EnsureSchema_WhenVersion3ToVersion4MigrationFails_RollsBackEntireMigration()
+    {
+        using (var connection = new SqliteConnection($"Data Source={_databasePath}"))
+        {
+            connection.Open();
+            Execute(connection, """
+                CREATE TABLE app_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                INSERT INTO app_metadata(key, value) VALUES ('schema_version', '3');
+                CREATE TABLE contacts (
+                    id INTEGER PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    custom_avatar_path TEXT,
+                    note TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO contacts(id, display_name) VALUES (7, '必须保留');
+
+                CREATE TABLE migration_collision(value TEXT);
+                CREATE UNIQUE INDEX ux_contacts_identity_token ON migration_collision(value);
+                """);
+        }
+
+        var db = new ArchiveDatabase(_databasePath);
+
+        Assert.Throws<SqliteException>(() => db.EnsureSchema());
+
+        using var reopened = db.OpenConnection();
+        Assert.Equal("3", ScalarText(reopened, "SELECT value FROM app_metadata WHERE key='schema_version'"));
+        Assert.Equal("必须保留", ScalarText(reopened, "SELECT display_name FROM contacts WHERE id = 7"));
+        Assert.Equal(0L, Scalar(reopened, "SELECT COUNT(*) FROM pragma_table_info('contacts') WHERE name='identity_token'"));
+        Assert.Equal(0L, Scalar(reopened, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='contacts_v4'"));
     }
 
     [Fact]
@@ -468,7 +597,7 @@ public class ArchiveDatabaseTests : IDisposable
         Assert.Equal(3, triggers.Count);
         Assert.All(triggers, s => Assert.EndsWith("END;", s));
         Assert.All(statements.Except(triggers), s => Assert.False(s.EndsWith(";", StringComparison.Ordinal)));
-        Assert.Equal(34, statements.Count);
+        Assert.Equal(35, statements.Count);
     }
 
     [Fact]

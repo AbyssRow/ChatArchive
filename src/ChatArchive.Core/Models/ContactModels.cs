@@ -7,7 +7,10 @@ public sealed record ContactInfo(
     string? Note,
     long MessageCount,
     long CreatedAtMs,
-    long UpdatedAtMs);
+    long UpdatedAtMs)
+{
+    public string IdentityToken { get; init; } = string.Empty;
+}
 
 public sealed record BoundSenderInfo(
     long SenderId,
@@ -21,6 +24,7 @@ public sealed record BoundSenderInfo(
     string? BoundContactName = null)
 {
     public long? BoundContactId { get; init; }
+    public string? BoundContactIdentityToken { get; init; }
 }
 
 public sealed record ContactDetail(
@@ -30,4 +34,7 @@ public sealed record ContactDetail(
     string? Note,
     IReadOnlyList<BoundSenderInfo> Senders,
     IReadOnlyList<SenderConversationInfo> Conversations,
-    long TotalMessageCount);
+    long TotalMessageCount)
+{
+    public string IdentityToken { get; init; } = string.Empty;
+}

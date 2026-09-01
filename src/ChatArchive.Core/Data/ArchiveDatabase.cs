@@ -236,6 +236,33 @@ public sealed class ArchiveDatabase
         UPDATE app_metadata SET value = '3' WHERE key = 'schema_version';
         """;
 
+    private const string MigrationV3ToV4Sql = """
+        CREATE TABLE contacts_v4 (
+            id INTEGER PRIMARY KEY,
+            identity_token TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
+            display_name TEXT NOT NULL,
+            custom_avatar_path TEXT,
+            note TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        INSERT INTO contacts_v4 (
+            id, identity_token, display_name, custom_avatar_path, note, created_at, updated_at
+        )
+        SELECT
+            id, lower(hex(randomblob(16))), display_name, custom_avatar_path, note, created_at, updated_at
+        FROM contacts;
+
+        DROP TABLE contacts;
+        ALTER TABLE contacts_v4 RENAME TO contacts;
+
+        CREATE INDEX ix_contacts_display_name ON contacts(display_name);
+        CREATE UNIQUE INDEX ux_contacts_identity_token ON contacts(identity_token);
+
+        UPDATE app_metadata SET value = '4' WHERE key = 'schema_version';
+        """;
+
     public void EnsureSchema()
     {
         using var connection = OpenConnection();
@@ -259,16 +286,23 @@ public sealed class ArchiveDatabase
             if (currentVersion == "1")
             {
                 MigrateV1ToV2(connection);
-                MigrateV2ToV3(connection);
             }
-            else if (currentVersion == "2")
+
+            currentVersion = ExecuteScalar(connection, "SELECT value FROM app_metadata WHERE key='schema_version'") as string;
+            if (currentVersion == "2")
             {
                 MigrateV2ToV3(connection);
+            }
+
+            currentVersion = ExecuteScalar(connection, "SELECT value FROM app_metadata WHERE key='schema_version'") as string;
+            if (currentVersion == "3")
+            {
+                MigrateV3ToV4(connection);
             }
         }
 
         var version = ExecuteScalar(connection, "SELECT value FROM app_metadata WHERE key='schema_version'") as string;
-        if (version != "3")
+        if (version != "4")
         {
             throw new InvalidOperationException($"不支持的数据库 schema 版本: {version ?? "(缺失)"}");
         }
@@ -295,6 +329,28 @@ public sealed class ArchiveDatabase
         {
             using var transaction = connection.BeginTransaction();
             foreach (var statement in SqlScriptSplitter.Split(MigrationV2ToV3Sql))
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = statement;
+                command.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
+        finally
+        {
+            ExecuteScalar(connection, "PRAGMA foreign_keys = ON;");
+        }
+    }
+
+    private static void MigrateV3ToV4(SqliteConnection connection)
+    {
+        ExecuteScalar(connection, "PRAGMA foreign_keys = OFF;");
+        try
+        {
+            using var transaction = connection.BeginTransaction();
+            foreach (var statement in SqlScriptSplitter.Split(MigrationV3ToV4Sql))
             {
                 using var command = connection.CreateCommand();
                 command.Transaction = transaction;

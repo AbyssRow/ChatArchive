@@ -140,6 +140,34 @@ public sealed class ContactRepository
         transaction.Commit();
     }
 
+    public void TransferSenderFromExpectedContact(
+        long targetContactId,
+        string expectedTargetIdentityToken,
+        long senderId,
+        long expectedSourceContactId,
+        string expectedSourceIdentityToken,
+        string? accountLabel = null,
+        bool isPrimary = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedTargetIdentityToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedSourceIdentityToken);
+
+        using var connection = _db.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        BindSenderInternal(
+            connection,
+            transaction,
+            targetContactId,
+            senderId,
+            accountLabel,
+            isPrimary,
+            forceRebind: false,
+            expectedSourceContactId,
+            expectedTargetIdentityToken,
+            expectedSourceIdentityToken);
+        transaction.Commit();
+    }
+
     public void UnbindSender(long contactId, long senderId)
     {
         using var connection = _db.OpenConnection();
@@ -154,19 +182,7 @@ public sealed class ContactRepository
             cmd.ExecuteNonQuery();
         }
 
-        using (var promoteCmd = connection.CreateCommand())
-        {
-            promoteCmd.Transaction = transaction;
-            promoteCmd.CommandText = """
-                UPDATE contact_senders
-                SET is_primary = 1
-                WHERE contact_id = @cid AND rowid = (
-                    SELECT rowid FROM contact_senders WHERE contact_id = @cid ORDER BY sender_id ASC LIMIT 1
-                ) AND NOT EXISTS (SELECT 1 FROM contact_senders WHERE contact_id = @cid AND is_primary = 1);
-                """;
-            promoteCmd.Parameters.AddWithValue("@cid", contactId);
-            promoteCmd.ExecuteNonQuery();
-        }
+        PromotePrimarySenderIfNeeded(connection, transaction, contactId);
 
         using (var cmd = connection.CreateCommand())
         {
@@ -263,10 +279,11 @@ public sealed class ContactRepository
         string displayName;
         string? customAvatarPath;
         string? note;
+        string identityToken;
 
         using (var cmd = connection.CreateCommand())
         {
-            cmd.CommandText = "SELECT id, display_name, custom_avatar_path, note FROM contacts WHERE id = @id;";
+            cmd.CommandText = "SELECT id, display_name, custom_avatar_path, note, identity_token FROM contacts WHERE id = @id;";
             cmd.Parameters.AddWithValue("@id", contactId);
             using var reader = cmd.ExecuteReader();
             if (!reader.Read())
@@ -277,6 +294,7 @@ public sealed class ContactRepository
             displayName = reader.GetString(1);
             customAvatarPath = reader.IsDBNull(2) ? null : reader.GetString(2);
             note = reader.IsDBNull(3) ? null : reader.GetString(3);
+            identityToken = reader.GetString(4);
         }
 
         var boundSenders = new List<BoundSenderInfo>();
@@ -348,7 +366,7 @@ public sealed class ContactRepository
             boundSenders,
             conversations,
             totalMessageCount
-        );
+        ) { IdentityToken = identityToken };
     }
 
     public ContactInfo? FindContactBySenderId(long senderId)
@@ -360,7 +378,7 @@ public sealed class ContactRepository
                    (SELECT COUNT(*) FROM messages m
                     JOIN contact_senders cs2 ON cs2.sender_id = m.sender_id
                     WHERE cs2.contact_id = c.id) AS total_messages,
-                   c.created_at, c.updated_at
+                   c.created_at, c.updated_at, c.identity_token
             FROM contacts c
             JOIN contact_senders cs ON cs.contact_id = c.id
             WHERE cs.sender_id = @sid
@@ -381,7 +399,7 @@ public sealed class ContactRepository
             reader.GetInt64(4),
             ParseTimestampMs(reader.GetValue(5)),
             ParseTimestampMs(reader.GetValue(6))
-        );
+        ) { IdentityToken = reader.GetString(7) };
     }
 
     public IReadOnlyList<ContactInfo> ListContacts(string? keyword = null)
@@ -433,7 +451,7 @@ public sealed class ContactRepository
                    (SELECT COUNT(*) FROM messages m
                     JOIN contact_senders cs ON cs.sender_id = m.sender_id
                     WHERE cs.contact_id = c.id) AS total_messages,
-                   c.created_at, c.updated_at
+                   c.created_at, c.updated_at, c.identity_token
             FROM contacts c
             {whereClause}
             ORDER BY c.updated_at DESC, c.id DESC;
@@ -451,7 +469,7 @@ public sealed class ContactRepository
                 reader.GetInt64(4),
                 ParseTimestampMs(reader.GetValue(5)),
                 ParseTimestampMs(reader.GetValue(6))
-            ));
+            ) { IdentityToken = reader.GetString(7) });
         }
 
         return list;
@@ -491,7 +509,8 @@ public sealed class ContactRepository
 
         cmd.CommandText = $"""
             SELECT s.id, s.platform, s.native_id, s.current_name,
-                   c.display_name AS bound_contact_name, c.id AS bound_contact_id, cs.account_label,
+                   c.display_name AS bound_contact_name, c.id AS bound_contact_id,
+                   c.identity_token AS bound_contact_identity_token, cs.account_label,
                    (SELECT COUNT(*) FROM messages m WHERE m.sender_id = s.id) AS msg_count
             FROM senders s
             LEFT JOIN contact_senders cs ON cs.sender_id = s.id
@@ -500,7 +519,7 @@ public sealed class ContactRepository
             ORDER BY msg_count DESC, s.id DESC;
             """;
 
-        var rawList = new List<(long SenderId, string Platform, string NativeId, string CurrentName, string? BoundContactName, long? BoundContactId, string? AccountLabel, long MessageCount)>();
+        var rawList = new List<(long SenderId, string Platform, string NativeId, string CurrentName, string? BoundContactName, long? BoundContactId, string? BoundContactIdentityToken, string? AccountLabel, long MessageCount)>();
         using (var reader = cmd.ExecuteReader())
         {
             while (reader.Read())
@@ -513,7 +532,8 @@ public sealed class ContactRepository
                     reader.IsDBNull(4) ? null : reader.GetString(4),
                     reader.IsDBNull(5) ? null : reader.GetInt64(5),
                     reader.IsDBNull(6) ? null : reader.GetString(6),
-                    reader.GetInt64(7)
+                    reader.IsDBNull(7) ? null : reader.GetString(7),
+                    reader.GetInt64(8)
                 ));
             }
         }
@@ -546,7 +566,11 @@ public sealed class ContactRepository
                 false,
                 raw.MessageCount,
                 raw.BoundContactName
-            ) { BoundContactId = raw.BoundContactId });
+            )
+            {
+                BoundContactId = raw.BoundContactId,
+                BoundContactIdentityToken = raw.BoundContactIdentityToken,
+            });
         }
 
         return result;
@@ -636,6 +660,24 @@ public sealed class ContactRepository
         return resultUnbound;
     }
 
+    private static void PromotePrimarySenderIfNeeded(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long contactId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE contact_senders
+            SET is_primary = 1
+            WHERE contact_id = @cid AND rowid = (
+                SELECT rowid FROM contact_senders WHERE contact_id = @cid ORDER BY sender_id ASC LIMIT 1
+            ) AND NOT EXISTS (SELECT 1 FROM contact_senders WHERE contact_id = @cid AND is_primary = 1);
+            """;
+        command.Parameters.AddWithValue("@cid", contactId);
+        command.ExecuteNonQuery();
+    }
+
     private static void BindSenderInternal(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -644,17 +686,29 @@ public sealed class ContactRepository
         string? accountLabel,
         bool isPrimary,
         bool forceRebind,
-        long? expectedSourceContactId = null)
+        long? expectedSourceContactId = null,
+        string? expectedTargetIdentityToken = null,
+        string? expectedSourceIdentityToken = null)
     {
+        string targetIdentityToken;
         using (var cmd = connection.CreateCommand())
         {
             cmd.Transaction = transaction;
-            cmd.CommandText = "SELECT COUNT(*) FROM contacts WHERE id = @cid;";
+            cmd.CommandText = "SELECT identity_token FROM contacts WHERE id = @cid;";
             cmd.Parameters.AddWithValue("@cid", contactId);
-            if (Convert.ToInt64(cmd.ExecuteScalar()) == 0)
+            var result = cmd.ExecuteScalar();
+            if (result is not string token)
             {
                 throw new KeyNotFoundException($"未找到 ID 为 {contactId} 的联系人");
             }
+
+            targetIdentityToken = token;
+        }
+
+        if (expectedTargetIdentityToken is not null
+            && !string.Equals(targetIdentityToken, expectedTargetIdentityToken, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("目标联系人已发生变化，请重新选择联系人后重试");
         }
 
         using (var cmd = connection.CreateCommand())
@@ -669,15 +723,22 @@ public sealed class ContactRepository
         }
 
         long? existingContactId = null;
+        string? existingContactIdentityToken = null;
         using (var cmd = connection.CreateCommand())
         {
             cmd.Transaction = transaction;
-            cmd.CommandText = "SELECT contact_id FROM contact_senders WHERE sender_id = @sid;";
+            cmd.CommandText = """
+                SELECT cs.contact_id, c.identity_token
+                FROM contact_senders cs
+                JOIN contacts c ON c.id = cs.contact_id
+                WHERE cs.sender_id = @sid;
+                """;
             cmd.Parameters.AddWithValue("@sid", senderId);
-            var res = cmd.ExecuteScalar();
-            if (res is not null and not DBNull)
+            using var reader = cmd.ExecuteReader();
+            if (reader.Read())
             {
-                existingContactId = Convert.ToInt64(res);
+                existingContactId = reader.GetInt64(0);
+                existingContactIdentityToken = reader.GetString(1);
             }
         }
 
@@ -685,22 +746,45 @@ public sealed class ContactRepository
         {
             if (!existingContactId.HasValue
                 || existingContactId.Value != expectedSourceContactId.Value
-                || existingContactId.Value == contactId)
+                || existingContactId.Value == contactId
+                || (expectedSourceIdentityToken is not null
+                    && !string.Equals(
+                        existingContactIdentityToken,
+                        expectedSourceIdentityToken,
+                        StringComparison.Ordinal)))
             {
-                throw new InvalidOperationException("账号归属已发生变化，请重新选择账号后重试");
+                throw new InvalidOperationException("来源联系人或账号归属已发生变化，请重新选择账号后重试");
             }
 
             using (var cmd = connection.CreateCommand())
             {
                 cmd.Transaction = transaction;
-                cmd.CommandText = "DELETE FROM contact_senders WHERE sender_id = @sid AND contact_id = @expectedCid;";
+                cmd.CommandText = """
+                    DELETE FROM contact_senders
+                    WHERE sender_id = @sid
+                      AND contact_id = @expectedCid
+                      AND (
+                          @expectedSourceIdentityToken IS NULL
+                          OR EXISTS (
+                              SELECT 1
+                              FROM contacts c
+                              WHERE c.id = @expectedCid
+                                AND c.identity_token = @expectedSourceIdentityToken
+                          )
+                      );
+                    """;
                 cmd.Parameters.AddWithValue("@sid", senderId);
                 cmd.Parameters.AddWithValue("@expectedCid", expectedSourceContactId.Value);
+                cmd.Parameters.AddWithValue(
+                    "@expectedSourceIdentityToken",
+                    (object?)expectedSourceIdentityToken ?? DBNull.Value);
                 if (cmd.ExecuteNonQuery() != 1)
                 {
                     throw new InvalidOperationException("账号归属已发生变化，请重新选择账号后重试");
                 }
             }
+
+            PromotePrimarySenderIfNeeded(connection, transaction, expectedSourceContactId.Value);
 
             using (var cleanCmd = connection.CreateCommand())
             {
@@ -743,6 +827,8 @@ public sealed class ContactRepository
                     cmd.Parameters.AddWithValue("@sid", senderId);
                     cmd.ExecuteNonQuery();
                 }
+
+                PromotePrimarySenderIfNeeded(connection, transaction, existingContactId.Value);
 
                 using (var cleanCmd = connection.CreateCommand())
                 {

@@ -34,6 +34,7 @@ public sealed class ContactRepositoryTests : IDisposable
         Assert.Equal("Alice", detail.DisplayName);
         Assert.Equal("avatars/alice.png", detail.CustomAvatarPath);
         Assert.Equal("A close friend", detail.Note);
+        Assert.Equal(32, detail.IdentityToken.Length);
         Assert.Empty(detail.Senders);
         Assert.Empty(detail.Conversations);
         Assert.Equal(0, detail.TotalMessageCount);
@@ -41,6 +42,7 @@ public sealed class ContactRepositoryTests : IDisposable
         var list = _repository.ListContacts();
         Assert.Single(list);
         Assert.Equal("Alice", list[0].DisplayName);
+        Assert.Equal(detail.IdentityToken, list[0].IdentityToken);
         Assert.True(list[0].CreatedAtMs > 0);
         Assert.True(list[0].UpdatedAtMs > 0);
     }
@@ -310,6 +312,164 @@ public sealed class ContactRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void TransferSenderFromExpectedContact_WhenTargetIdIsReused_RejectsStaleTargetIdentity()
+    {
+        var sender = _archive.AddSender("81101", "Target ABA sender");
+        var sourceContact = _repository.CreateContact(
+            "Target ABA source",
+            note: "保留来源",
+            initialBindings: [(sender, "原标签", true)]);
+        var sourceSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(sourceContact));
+        var deletedTarget = _repository.CreateContact("Deleted target");
+        var deletedTargetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(deletedTarget));
+
+        _repository.DeleteContact(deletedTarget);
+        var replacementTarget = _repository.CreateContact("Replacement target");
+        var replacementSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(replacementTarget));
+        Assert.Equal(deletedTarget, replacementTarget);
+        Assert.NotEqual(deletedTargetSnapshot.IdentityToken, replacementSnapshot.IdentityToken);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            _repository.TransferSenderFromExpectedContact(
+                replacementTarget,
+                deletedTargetSnapshot.IdentityToken,
+                sender,
+                sourceContact,
+                sourceSnapshot.IdentityToken,
+                accountLabel: "不应写入",
+                isPrimary: true));
+
+        Assert.Contains("目标联系人", exception.Message);
+        Assert.Equal(sourceContact, _repository.FindContactBySenderId(sender)!.Id);
+        Assert.True(Assert.Single(_repository.GetContactDetail(sourceContact)!.Senders).IsPrimary);
+        Assert.Empty(_repository.GetContactDetail(replacementTarget)!.Senders);
+    }
+
+    [Fact]
+    public void TransferSenderFromExpectedContact_WhenSourceIdIsReused_RejectsStaleSourceIdentity()
+    {
+        var sender = _archive.AddSender("81201", "Source ABA sender");
+        var targetContact = _repository.CreateContact("Stable target");
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
+        var deletedSource = _repository.CreateContact(
+            "Deleted source",
+            initialBindings: [(sender, "旧来源", true)]);
+        var deletedSourceSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(deletedSource));
+
+        _repository.DeleteContact(deletedSource);
+        var replacementSource = _repository.CreateContact("Replacement source");
+        Assert.Equal(deletedSource, replacementSource);
+        _repository.BindSender(replacementSource, sender, accountLabel: "新来源", isPrimary: true);
+        var replacementSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(replacementSource));
+        Assert.NotEqual(deletedSourceSnapshot.IdentityToken, replacementSnapshot.IdentityToken);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            _repository.TransferSenderFromExpectedContact(
+                targetContact,
+                targetSnapshot.IdentityToken,
+                sender,
+                deletedSource,
+                deletedSourceSnapshot.IdentityToken,
+                accountLabel: "不应写入",
+                isPrimary: true));
+
+        Assert.Contains("来源联系人", exception.Message);
+        Assert.Equal(replacementSource, _repository.FindContactBySenderId(sender)!.Id);
+        Assert.Equal("新来源", Assert.Single(_repository.GetContactDetail(replacementSource)!.Senders).AccountLabel);
+        Assert.Empty(_repository.GetContactDetail(targetContact)!.Senders);
+    }
+
+    [Fact]
+    public void TransferSenderFromExpectedContact_WhenEitherIdentityTokenMismatches_RejectsWithoutSideEffects()
+    {
+        var sender = _archive.AddSender("81301", "Token mismatch sender");
+        var sourceContact = _repository.CreateContact(
+            "Token source",
+            note: "保留来源",
+            initialBindings: [(sender, "原标签", true)]);
+        var targetContact = _repository.CreateContact("Token target");
+        var sourceSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(sourceContact));
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
+
+        Assert.Throws<InvalidOperationException>(() =>
+            _repository.TransferSenderFromExpectedContact(
+                targetContact,
+                new string('0', 32),
+                sender,
+                sourceContact,
+                sourceSnapshot.IdentityToken));
+        Assert.Throws<InvalidOperationException>(() =>
+            _repository.TransferSenderFromExpectedContact(
+                targetContact,
+                targetSnapshot.IdentityToken,
+                sender,
+                sourceContact,
+                new string('f', 32)));
+
+        Assert.Equal(sourceContact, _repository.FindContactBySenderId(sender)!.Id);
+        Assert.Equal("原标签", Assert.Single(_repository.GetContactDetail(sourceContact)!.Senders).AccountLabel);
+        Assert.Empty(_repository.GetContactDetail(targetContact)!.Senders);
+    }
+
+    [Fact]
+    public void TransferSenderFromExpectedContact_WhenTransferredSenderWasPrimary_PromotesRemainingSourceSender()
+    {
+        var transferredSender = _archive.AddSender("81401", "Transferred primary");
+        var remainingSender = _archive.AddSender("81402", "Remaining sender");
+        var sourceContact = _repository.CreateContact(
+            "Promotion source",
+            initialBindings:
+            [
+                (transferredSender, "主账号", true),
+                (remainingSender, "保留账号", false),
+            ]);
+        var targetContact = _repository.CreateContact("Promotion target");
+        var sourceSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(sourceContact));
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
+
+        _repository.TransferSenderFromExpectedContact(
+            targetContact,
+            targetSnapshot.IdentityToken,
+            transferredSender,
+            sourceContact,
+            sourceSnapshot.IdentityToken,
+            accountLabel: "已转移",
+            isPrimary: true);
+
+        var sourceDetail = Assert.IsType<ContactDetail>(_repository.GetContactDetail(sourceContact));
+        var promoted = Assert.Single(sourceDetail.Senders);
+        Assert.Equal(remainingSender, promoted.SenderId);
+        Assert.True(promoted.IsPrimary);
+        Assert.True(Assert.Single(_repository.GetContactDetail(targetContact)!.Senders).IsPrimary);
+    }
+
+    [Fact]
+    public void BindSender_ForceRebind_WhenTransferredSenderWasPrimary_PromotesRemainingSourceSender()
+    {
+        var transferredSender = _archive.AddSender("81501", "Legacy transferred primary");
+        var remainingSender = _archive.AddSender("81502", "Legacy remaining sender");
+        var sourceContact = _repository.CreateContact(
+            "Legacy promotion source",
+            initialBindings:
+            [
+                (transferredSender, "主账号", true),
+                (remainingSender, "保留账号", false),
+            ]);
+        var targetContact = _repository.CreateContact("Legacy promotion target");
+
+        _repository.BindSender(
+            targetContact,
+            transferredSender,
+            accountLabel: "已转移",
+            isPrimary: true,
+            forceRebind: true);
+
+        var promoted = Assert.Single(_repository.GetContactDetail(sourceContact)!.Senders);
+        Assert.Equal(remainingSender, promoted.SenderId);
+        Assert.True(promoted.IsPrimary);
+    }
+
+    [Fact]
     public void TransferSenderFromExpectedContact_WhenOwnerChanged_RejectsWithoutSideEffects()
     {
         var sender = _archive.AddSender("82001", "Moved sender");
@@ -394,10 +554,17 @@ public sealed class ContactRepositoryTests : IDisposable
     public void TransferSenderFromExpectedContact_WhenTargetInsertFails_RollsBackSourceDeleteAndCleanup()
     {
         var sender = _archive.AddSender("84001", "Rollback sender");
+        var remainingSender = _archive.AddSender("84002", "Rollback remaining sender");
         var sourceContact = _repository.CreateContact(
             "Rollback source",
-            initialBindings: [(sender, "原标签", true)]);
+            initialBindings:
+            [
+                (sender, "原标签", true),
+                (remainingSender, "保留标签", false),
+            ]);
         var targetContact = _repository.CreateContact("Rollback target");
+        var sourceSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(sourceContact));
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
 
         using (var connection = _archive.Open())
         using (var command = connection.CreateCommand())
@@ -416,8 +583,10 @@ public sealed class ContactRepositoryTests : IDisposable
         var exception = Assert.Throws<SqliteException>(() =>
             _repository.TransferSenderFromExpectedContact(
                 targetContact,
+                targetSnapshot.IdentityToken,
                 sender,
                 sourceContact,
+                sourceSnapshot.IdentityToken,
                 accountLabel: "不应提交",
                 isPrimary: false));
 
@@ -425,10 +594,14 @@ public sealed class ContactRepositoryTests : IDisposable
         var restoredSource = Assert.IsType<ContactDetail>(_repository.GetContactDetail(sourceContact));
         Assert.Null(restoredSource.Note);
         Assert.Null(restoredSource.CustomAvatarPath);
-        var restoredSender = Assert.Single(restoredSource.Senders);
+        Assert.Equal(2, restoredSource.Senders.Count);
+        var restoredSender = restoredSource.Senders.Single(item => item.SenderId == sender);
         Assert.Equal(sender, restoredSender.SenderId);
         Assert.Equal("原标签", restoredSender.AccountLabel);
         Assert.True(restoredSender.IsPrimary);
+        var restoredRemaining = restoredSource.Senders.Single(item => item.SenderId == remainingSender);
+        Assert.Equal("保留标签", restoredRemaining.AccountLabel);
+        Assert.False(restoredRemaining.IsPrimary);
         Assert.Empty(Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact)).Senders);
         Assert.Equal(sourceContact, _repository.FindContactBySenderId(sender)!.Id);
     }
@@ -737,10 +910,14 @@ public sealed class ContactRepositoryTests : IDisposable
         var boundEntry = Assert.Single(available, item => item.SenderId == boundSender);
         Assert.Equal("Exact bound contact", boundEntry.BoundContactName);
         Assert.Equal(boundContact, boundEntry.BoundContactId);
+        Assert.Equal(
+            _repository.GetContactDetail(boundContact)!.IdentityToken,
+            boundEntry.BoundContactIdentityToken);
 
         var unboundEntry = Assert.Single(available, item => item.SenderId == unboundSender);
         Assert.Null(unboundEntry.BoundContactName);
         Assert.Null(unboundEntry.BoundContactId);
+        Assert.Null(unboundEntry.BoundContactIdentityToken);
     }
 
     [Fact]

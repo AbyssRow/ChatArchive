@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS app_metadata (
     value TEXT NOT NULL
 );
 
-INSERT INTO app_metadata(key, value) VALUES ('schema_version', '3')
+INSERT INTO app_metadata(key, value) VALUES ('schema_version', '4')
 ON CONFLICT(key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS import_runs (
@@ -221,6 +221,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY,
+    identity_token TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
     display_name TEXT NOT NULL,
     custom_avatar_path TEXT,
     note TEXT,
@@ -229,6 +230,7 @@ CREATE TABLE IF NOT EXISTS contacts (
 );
 
 CREATE INDEX IF NOT EXISTS ix_contacts_display_name ON contacts(display_name);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_contacts_identity_token ON contacts(identity_token);
 
 CREATE TABLE IF NOT EXISTS contact_senders (
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
