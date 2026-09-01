@@ -152,6 +152,55 @@ public class ImportServiceTests : IDisposable
     }
 
     [Fact]
+    public void QqChunked_EmptyAuthoritativeManifest_FailsImportEvenWhenSidecarContainsMessage()
+    {
+        var root = ExportRoot();
+        var chunks = Path.Combine(root, "chunks");
+        Directory.CreateDirectory(chunks);
+        File.WriteAllText(Path.Combine(root, "manifest.json"), """
+            {
+              "metadata":{"name":"QQChatExporter","version":"0.2.0"},
+              "chatInfo":{"selfUid":"self","peerUid":"empty","name":"空清单","type":"group"},
+              "chunked":{"chunks":[]}
+            }
+            """);
+        File.WriteAllText(
+            Path.Combine(chunks, "old.jsonl"),
+            "{\"id\":\"sidecar\",\"timestamp\":1700000000,\"sender\":{\"uid\":\"peer\",\"name\":\"成员\"},\"content\":{\"type\":\"text\",\"text\":\"不应导入\"}}\n");
+
+        var result = new ImportService(_archive.Db, _mediaDir).Run([root]);
+
+        Assert.Equal(0, result.FilesImported);
+        Assert.Equal(1, result.FilesFailed);
+        Assert.Contains("没有有效消息", Assert.Single(result.Files).Error);
+        using var connection = _archive.Open();
+        Assert.Equal(0L, Scalar(connection, "SELECT COUNT(*) FROM conversations"));
+    }
+
+    [Fact]
+    public void InvalidExplicitQqManifest_FailsOnlyThatFileAndDoesNotAbortBatch()
+    {
+        var root = ExportRoot();
+        var broken = Path.Combine(root, "broken");
+        Directory.CreateDirectory(broken);
+        File.WriteAllText(Path.Combine(broken, "manifest.json"), """
+            {
+              "metadata":{"name":"QQChatExporter","version":"0.2.0"},
+              "chatInfo":{"selfUid":"self","peerUid":"broken","name":"损坏","type":"group"},
+              "chunked":null
+            }
+            """);
+        File.WriteAllText(Path.Combine(root, "good.json"), Fixtures.QqExport);
+
+        var result = new ImportService(_archive.Db, _mediaDir).Run([root]);
+
+        Assert.Equal(1, result.FilesImported);
+        Assert.Equal(1, result.FilesFailed);
+        Assert.Contains(result.Files, file => file.Status == "failed");
+        Assert.Contains(result.Files, file => file.Status == "completed");
+    }
+
+    [Fact]
     public void Aliases_merge_across_duplicate_exports()
     {
         var path = Path.Combine(ExportRoot(), "w.json");

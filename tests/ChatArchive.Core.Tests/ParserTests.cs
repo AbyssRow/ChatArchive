@@ -483,6 +483,21 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
+    public void QqChunkedExportFormat_Enumeration_WhenDeclaredChunkDeletedAfterOpen_ThrowsManifestScopedError()
+    {
+        var (manifest, chunk) = WriteStrictQqChunkedExport("chunks/a.jsonl", oneValidMessage: true);
+        using var export = new QqChunkedExportFormat().Open(manifest);
+        File.Delete(chunk);
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => export.EnumerateMessages().ToList());
+
+        Assert.Equal(manifest, error.FilePath);
+        Assert.Contains("chunks/a.jsonl", error.Message, StringComparison.Ordinal);
+        Assert.IsAssignableFrom<IOException>(error.InnerException);
+    }
+
+    [Fact]
     public void Qq_rejects_wrong_exporter_metadata_name()
     {
         var path = Path.Combine(_dir, "qq-wrong-exporter.json");
@@ -1652,6 +1667,32 @@ public class ParserTests : IDisposable
         Assert.Null(ImportText.AsLong(invalidStr));
         Assert.Null(ImportText.AsDouble(invalidStr));
     }
+
+    private (string Manifest, string Chunk) WriteStrictQqChunkedExport(
+        string relativePath,
+        bool oneValidMessage)
+    {
+        var root = Path.Combine(_dir, $"strict-{Guid.NewGuid():N}");
+        var chunk = Path.Combine(
+            root,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(chunk)!);
+        File.WriteAllText(
+            chunk,
+            oneValidMessage
+                ? "{\"id\":\"q1\",\"timestamp\":1700000000,\"sender\":{\"uid\":\"peer\",\"name\":\"成员\"},\"content\":{\"type\":\"text\",\"text\":\"消息\"}}\n"
+                : string.Empty);
+        var manifest = Path.Combine(root, "manifest.json");
+        File.WriteAllText(manifest, $$"""
+            {
+              "metadata":{"name":"QQChatExporter","version":"0.2.0"},
+              "chatInfo":{"selfUid":"self","peerUid":"group","name":"测试群","type":"group"},
+              "chunked":{"chunks":[{"relativePath":"{{relativePath}}"}]}
+            }
+            """);
+        return (manifest, chunk);
+    }
+
     public void Dispose()
     {
         try

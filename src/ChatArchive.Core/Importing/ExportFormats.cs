@@ -169,30 +169,24 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
 
         return new ExportFile(
             conversation,
-            token => IterateChunkedMessages(chunkFiles, conversation, selfSender, manifestDir, token));
+            token => IterateChunkedMessages(chunkFiles, conversation, selfSender, filePath, manifestDir, token));
     }
 
     private static IEnumerable<ParsedMessage> IterateChunkedMessages(
         IReadOnlyList<string> chunkFiles,
         ParsedConversation conversation,
         string? selfSender,
+        string manifestPath,
         string exportRoot,
         CancellationToken cancellationToken)
     {
         var globalIndex = 0;
         foreach (var chunkFile in chunkFiles)
         {
-            using var stream = new FileStream(
-                chunkFile,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                bufferSize: 64 * 1024,
-                FileOptions.SequentialScan);
-            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
+            using var reader = OpenChunkReader(manifestPath, exportRoot, chunkFile);
 
             string? line;
-            while ((line = reader.ReadLine()) != null)
+            while ((line = ReadChunkLine(reader, manifestPath, exportRoot, chunkFile)) is not null)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var trimmed = line.Trim();
@@ -208,6 +202,52 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
                     globalIndex++;
                 }
             }
+        }
+    }
+
+    private static StreamReader OpenChunkReader(
+        string manifestPath,
+        string exportRoot,
+        string chunkPath)
+    {
+        var relative = Path.GetRelativePath(exportRoot, chunkPath).Replace('\\', '/');
+        try
+        {
+            var stream = new FileStream(
+                chunkPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                FileOptions.SequentialScan);
+            return new StreamReader(stream, System.Text.Encoding.UTF8);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new ImportFormatException(
+                manifestPath,
+                $"读取声明分块失败（{relative}：{ex.Message}）",
+                ex);
+        }
+    }
+
+    private static string? ReadChunkLine(
+        StreamReader reader,
+        string manifestPath,
+        string exportRoot,
+        string chunkPath)
+    {
+        var relative = Path.GetRelativePath(exportRoot, chunkPath).Replace('\\', '/');
+        try
+        {
+            return reader.ReadLine();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new ImportFormatException(
+                manifestPath,
+                $"读取声明分块失败（{relative}：{ex.Message}）",
+                ex);
         }
     }
 
