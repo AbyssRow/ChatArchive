@@ -164,22 +164,11 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
         var selfSender = !string.IsNullOrEmpty(selfUid) ? selfUid : !string.IsNullOrEmpty(selfUin) ? selfUin : null;
 
         var manifestDir = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
-        var chunkFiles = new List<string>();
-        var chunksSubdir = Path.Combine(manifestDir, "chunks");
-        if (Directory.Exists(chunksSubdir))
-        {
-            chunkFiles.AddRange(Directory.GetFiles(chunksSubdir, "*.jsonl"));
-        }
-        chunkFiles.AddRange(Directory.GetFiles(manifestDir, "*.jsonl"));
-
-        var sortedChunks = chunkFiles
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(Path.GetFileName, NaturalStringComparer.Instance)
-            .ToList();
+        var chunkFiles = QqChunkManifest.ResolveChunkFiles(filePath, cancellationToken);
 
         return new ExportFile(
             conversation,
-            token => IterateChunkedMessages(sortedChunks, conversation, selfSender, manifestDir, token));
+            token => IterateChunkedMessages(chunkFiles, conversation, selfSender, manifestDir, token));
     }
 
     private static IEnumerable<ParsedMessage> IterateChunkedMessages(
@@ -223,54 +212,6 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
 
     private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
 
-    private sealed class NaturalStringComparer : IComparer<string?>
-    {
-        public static readonly NaturalStringComparer Instance = new();
-
-        public int Compare(string? x, string? y)
-        {
-            if (ReferenceEquals(x, y)) return 0;
-            if (x is null) return -1;
-            if (y is null) return 1;
-
-            int i = 0, j = 0;
-            while (i < x.Length && j < y.Length)
-            {
-                if (char.IsDigit(x[i]) && char.IsDigit(y[j]))
-                {
-                    int startX = i;
-                    while (i < x.Length && char.IsDigit(x[i])) i++;
-                    int startY = j;
-                    while (j < y.Length && char.IsDigit(y[j])) j++;
-
-                    var spanX = x.AsSpan(startX, i - startX);
-                    var spanY = y.AsSpan(startY, j - startY);
-
-                    if (ulong.TryParse(spanX, out var numX) && ulong.TryParse(spanY, out var numY))
-                    {
-                        var numCmp = numX.CompareTo(numY);
-                        if (numCmp != 0) return numCmp;
-                    }
-                    else
-                    {
-                        var lenCmp = spanX.Length.CompareTo(spanY.Length);
-                        if (lenCmp != 0) return lenCmp;
-                        var cmp = spanX.SequenceCompareTo(spanY);
-                        if (cmp != 0) return cmp;
-                    }
-                }
-                else
-                {
-                    int cmp = char.ToLowerInvariant(x[i]).CompareTo(char.ToLowerInvariant(y[j]));
-                    if (cmp != 0) return cmp;
-                    i++;
-                    j++;
-                }
-            }
-
-            return x.Length.CompareTo(y.Length);
-        }
-    }
 }
 
 /// <summary>WeFlow 格式适配器。</summary>

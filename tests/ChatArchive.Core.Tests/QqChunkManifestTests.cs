@@ -52,6 +52,95 @@ public sealed class QqChunkManifestTests : IDisposable
         Assert.Equal("manifest.json", error.FilePath);
     }
 
+    [Fact]
+    public void ResolveChunkFiles_AuthoritativeManifest_ReturnsOnlyDeclaredFilesInDeclarationOrder()
+    {
+        var chunks = Directory.CreateDirectory(Path.Combine(_root, "chunks")).FullName;
+        var b = WriteAt(Path.Combine(chunks, "b.jsonl"), "{\"id\":\"b\"}\n");
+        var a = WriteAt(Path.Combine(chunks, "a.jsonl"), "{\"id\":\"a\"}\n");
+        _ = WriteAt(Path.Combine(chunks, "old.jsonl"), "{}\n");
+        _ = WriteAt(Path.Combine(_root, "old.jsonl"), "{}\n");
+        var manifest = WriteManifest("""
+            {"chunksDir":"chunks","chunks":[
+              {"relativePath":"chunks/b.jsonl"},
+              {"relativePath":"chunks/a.jsonl"}
+            ]}
+            """);
+
+        Assert.Equal(new[] { b, a }, QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_AuthoritativeEmptyChunks_ReturnsEmpty()
+    {
+        _ = WriteAt(Path.Combine(_root, "sidecar.jsonl"), "{}\n");
+        _ = WriteAt(Path.Combine(_root, "chunks", "sidecar.jsonl"), "{}\n");
+        var manifest = WriteManifest("""{"chunks":[]}""");
+
+        Assert.Empty(QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_LegacyManifest_ScansOnlyConventionalLocationsInNaturalOrder()
+    {
+        var chunk2 = WriteAt(Path.Combine(_root, "chunk2.jsonl"), "{}\n");
+        var chunk10 = WriteAt(Path.Combine(_root, "chunks", "chunk10.jsonl"), "{}\n");
+        _ = WriteAt(Path.Combine(_root, "chunks", "nested", "chunk1.jsonl"), "{}\n");
+        var manifest = WriteAt(Path.Combine(_root, "manifest.json"), "{\"chatInfo\":{}}");
+
+        Assert.Equal(
+            new[] { chunk2, chunk10 },
+            QqChunkManifest.ResolveChunkFiles(manifest));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("\"text\"")]
+    [InlineData("0")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("{\"chunkz\":[]}")]
+    [InlineData("{\"chunks\":null}")]
+    [InlineData("{\"chunks\":{}}")]
+    public void ResolveChunkFiles_ExplicitChunkedShape_DoesNotFallBackToLegacyScan(
+        string chunkedJson)
+    {
+        _ = WriteAt(Path.Combine(_root, "sidecar.jsonl"), "{}\n");
+        var manifest = WriteManifest(chunkedJson);
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+    }
+
+    [Theory]
+    [InlineData("{")]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("\"scalar\"")]
+    public void ResolveChunkFiles_InvalidJsonOrNonObjectRoot_ThrowsManifestScopedError(
+        string json)
+    {
+        var manifest = WriteAt(Path.Combine(_root, "manifest.json"), json);
+
+        var error = Assert.Throws<ImportFormatException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest));
+
+        Assert.Equal(manifest, error.FilePath);
+    }
+
+    [Fact]
+    public void ResolveChunkFiles_PropagatesCancellationWithoutWrapping()
+    {
+        var manifest = WriteAt(Path.Combine(_root, "manifest.json"), "{}");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(
+            () => QqChunkManifest.ResolveChunkFiles(manifest, cancellation.Token));
+    }
+
     public void Dispose()
     {
         try
