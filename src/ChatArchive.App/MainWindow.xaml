@@ -78,8 +78,14 @@
                     <ItemsControl ItemsSource="{Binding Images}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Image Source="{Binding ResolvedPath, Converter={StaticResource PathToImageSource}}" MaxHeight="220" Stretch="Uniform"
-                                       Tapped="OnImageAttachmentTapped" />
+                                <Button Background="Transparent" BorderThickness="0" Padding="0"
+                                        HorizontalAlignment="Left"
+                                        AutomationProperties.Name="{Binding PreviewAutomationName}"
+                                        ToolTipService.ToolTip="{Binding PreviewAutomationName}"
+                                        Click="OnImageAttachmentClick">
+                                    <Image Source="{Binding ResolvedPath, Converter={StaticResource PathToImageSource}}"
+                                           MaxHeight="220" Stretch="Uniform" IsHitTestVisible="False" />
+                                </Button>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -108,15 +114,20 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <PersonPicture Grid.Column="0" Width="32" Height="32" VerticalAlignment="Top" Margin="0,2,0,0"
-                                   ProfilePicture="{Binding AvatarPath, Converter={StaticResource PathToImageSource}}"
-                                   Initials="{Binding Initials}"
-                                   DisplayName="{Binding DisplaySenderName}"
-                                   Tapped="OnSenderTapped" />
+                    <Button Grid.Column="0" Width="32" Height="32" VerticalAlignment="Top" Margin="0,2,0,0"
+                            Background="Transparent" BorderThickness="0" Padding="0" IsTabStop="False"
+                            AutomationProperties.Name="{Binding SenderAutomationName}"
+                            Click="OnSenderClick">
+                        <PersonPicture Width="32" Height="32" IsHitTestVisible="False"
+                                       ProfilePicture="{Binding AvatarPath, Converter={StaticResource PathToImageSource}}"
+                                       Initials="{Binding Initials}"
+                                       DisplayName="{Binding DisplaySenderName}" />
+                    </Button>
                     <StackPanel Grid.Column="1" Spacing="2" HorizontalAlignment="Left">
-                        <TextBlock Text="{Binding DisplaySenderName}" FontSize="11" Opacity="0.55"
-                                   Tapped="OnSenderTapped"
-                                   Visibility="{Binding IsIncoming, Converter={StaticResource BoolToVis}}" />
+                        <Button Content="{Binding DisplaySenderName}" FontSize="11" Opacity="0.55"
+                                HorizontalAlignment="Left" Background="Transparent" BorderThickness="0" Padding="0"
+                                AutomationProperties.Name="{Binding SenderAutomationName}"
+                                Click="OnSenderClick" />
                         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="4,12,12,12" Padding="10,7"
@@ -144,11 +155,15 @@
                         <TextBlock Text="{Binding TimeText}" FontSize="10" Opacity="0.4"
                                    HorizontalAlignment="Right" />
                     </StackPanel>
-                    <PersonPicture Grid.Column="1" Width="32" Height="32" VerticalAlignment="Top" Margin="0,2,0,0"
-                                   ProfilePicture="{Binding AvatarPath, Converter={StaticResource PathToImageSource}}"
-                                   Initials="{Binding Initials}"
-                                   DisplayName="{Binding DisplaySenderName}"
-                                   Tapped="OnSenderTapped" />
+                    <Button Grid.Column="1" Width="32" Height="32" VerticalAlignment="Top" Margin="0,2,0,0"
+                            Background="Transparent" BorderThickness="0" Padding="0"
+                            AutomationProperties.Name="{Binding SenderAutomationName}"
+                            Click="OnSenderClick">
+                        <PersonPicture Width="32" Height="32" IsHitTestVisible="False"
+                                       ProfilePicture="{Binding AvatarPath, Converter={StaticResource PathToImageSource}}"
+                                       Initials="{Binding Initials}"
+                                       DisplayName="{Binding DisplaySenderName}" />
+                    </Button>
                 </Grid>
             </DataTemplate>
 

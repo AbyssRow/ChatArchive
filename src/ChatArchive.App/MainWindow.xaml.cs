@@ -544,9 +544,10 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    private async void OnSenderTapped(object sender, TappedRoutedEventArgs e)
+    private async void OnSenderClick(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: MessageEntry entry } && entry.Message.SenderId is long senderId)
+        if (sender is FrameworkElement { DataContext: MessageEntry entry }
+            && entry.Message.SenderId is long senderId)
         {
             try
             {
@@ -559,7 +560,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void OnImageAttachmentTapped(object sender, TappedRoutedEventArgs e)
+    private async void OnImageAttachmentClick(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: AttachmentEntry entry }
             && entry.ResolvedPath is not null)
