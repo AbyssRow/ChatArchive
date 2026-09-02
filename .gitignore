@@ -26,6 +26,7 @@ AGENT.md
 *.sqlite
 *.sqlite3
 /input/
+/inputapp/
 /data/
 /archive/
 /avatars/

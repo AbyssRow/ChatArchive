@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-publish:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore ChatArchive.sln --nologo
+
+      - name: Build
+        run: dotnet build ChatArchive.sln -c Release --no-restore --nologo
+
+      - name: Test Core
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse tests/ChatArchive.Core.Tests/bin/Release -Filter ChatArchive.Core.Tests.exe |
+            Select-Object -First 1
+          if (-not $exe) { throw "Core test exe not found under bin/Release" }
+          & $exe.FullName -noLogo -automated
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test App
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse tests/ChatArchive.App.Tests/bin/Release -Filter ChatArchive.App.Tests.exe |
+            Select-Object -First 1
+          if (-not $exe) { throw "App test exe not found under bin/Release" }
+          & $exe.FullName -noLogo -automated
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Publish probe
+        run: >
+          dotnet publish src/ChatArchive.App/ChatArchive.App.csproj
+          -c Release --no-restore --nologo
+          -p:PublishProfile=win-x64-app-local
+
+      - name: Check published exe
+        shell: pwsh
+        run: |
+          $exe = "artifacts/publish/win-x64/ChatArchive.App.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Publish probe failed: $exe was not produced."
+          }
+          Get-Item $exe | Select-Object FullName, Length, LastWriteTime
