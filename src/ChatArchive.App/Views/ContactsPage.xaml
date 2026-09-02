@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="ChatArchive.App.Views.ContactsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:ChatArchive.App.Views"
+    NavigationCacheMode="Required">
+    <Grid x:Name="ContactsRoot">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="320" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 左栏：联系人列表与搜索/新建 -->
+        <Grid Grid.Column="0" RowSpacing="8" Padding="10,10,6,6">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="ContactsSearchBox" PlaceholderText="搜索联系人…"
+                         TextChanged="ContactsSearchBox_TextChanged" />
+                <Button Grid.Column="1" x:Name="NewContactButton" Content="+ 新建联系人"
+                        Click="OnNewContactClick" />
+            </Grid>
+
+            <ProgressBar x:Name="ContactsProgressBar" Grid.Row="1" IsIndeterminate="True"
+                         Height="4" Visibility="Collapsed" />
+
+            <ListView x:Name="ContactsListView" Grid.Row="2"
+                      SelectionMode="Single"
+                      SelectionChanged="ContactsListView_SelectionChanged">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="8,6" ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <PersonPicture Grid.Column="0" Width="36" Height="36"
+                                           ProfilePicture="{Binding CustomAvatarPath, Converter={StaticResource PathToImageSource}}"
+                                           DisplayName="{Binding DisplayName}" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Text="{Binding DisplayName}" FontSize="14" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding MessageCount, Converter={StaticResource CountText}}"
+                                           FontSize="11" Opacity="0.6" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+
+        <Border Grid.Column="1" Width="1"
+                Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+        <!-- 右栏：联系人详情 -->
+        <Grid Grid.Column="2" Padding="20,16">
+            <!-- 未选中任何联系人时的占位提示 -->
+            <TextBlock x:Name="NoContactSelectedPrompt" Text="请选择左侧联系人或点击新建"
+                       FontSize="15" Opacity="0.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
+
+            <!-- 选中联系人详情内容 -->
+            <ScrollViewer x:Name="ContactDetailPane" Visibility="Collapsed">
+                <StackPanel Spacing="16" MaxWidth="720" HorizontalAlignment="Left">
+                    <!-- 基本信息卡片 -->
+                    <Grid ColumnSpacing="20" RowSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Spacing="8" HorizontalAlignment="Center">
+                            <PersonPicture x:Name="DetailAvatarPicture" Width="80" Height="80" />
+                            <Button x:Name="ChangeAvatarButton" Content="更换头像" FontSize="12"
+                                    HorizontalAlignment="Center" Click="OnChangeAvatarClick" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Spacing="10">
+                            <TextBox x:Name="DetailDisplayNameBox" Header="备注姓名" PlaceholderText="输入联系人姓名…" />
+                            <TextBox x:Name="DetailNoteBox" Header="笔记" PlaceholderText="输入笔记或备注信息…"
+                                     AcceptsReturn="True" MinHeight="60" />
+                            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0">
+                                <Button x:Name="SaveContactButton" Content="保存"
+                                        Style="{StaticResource AccentButtonStyle}" Click="OnSaveContactClick" />
+                                <Button x:Name="DeleteContactButton" Content="删除联系人"
+                                        Click="OnDeleteContactClick" />
+                                <TextBlock x:Name="DetailTotalMessagesText" VerticalAlignment="Center"
+                                           FontSize="12" Opacity="0.6" Margin="8,0,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="0,8" />
+
+                    <!-- 已绑定账号区域 -->
+                    <StackPanel Spacing="8">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="已绑定账号" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <Button Grid.Column="1" x:Name="AddBoundAccountButton" Content="+ 绑定账号"
+                                    Click="OnAddBoundAccountClick" />
+                        </Grid>
+
+                        <ListView x:Name="BoundSendersListView" SelectionMode="None">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="8,8" ColumnSpacing="12" BorderThickness="0,0,0,1"
+                                          BorderBrush="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- 平台与主账号标记 -->
+                                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                            <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="4" Padding="6,2">
+                                                <TextBlock Text="{Binding Platform, Converter={StaticResource PlatformLabel}}" FontSize="11" />
+                                            </Border>
+                                            <Border Background="{ThemeResource SystemAccentColorLight3}" CornerRadius="4" Padding="6,2"
+                                                    Visibility="{Binding IsPrimary, Converter={StaticResource BoolToVis}}">
+                                                <TextBlock Text="主账号" FontSize="11" Foreground="{ThemeResource SystemAccentColor}" FontWeight="SemiBold" />
+                                            </Border>
+                                        </StackPanel>
+
+                                        <!-- 账号 ID 与原昵称 -->
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                            <TextBlock Text="{Binding NativeId}" FontSize="13" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding OriginalName}" FontSize="11" Opacity="0.6" />
+                                        </StackPanel>
+
+                                        <!-- 可编辑的账号身份标签 -->
+                                        <TextBox Grid.Column="2" VerticalAlignment="Center" PlaceholderText="身份标签(如工作号)"
+                                                 Text="{Binding AccountLabel}" LostFocus="OnAccountLabelLostFocus" />
+
+                                        <!-- 设为主账号按钮 -->
+                                        <Button Grid.Column="3" Content="设为主账号" FontSize="12" VerticalAlignment="Center"
+                                                Visibility="{Binding IsPrimary, Converter={StaticResource InverseBool}}"
+                                                Click="OnSetPrimarySenderClick" Tag="{Binding SenderId}" />
+
+                                        <!-- 解绑按钮 -->
+                                        <Button Grid.Column="4" Content="解除绑定" FontSize="12" VerticalAlignment="Center"
+                                                Click="OnUnbindSenderClick" Tag="{Binding SenderId}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="0,8" />
+
+                    <!-- 关联会话列表 -->
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="关联会话" FontSize="15" FontWeight="SemiBold" />
+                        <ListView x:Name="ContactConversationsListView" SelectionMode="Single"
+                                  IsItemClickEnabled="True" ItemClick="ContactConversation_Click">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="6,4" ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Title}" FontSize="13" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Text="{Binding MessageCount, Converter={StaticResource CountText}}"
+                                                   FontSize="11" Opacity="0.5" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</Page>
