@@ -250,7 +250,7 @@ public sealed partial class ContactsPage : Page, IShellPage
         }
         catch (Exception ex)
         {
-            _shell!.ShowError($"更换头像失败: {ex.Message}");
+            _shell!.ShowError(PickerInterop.FormatFailure("更换头像", ex));
         }
     }
 

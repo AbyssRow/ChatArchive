@@ -32,6 +32,7 @@ public sealed partial class SettingsPage : Page, IShellPage
 
     public void OnShown()
     {
+        SettingsChangeDirButton.IsEnabled = _shell?.IsPickerReady == true;
         RefreshSettingsView();
     }
 

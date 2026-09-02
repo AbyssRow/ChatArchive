@@ -176,20 +176,23 @@ public sealed partial class ConversationsPage : Page, IShellPage
 
     private void ConversationList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_isApplyingConversation)
-        {
-            _activationGate.Invalidate();
-        }
-
         if (_conversations is null)
         {
             return;
         }
 
-        if (ConversationListControl.SelectedItem is ConversationInfo conversation)
+        var added = e.AddedItems.OfType<ConversationInfo>().FirstOrDefault();
+        if (!ConversationListActivation.IsUserActivation(
+                _isApplyingConversation,
+                _conversations.SelectedConversation?.Id,
+                added?.Id,
+                e.AddedItems.Count))
         {
-            _conversations.Activate(conversation);
+            return;
         }
+
+        _activationGate.Invalidate();
+        _conversations.Activate(added!);
     }
 
     private void HookMessageScroll()
@@ -376,7 +379,7 @@ public sealed partial class ConversationsPage : Page, IShellPage
             }
             catch (Exception ex)
             {
-                _shell!.ShowError($"另存图片失败：{ex.Message}");
+                _shell!.ShowError(PickerInterop.FormatFailure("另存图片", ex));
             }
         };
 

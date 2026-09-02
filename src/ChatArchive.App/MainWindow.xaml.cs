@@ -2,6 +2,7 @@ using ChatArchive.App.Navigation;
 using ChatArchive.App.Services;
 using ChatArchive.App.ViewModels;
 using ChatArchive.App.Views;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -30,13 +31,34 @@ public sealed partial class MainWindow : Window, IAppShell
     {
         get
         {
-            if (_windowHandle == 0)
+            if (!PickerInterop.IsUsableHandle(_windowHandle))
             {
-                _windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                _windowHandle = CaptureWindowHandle();
             }
 
             return _windowHandle;
         }
+    }
+
+    public bool IsPickerReady => PickerInterop.IsUsableHandle(WindowHandle);
+
+    private nint CaptureWindowHandle()
+    {
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (PickerInterop.IsUsableHandle(hwnd))
+        {
+            return hwnd;
+        }
+
+        try
+        {
+            hwnd = Win32Interop.GetWindowFromWindowId(AppWindow.Id);
+        }
+        catch (Exception)
+        {
+        }
+
+        return hwnd;
     }
 
     public MainWindow()
@@ -44,11 +66,11 @@ public sealed partial class MainWindow : Window, IAppShell
         try
         {
             InitializeComponent();
-            Activated += (_, _) =>
+            Activated += (_, args) =>
             {
-                if (_windowHandle == 0)
+                if (args.WindowActivationState != WindowActivationState.Deactivated)
                 {
-                    _windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                    _windowHandle = CaptureWindowHandle();
                 }
             };
 
@@ -382,7 +404,7 @@ public sealed partial class MainWindow : Window, IAppShell
                 }
                 catch (Exception ex)
                 {
-                    ShowError($"选择文件失败: {ex.Message}");
+                    ShowError(PickerInterop.FormatFailure("选择文件", ex));
                 }
             };
 
@@ -402,7 +424,7 @@ public sealed partial class MainWindow : Window, IAppShell
                 }
                 catch (Exception ex)
                 {
-                    ShowError($"选择文件夹失败: {ex.Message}");
+                    ShowError(PickerInterop.FormatFailure("选择文件夹", ex));
                 }
             };
             var clear = new Button { Content = "清空列表" };
@@ -422,8 +444,8 @@ public sealed partial class MainWindow : Window, IAppShell
                 status.Text = _import.StatusText;
                 progress.IsIndeterminate = _import.IsRunning;
                 progress.Visibility = _import.IsRunning ? Visibility.Visible : Visibility.Collapsed;
-                addFile.IsEnabled = !_import.IsRunning;
-                addFolder.IsEnabled = !_import.IsRunning;
+                addFile.IsEnabled = !_import.IsRunning && IsPickerReady;
+                addFolder.IsEnabled = !_import.IsRunning && IsPickerReady;
                 clear.IsEnabled = !_import.IsRunning;
                 start.IsEnabled = !_import.IsRunning && _import.Paths.Count > 0;
                 cancel.IsEnabled = _import.IsRunning && !_import.IsCancellationRequested;

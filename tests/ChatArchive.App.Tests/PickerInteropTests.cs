@@ -4,8 +4,18 @@ using Xunit;
 
 namespace ChatArchive.App.Tests;
 
-public sealed class PickerInteropTests
+public sealed class PickerInteropTests : IDisposable
 {
+    public PickerInteropTests()
+    {
+        PickerInterop.HandleValidator = static hwnd => hwnd == 42;
+    }
+
+    public void Dispose()
+    {
+        PickerInterop.HandleValidator = null;
+    }
+
     [Fact]
     public void RequireHandle_rejects_zero()
     {
@@ -14,7 +24,13 @@ public sealed class PickerInteropTests
     }
 
     [Fact]
-    public void RequireHandle_returns_nonzero_handle()
+    public void RequireHandle_rejects_nonzero_unusable_handle()
+    {
+        Assert.Throws<InvalidOperationException>(() => PickerInterop.RequireHandle(7));
+    }
+
+    [Fact]
+    public void RequireHandle_returns_usable_handle()
     {
         Assert.Equal(42, PickerInterop.RequireHandle(42));
     }
