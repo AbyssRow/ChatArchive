@@ -365,7 +365,9 @@ public sealed partial class ConversationsPage : Page, IShellPage
                     DefaultFileExtension = extension,
                 };
                 picker.FileTypeChoices.Add("图片", new List<string> { extension });
-                WinRT.Interop.InitializeWithWindow.Initialize(picker, _shell!.WindowHandle);
+                WinRT.Interop.InitializeWithWindow.Initialize(
+                    picker,
+                    PickerInterop.RequireHandle(_shell!.WindowHandle));
                 var file = await picker.PickSaveFileAsync();
                 if (file is not null)
                 {

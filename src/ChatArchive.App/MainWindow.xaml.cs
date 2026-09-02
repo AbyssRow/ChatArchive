@@ -24,14 +24,33 @@ public sealed partial class MainWindow : Window, IAppShell
     private bool _shellReady;
     private SearchPage? _searchPage;
     private StatsPage? _statsPage;
+    private nint _windowHandle;
 
-    public nint WindowHandle => WinRT.Interop.WindowNative.GetWindowHandle(this);
+    public nint WindowHandle
+    {
+        get
+        {
+            if (_windowHandle == 0)
+            {
+                _windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            }
+
+            return _windowHandle;
+        }
+    }
 
     public MainWindow()
     {
         try
         {
             InitializeComponent();
+            Activated += (_, _) =>
+            {
+                if (_windowHandle == 0)
+                {
+                    _windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                }
+            };
 
             // 标题栏与窗口背景：内容延伸进标题栏，Mica 材质与 Fluent 主题融合。
             ExtendsContentIntoTitleBar = true;
@@ -351,7 +370,7 @@ public sealed partial class MainWindow : Window, IAppShell
                     {
                         picker.FileTypeFilter.Add(extension);
                     }
-                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WindowHandle);
+                    WinRT.Interop.InitializeWithWindow.Initialize(picker, PickerInterop.RequireHandle(WindowHandle));
                     var files = await picker.PickMultipleFilesAsync();
                     if (files is not null)
                     {
@@ -374,7 +393,7 @@ public sealed partial class MainWindow : Window, IAppShell
                 {
                     var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder };
                     picker.FileTypeFilter.Add("*");
-                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WindowHandle);
+                    WinRT.Interop.InitializeWithWindow.Initialize(picker, PickerInterop.RequireHandle(WindowHandle));
                     var folder = await picker.PickSingleFolderAsync();
                     if (folder is not null)
                     {

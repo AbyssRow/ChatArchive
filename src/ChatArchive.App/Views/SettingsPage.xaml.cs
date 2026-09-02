@@ -88,7 +88,9 @@ public sealed partial class SettingsPage : Page, IShellPage
         {
             var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder };
             picker.FileTypeFilter.Add("*");
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, _shell!.WindowHandle);
+            WinRT.Interop.InitializeWithWindow.Initialize(
+                picker,
+                PickerInterop.RequireHandle(_shell!.WindowHandle));
             var folder = await picker.PickSingleFolderAsync();
             if (folder is null)
             {
@@ -149,7 +151,7 @@ public sealed partial class SettingsPage : Page, IShellPage
         }
         catch (Exception ex)
         {
-            _shell!.ShowError($"更改存储目录失败: {ex.Message}");
+            _shell!.ShowError(PickerInterop.FormatFailure("更改存储目录", ex));
         }
     }
 

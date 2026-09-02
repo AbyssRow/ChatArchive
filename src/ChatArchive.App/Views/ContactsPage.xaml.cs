@@ -236,7 +236,9 @@ public sealed partial class ContactsPage : Page, IShellPage
             picker.FileTypeFilter.Add(".webp");
             picker.FileTypeFilter.Add(".bmp");
 
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, _shell!.WindowHandle);
+            WinRT.Interop.InitializeWithWindow.Initialize(
+                picker,
+                PickerInterop.RequireHandle(_shell!.WindowHandle));
 
             var file = await picker.PickSingleFileAsync();
             if (file is not null)
