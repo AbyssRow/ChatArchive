@@ -38,7 +38,7 @@ public sealed class QqExcelFormatTests : IDisposable
         Assert.Equal(ImportText.StableFileNativeId(path), export.Conversation.NativeId);
         Assert.Equal(Path.GetFileNameWithoutExtension(path), export.Conversation.Title);
         var message = Assert.Single(export.EnumerateMessages());
-        Assert.Equal(1700000123000, message.TimestampMs);
+        Assert.Equal(Fixtures.LocalUnixMs("2023-11-15 06:15:23"), message.TimestampMs);
         Assert.Equal("10002", message.SenderNativeId);
         Assert.Equal("incoming", message.Direction);
         Assert.Equal(includeTitle ? "群主" : string.Empty, message.RawPayload["群头衔"]?.GetValue<string>() ?? string.Empty);

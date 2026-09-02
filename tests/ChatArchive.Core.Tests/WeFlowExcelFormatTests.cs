@@ -26,7 +26,7 @@ public sealed class WeFlowExcelFormatTests : IDisposable
         Assert.Equal("wxid_session", export.Conversation.NativeId);
         Assert.Equal(layout == "group" ? "group" : "private", export.Conversation.Kind);
         var message = Assert.Single(export.EnumerateMessages());
-        Assert.Equal(1700000123000, message.TimestampMs);
+        Assert.Equal(Fixtures.LocalUnixMs("2023-11-15 06:15:23"), message.TimestampMs);
         Assert.Equal("image", message.MessageType);
         Assert.Equal(layout == "group" ? "../images/one.jpg" : "正文", message.Content);
 

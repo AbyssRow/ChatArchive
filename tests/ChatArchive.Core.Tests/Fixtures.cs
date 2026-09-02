@@ -3,6 +3,20 @@ namespace ChatArchive.Core.Tests;
 /// <summary>解析与导入测试共用的最小导出样例。</summary>
 internal static class Fixtures
 {
+    public const string SampleLocalTimestamp = "2023-11-15 06:15:23";
+
+    /// <summary>把无时区墙钟时间按本机时区转成 Unix 毫秒，和导入解析一致。</summary>
+    public static long LocalUnixMs(string localTimestamp)
+    {
+        var local = DateTime.ParseExact(
+            localTimestamp,
+            "yyyy-MM-dd HH:mm:ss",
+            System.Globalization.CultureInfo.InvariantCulture);
+        var unspecified = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+        return new DateTimeOffset(unspecified, TimeZoneInfo.Local.GetUtcOffset(unspecified))
+            .ToUnixTimeMilliseconds();
+    }
+
     public const string QqExport = """
         {
           "metadata": {"name": "QQChatExporter", "version": "0.1.0"},

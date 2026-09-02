@@ -87,7 +87,7 @@ public sealed class CipherTalkExcelFormatTests : IDisposable
         using var export = new CipherTalkExcelExportFormat().Open(path);
         var message = Assert.Single(export.EnumerateMessages());
 
-        Assert.Equal(1700000123000, message.TimestampMs);
+        Assert.Equal(Fixtures.LocalUnixMs("2023-11-15 06:15:23"), message.TimestampMs);
         Assert.StartsWith("synthetic:", message.SenderNativeId, StringComparison.Ordinal);
         Assert.Equal("image", message.MessageType);
     }

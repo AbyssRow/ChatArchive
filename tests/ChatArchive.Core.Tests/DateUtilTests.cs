@@ -59,5 +59,19 @@ public class DateUtilTests
         Assert.Equal(1, dto.Month);
         Assert.Equal(1, dto.Day);
     }
+
+    [Fact]
+    public void ParseFlexibleTimestamp_NaiveWallClock_UsesLocalOffset()
+    {
+        var ts = ChatArchive.Core.Importing.ImportText.ParseFlexibleTimestamp(Fixtures.SampleLocalTimestamp);
+        Assert.Equal(Fixtures.LocalUnixMs(Fixtures.SampleLocalTimestamp), ts);
+        var local = DateTimeOffset.FromUnixTimeMilliseconds(ts).ToLocalTime();
+        Assert.Equal(2023, local.Year);
+        Assert.Equal(11, local.Month);
+        Assert.Equal(15, local.Day);
+        Assert.Equal(6, local.Hour);
+        Assert.Equal(15, local.Minute);
+        Assert.Equal(23, local.Second);
+    }
 }
 
