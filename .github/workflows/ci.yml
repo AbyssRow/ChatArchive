@@ -22,37 +22,45 @@ jobs:
         run: dotnet restore ChatArchive.sln --nologo
 
       - name: Build
-        run: dotnet build ChatArchive.sln -c Release --no-restore --nologo
+        run: dotnet build ChatArchive.sln -c Release -p:Platform=x64 --no-restore --nologo
 
       - name: Test Core
         shell: pwsh
-        run: |
-          $exe = Get-ChildItem -Recurse tests/ChatArchive.Core.Tests/bin/Release -Filter ChatArchive.Core.Tests.exe |
-            Select-Object -First 1
-          if (-not $exe) { throw "Core test exe not found under bin/Release" }
-          & $exe.FullName -noLogo -automated
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: >
+          pwsh -File .github/workflows/run-xunit-exe.ps1
+          -SearchRoot tests/ChatArchive.Core.Tests/bin
+          -ExeName ChatArchive.Core.Tests.exe
+          -MinimumTests 400
 
       - name: Test App
         shell: pwsh
-        run: |
-          $exe = Get-ChildItem -Recurse tests/ChatArchive.App.Tests/bin/Release -Filter ChatArchive.App.Tests.exe |
-            Select-Object -First 1
-          if (-not $exe) { throw "App test exe not found under bin/Release" }
-          & $exe.FullName -noLogo -automated
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: >
+          pwsh -File .github/workflows/run-xunit-exe.ps1
+          -SearchRoot tests/ChatArchive.App.Tests/bin
+          -ExeName ChatArchive.App.Tests.exe
+          -MinimumTests 100
 
       - name: Publish probe
         run: >
           dotnet publish src/ChatArchive.App/ChatArchive.App.csproj
-          -c Release --no-restore --nologo
+          -c Release -p:Platform=x64 -r win-x64 --nologo
           -p:PublishProfile=win-x64-app-local
 
-      - name: Check published exe
+      - name: Check published payload
         shell: pwsh
         run: |
-          $exe = "artifacts/publish/win-x64/ChatArchive.App.exe"
-          if (-not (Test-Path $exe)) {
-            throw "Publish probe failed: $exe was not produced."
+          $dir = "artifacts/publish/win-x64"
+          $required = @(
+            "ChatArchive.App.exe",
+            "ChatArchive.App.dll",
+            "ChatArchive.App.runtimeconfig.json",
+            "ChatArchive.Core.dll",
+            "ChatArchive.App.pri"
+          )
+          foreach ($name in $required) {
+            $path = Join-Path $dir $name
+            if (-not (Test-Path $path)) { throw "Publish probe missing $path" }
+            if ((Get-Item $path).Length -le 0) { throw "Publish probe empty $path" }
           }
-          Get-Item $exe | Select-Object FullName, Length, LastWriteTime
+          Get-Item (Join-Path $dir "ChatArchive.App.exe") |
+            Select-Object FullName, Length, LastWriteTime
