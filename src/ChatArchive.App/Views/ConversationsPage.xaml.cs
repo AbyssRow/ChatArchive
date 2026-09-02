@@ -20,6 +20,7 @@ public sealed partial class ConversationsPage : Page, IShellPage
     private TimelineViewModel? _timeline;
     private bool _attached;
     private readonly LatestRequestGate _activationGate = new();
+    private bool _isApplyingConversation;
     private readonly TimelineInitialPositionState _initialTimelinePosition = new();
     private CancellationTokenSource? _queryDebounce;
     private ScrollViewer? _messageScroll;
@@ -89,12 +90,20 @@ public sealed partial class ConversationsPage : Page, IShellPage
                         return;
                     }
 
-                    _conversations!.Activate(info);
-                    ConversationListControl.SelectedItem =
-                        _conversations.Conversations.FirstOrDefault(c => c.Id == info.Id) ?? info;
-                    if (args.FocusMessageId is { } messageId)
+                    _isApplyingConversation = true;
+                    try
                     {
-                        _timeline!.JumpToMessage(messageId);
+                        _conversations!.Activate(info);
+                        ConversationListControl.SelectedItem =
+                            _conversations.Conversations.FirstOrDefault(c => c.Id == info.Id) ?? info;
+                        if (args.FocusMessageId is { } messageId)
+                        {
+                            _timeline!.JumpToMessage(messageId);
+                        }
+                    }
+                    finally
+                    {
+                        _isApplyingConversation = false;
                     }
                 });
             });
@@ -167,6 +176,11 @@ public sealed partial class ConversationsPage : Page, IShellPage
 
     private void ConversationList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (!_isApplyingConversation)
+        {
+            _activationGate.Invalidate();
+        }
+
         if (_conversations is null)
         {
             return;
