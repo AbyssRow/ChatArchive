@@ -524,76 +524,100 @@ public sealed class ImportService
         command.ExecuteNonQuery();
     }
 
+    private static long? FindRowId(
+        SqliteConnection connection,
+        string sql,
+        string platform,
+        string accountId,
+        string nativeId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("@platform", platform);
+        command.Parameters.AddWithValue("@account", accountId);
+        command.Parameters.AddWithValue("@native", nativeId);
+        var value = command.ExecuteScalar();
+        return value is null or DBNull ? null : Convert.ToInt64(value);
+    }
+
     private static long UpsertConversation(SqliteConnection connection, ParsedConversation conversation)
     {
-        long conversationId;
-        using (var select = connection.CreateCommand())
+        var incomingIsDefault = conversation.AccountId.EndsWith("-default", StringComparison.OrdinalIgnoreCase);
+        long? existingId = FindRowId(
+            connection,
+            """
+            SELECT id FROM conversations
+            WHERE platform=@platform AND account_id=@account AND native_id=@native
+            LIMIT 1
+            """,
+            conversation.Platform,
+            conversation.AccountId,
+            conversation.NativeId);
+
+        var shouldUpgradeAccount = false;
+        if (existingId is null && !incomingIsDefault)
         {
-            select.CommandText = """
-                SELECT id, account_id, title FROM conversations
-                WHERE platform=@platform AND native_id=@native
+            existingId = FindRowId(
+                connection,
+                """
+                SELECT id FROM conversations
+                WHERE platform=@platform AND native_id=@native AND account_id LIKE '%-default'
                 ORDER BY (account_id = @account) DESC, (account_id NOT LIKE '%-default') DESC, id ASC
                 LIMIT 1
-                """;
-            select.Parameters.AddWithValue("@platform", conversation.Platform);
-            select.Parameters.AddWithValue("@native", conversation.NativeId);
-            select.Parameters.AddWithValue("@account", conversation.AccountId);
-            using var reader = select.ExecuteReader();
-            if (reader.Read())
+                """,
+                conversation.Platform,
+                conversation.AccountId,
+                conversation.NativeId);
+            shouldUpgradeAccount = existingId is not null;
+        }
+
+        long conversationId;
+        if (existingId is long id)
+        {
+            conversationId = id;
+            using var update = connection.CreateCommand();
+            if (shouldUpgradeAccount)
             {
-                conversationId = reader.GetInt64(0);
-                var existingAccountId = reader.GetString(1);
-                var existingTitle = reader.GetString(2);
-                reader.Close();
-
-                var shouldUpgradeAccount = existingAccountId.EndsWith("-default", StringComparison.OrdinalIgnoreCase)
-                    && !conversation.AccountId.EndsWith("-default", StringComparison.OrdinalIgnoreCase);
-
-                using var update = connection.CreateCommand();
-                if (shouldUpgradeAccount)
-                {
-                    update.CommandText = """
-                        UPDATE conversations SET
-                            account_id = @account,
-                            title = CASE WHEN @title <> '' AND (title = native_id OR @title <> title) THEN @title ELSE title END,
-                            kind = @kind,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = @id
-                        """;
-                    update.Parameters.AddWithValue("@account", conversation.AccountId);
-                }
-                else
-                {
-                    update.CommandText = """
-                        UPDATE conversations SET
-                            title = CASE WHEN @title <> '' AND title = native_id THEN @title ELSE title END,
-                            kind = @kind,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = @id AND (kind <> @kind OR (title = native_id AND @title <> ''))
-                        """;
-                }
-
-                update.Parameters.AddWithValue("@title", conversation.Title);
-                update.Parameters.AddWithValue("@kind", conversation.Kind);
-                update.Parameters.AddWithValue("@id", conversationId);
-                update.ExecuteNonQuery();
+                update.CommandText = """
+                    UPDATE conversations SET
+                        account_id = @account,
+                        title = CASE WHEN @title <> '' AND (title = native_id OR @title <> title) THEN @title ELSE title END,
+                        kind = @kind,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = @id
+                    """;
+                update.Parameters.AddWithValue("@account", conversation.AccountId);
             }
             else
             {
-                reader.Close();
-                using var insert = connection.CreateCommand();
-                insert.CommandText = """
-                    INSERT INTO conversations(platform, account_id, native_id, kind, title)
-                    VALUES (@platform, @account, @native, @kind, @title);
-                    SELECT last_insert_rowid();
+                update.CommandText = """
+                    UPDATE conversations SET
+                        title = CASE WHEN @title <> '' AND title = native_id THEN @title ELSE title END,
+                        kind = @kind,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = @id AND (kind <> @kind OR (title = native_id AND @title <> ''))
                     """;
-                insert.Parameters.AddWithValue("@platform", conversation.Platform);
-                insert.Parameters.AddWithValue("@account", conversation.AccountId);
-                insert.Parameters.AddWithValue("@native", conversation.NativeId);
-                insert.Parameters.AddWithValue("@kind", conversation.Kind);
-                insert.Parameters.AddWithValue("@title", conversation.Title);
-                conversationId = (long)insert.ExecuteScalar()!;
             }
+
+            update.Parameters.AddWithValue("@title", conversation.Title);
+            update.Parameters.AddWithValue("@kind", conversation.Kind);
+            update.Parameters.AddWithValue("@id", conversationId);
+            update.ExecuteNonQuery();
+        }
+        else
+        {
+            using var insert = connection.CreateCommand();
+            insert.CommandText = """
+                INSERT INTO conversations(platform, account_id, native_id, kind, title)
+                VALUES (@platform, @account, @native, @kind, @title);
+                SELECT last_insert_rowid();
+                """;
+            insert.Parameters.AddWithValue("@platform", conversation.Platform);
+            insert.Parameters.AddWithValue("@account", conversation.AccountId);
+            insert.Parameters.AddWithValue("@native", conversation.NativeId);
+            insert.Parameters.AddWithValue("@kind", conversation.Kind);
+            insert.Parameters.AddWithValue("@title", conversation.Title);
+            conversationId = (long)insert.ExecuteScalar()!;
         }
 
         using var alias = connection.CreateCommand();
@@ -611,67 +635,74 @@ public sealed class ImportService
         SqliteConnection connection, long conversationId, ParsedConversation conversation, ParsedMessage message)
     {
         var isSelf = message.Direction == "outgoing" ? 1L : 0L;
-        long senderId;
-        using (var select = connection.CreateCommand())
+        var incomingIsDefault = conversation.AccountId.EndsWith("-default", StringComparison.OrdinalIgnoreCase);
+        long? existingId = FindRowId(
+            connection,
+            """
+            SELECT id FROM senders
+            WHERE platform=@platform AND account_id=@account AND native_id=@native
+            LIMIT 1
+            """,
+            conversation.Platform,
+            conversation.AccountId,
+            message.SenderNativeId);
+
+        var shouldUpgradeAccount = false;
+        if (existingId is null && !incomingIsDefault)
         {
-            select.CommandText = """
-                SELECT id, account_id, current_name, is_self FROM senders
-                WHERE platform=@platform AND native_id=@native
+            existingId = FindRowId(
+                connection,
+                """
+                SELECT id FROM senders
+                WHERE platform=@platform AND native_id=@native AND account_id LIKE '%-default'
                 ORDER BY (account_id = @account) DESC, (account_id NOT LIKE '%-default') DESC, id ASC
                 LIMIT 1
+                """,
+                conversation.Platform,
+                conversation.AccountId,
+                message.SenderNativeId);
+            shouldUpgradeAccount = existingId is not null;
+        }
+
+        long senderId;
+        if (existingId is long id)
+        {
+            senderId = id;
+            using var update = connection.CreateCommand();
+            update.CommandText = """
+                UPDATE senders SET
+                    account_id = CASE WHEN @upgrade = 1 THEN @account ELSE account_id END,
+                    current_name = CASE
+                        WHEN @platform = 'wechat' AND @name = @native AND current_name <> @native THEN current_name
+                        WHEN @name <> '' THEN @name
+                        ELSE current_name END,
+                    is_self = MAX(is_self, @self),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = @id
                 """;
-            select.Parameters.AddWithValue("@platform", conversation.Platform);
-            select.Parameters.AddWithValue("@native", message.SenderNativeId);
-            select.Parameters.AddWithValue("@account", conversation.AccountId);
-            using var reader = select.ExecuteReader();
-            if (reader.Read())
-            {
-                senderId = reader.GetInt64(0);
-                var existingAccountId = reader.GetString(1);
-                var existingName = reader.GetString(2);
-                var existingIsSelf = reader.GetInt64(3);
-                reader.Close();
-
-                var shouldUpgradeAccount = existingAccountId.EndsWith("-default", StringComparison.OrdinalIgnoreCase)
-                    && !conversation.AccountId.EndsWith("-default", StringComparison.OrdinalIgnoreCase);
-
-                using var update = connection.CreateCommand();
-                update.CommandText = """
-                    UPDATE senders SET
-                        account_id = CASE WHEN @upgrade = 1 THEN @account ELSE account_id END,
-                        current_name = CASE
-                            WHEN @platform = 'wechat' AND @name = @native AND current_name <> @native THEN current_name
-                            WHEN @name <> '' THEN @name
-                            ELSE current_name END,
-                        is_self = MAX(is_self, @self),
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = @id
-                    """;
-                update.Parameters.AddWithValue("@upgrade", shouldUpgradeAccount ? 1L : 0L);
-                update.Parameters.AddWithValue("@account", conversation.AccountId);
-                update.Parameters.AddWithValue("@platform", conversation.Platform);
-                update.Parameters.AddWithValue("@native", message.SenderNativeId);
-                update.Parameters.AddWithValue("@name", message.SenderName);
-                update.Parameters.AddWithValue("@self", isSelf);
-                update.Parameters.AddWithValue("@id", senderId);
-                update.ExecuteNonQuery();
-            }
-            else
-            {
-                reader.Close();
-                using var insert = connection.CreateCommand();
-                insert.CommandText = """
-                    INSERT INTO senders(platform, account_id, native_id, current_name, is_self)
-                    VALUES (@platform, @account, @native, @name, @self);
-                    SELECT last_insert_rowid();
-                    """;
-                insert.Parameters.AddWithValue("@platform", conversation.Platform);
-                insert.Parameters.AddWithValue("@account", conversation.AccountId);
-                insert.Parameters.AddWithValue("@native", message.SenderNativeId);
-                insert.Parameters.AddWithValue("@name", message.SenderName);
-                insert.Parameters.AddWithValue("@self", isSelf);
-                senderId = (long)insert.ExecuteScalar()!;
-            }
+            update.Parameters.AddWithValue("@upgrade", shouldUpgradeAccount ? 1L : 0L);
+            update.Parameters.AddWithValue("@account", conversation.AccountId);
+            update.Parameters.AddWithValue("@platform", conversation.Platform);
+            update.Parameters.AddWithValue("@native", message.SenderNativeId);
+            update.Parameters.AddWithValue("@name", message.SenderName);
+            update.Parameters.AddWithValue("@self", isSelf);
+            update.Parameters.AddWithValue("@id", senderId);
+            update.ExecuteNonQuery();
+        }
+        else
+        {
+            using var insert = connection.CreateCommand();
+            insert.CommandText = """
+                INSERT INTO senders(platform, account_id, native_id, current_name, is_self)
+                VALUES (@platform, @account, @native, @name, @self);
+                SELECT last_insert_rowid();
+                """;
+            insert.Parameters.AddWithValue("@platform", conversation.Platform);
+            insert.Parameters.AddWithValue("@account", conversation.AccountId);
+            insert.Parameters.AddWithValue("@native", message.SenderNativeId);
+            insert.Parameters.AddWithValue("@name", message.SenderName);
+            insert.Parameters.AddWithValue("@self", isSelf);
+            senderId = (long)insert.ExecuteScalar()!;
         }
 
         foreach (var alias in message.SenderAliases.Prepend(message.SenderName).Distinct())

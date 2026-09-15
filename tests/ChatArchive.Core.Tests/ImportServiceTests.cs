@@ -1049,6 +1049,138 @@ public class ImportServiceTests : IDisposable
     }
 
     [Fact]
+    public void Two_real_accounts_same_peer_do_not_share_conversation_or_self_sender()
+    {
+        var testDir = Path.Combine(Path.GetTempPath(), $"chatarchive_two_acct_{Guid.NewGuid():N}");
+        var exportsDir1 = Path.Combine(testDir, "batch1");
+        var exportsDir2 = Path.Combine(testDir, "batch2");
+        var dbDir = Path.Combine(testDir, "db");
+        var mediaDir = Path.Combine(testDir, "media");
+        Directory.CreateDirectory(exportsDir1);
+        Directory.CreateDirectory(exportsDir2);
+        Directory.CreateDirectory(dbDir);
+        Directory.CreateDirectory(mediaDir);
+
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(exportsDir1, "acct_a.json"),
+                ChatLabPrivateChat(
+                    ownerId: "wxid_acct_a",
+                    ownerName: "账号A",
+                    incomingId: "a_in",
+                    outgoingId: "a_out",
+                    incomingTime: 1700000000,
+                    outgoingTime: 1700000001));
+            File.WriteAllText(
+                Path.Combine(exportsDir2, "acct_b.json"),
+                ChatLabPrivateChat(
+                    ownerId: "wxid_acct_b",
+                    ownerName: "账号B",
+                    incomingId: "b_in",
+                    outgoingId: "b_out",
+                    incomingTime: 1700000100,
+                    outgoingTime: 1700000101));
+
+            var dbPath = Path.Combine(dbDir, "two_acct.db");
+            var db = new ArchiveDatabase(dbPath);
+            db.EnsureSchema();
+            var service = new ImportService(db, mediaDir);
+
+            var res1 = service.Run(new[] { exportsDir1 });
+            Assert.Equal(1, res1.FilesImported);
+            Assert.Equal(2, res1.Added);
+
+            var res2 = service.Run(new[] { exportsDir2 });
+            Assert.Equal(1, res2.FilesImported);
+            Assert.Equal(2, res2.Added);
+
+            using var connection = db.OpenConnection();
+            Assert.Equal(
+                2L,
+                Scalar(connection, "SELECT COUNT(*) FROM conversations WHERE native_id = 'wxid_peer'"));
+            Assert.Equal(
+                1L,
+                Scalar(
+                    connection,
+                    "SELECT COUNT(*) FROM conversations WHERE native_id = 'wxid_peer' AND account_id = 'wxid_acct_a'"));
+            Assert.Equal(
+                1L,
+                Scalar(
+                    connection,
+                    "SELECT COUNT(*) FROM conversations WHERE native_id = 'wxid_peer' AND account_id = 'wxid_acct_b'"));
+
+            Assert.Equal(
+                1L,
+                Scalar(
+                    connection,
+                    "SELECT COUNT(*) FROM senders WHERE native_id = 'wxid_acct_a' AND is_self = 1"));
+            Assert.Equal(
+                "wxid_acct_a",
+                ScalarText(
+                    connection,
+                    "SELECT account_id FROM senders WHERE native_id = 'wxid_acct_a' AND is_self = 1"));
+            Assert.Equal(
+                1L,
+                Scalar(
+                    connection,
+                    "SELECT COUNT(*) FROM senders WHERE native_id = 'wxid_acct_b' AND is_self = 1"));
+            Assert.Equal(
+                "wxid_acct_b",
+                ScalarText(
+                    connection,
+                    "SELECT account_id FROM senders WHERE native_id = 'wxid_acct_b' AND is_self = 1"));
+            Assert.Equal(
+                0L,
+                Scalar(
+                    connection,
+                    "SELECT COUNT(*) FROM senders WHERE account_id = 'wxid_acct_a' AND native_id = 'wxid_acct_b' AND is_self = 1"));
+            Assert.Equal(
+                2L,
+                Scalar(connection, "SELECT COUNT(*) FROM senders WHERE native_id = 'wxid_peer'"));
+            Assert.Equal(
+                1L,
+                Scalar(
+                    connection,
+                    "SELECT COUNT(*) FROM senders WHERE native_id = 'wxid_peer' AND account_id = 'wxid_acct_a'"));
+            Assert.Equal(
+                1L,
+                Scalar(
+                    connection,
+                    "SELECT COUNT(*) FROM senders WHERE native_id = 'wxid_peer' AND account_id = 'wxid_acct_b'"));
+        }
+        finally
+        {
+            if (Directory.Exists(testDir))
+            {
+                try { Directory.Delete(testDir, recursive: true); } catch (IOException) { }
+            }
+        }
+    }
+
+    private static string ChatLabPrivateChat(
+        string ownerId,
+        string ownerName,
+        string incomingId,
+        string outgoingId,
+        long incomingTime,
+        long outgoingTime) =>
+        $$"""
+        {
+          "chatlab": { "version": "0.0.2", "generator": "ChatLab" },
+          "meta": { "name": "共同好友", "platform": "wechat", "type": "private", "ownerId": "{{ownerId}}", "chatId": "wxid_peer" },
+          "members": [
+            { "platformId": "wxid_peer", "accountName": "共同好友" },
+            { "platformId": "{{ownerId}}", "accountName": "{{ownerName}}" }
+          ],
+          "messages": [
+            { "id": "{{incomingId}}", "sender": "wxid_peer", "accountName": "共同好友", "timestamp": {{incomingTime}}, "type": 0, "content": "来自对方", "isSend": 0 },
+            { "id": "{{outgoingId}}", "sender": "{{ownerId}}", "accountName": "{{ownerName}}", "timestamp": {{outgoingTime}}, "type": 0, "content": "来自{{ownerName}}", "isSend": 1 }
+          ]
+        }
+        """;
+
+    [Fact]
     public void Cross_format_import_same_conversation_merges_without_duplication()
     {
         var testDir = Path.Combine(Path.GetTempPath(), $"chatarchive_merge_test_{Guid.NewGuid():N}");
