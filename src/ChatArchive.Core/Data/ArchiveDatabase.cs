@@ -467,8 +467,16 @@ public sealed class ArchiveDatabase
                             SELECT @canonical, conversation_id, alias, first_seen_at, last_seen_at
                             FROM sender_aliases WHERE sender_id = @dup
                             ON CONFLICT(sender_id, conversation_id, alias) DO UPDATE SET
-                                first_seen_at = MIN(COALESCE(first_seen_at, excluded.first_seen_at), excluded.first_seen_at),
-                                last_seen_at = MAX(COALESCE(last_seen_at, excluded.last_seen_at), excluded.last_seen_at);
+                                first_seen_at = CASE
+                                    WHEN excluded.first_seen_at IS NULL THEN first_seen_at
+                                    WHEN first_seen_at IS NULL THEN excluded.first_seen_at
+                                    ELSE MIN(first_seen_at, excluded.first_seen_at)
+                                END,
+                                last_seen_at = CASE
+                                    WHEN excluded.last_seen_at IS NULL THEN last_seen_at
+                                    WHEN last_seen_at IS NULL THEN excluded.last_seen_at
+                                    ELSE MAX(last_seen_at, excluded.last_seen_at)
+                                END;
                             DELETE FROM sender_aliases WHERE sender_id = @dup;
                             """;
                         moveAliases.Parameters.AddWithValue("@canonical", canonical.Id);
@@ -577,8 +585,16 @@ public sealed class ArchiveDatabase
                             INSERT INTO conversation_aliases(conversation_id, alias, first_seen_at, last_seen_at)
                             SELECT @canonical, alias, first_seen_at, last_seen_at FROM conversation_aliases WHERE conversation_id = @dup
                             ON CONFLICT(conversation_id, alias) DO UPDATE SET
-                                first_seen_at = MIN(COALESCE(first_seen_at, excluded.first_seen_at), excluded.first_seen_at),
-                                last_seen_at = MAX(COALESCE(last_seen_at, excluded.last_seen_at), excluded.last_seen_at);
+                                first_seen_at = CASE
+                                    WHEN excluded.first_seen_at IS NULL THEN first_seen_at
+                                    WHEN first_seen_at IS NULL THEN excluded.first_seen_at
+                                    ELSE MIN(first_seen_at, excluded.first_seen_at)
+                                END,
+                                last_seen_at = CASE
+                                    WHEN excluded.last_seen_at IS NULL THEN last_seen_at
+                                    WHEN last_seen_at IS NULL THEN excluded.last_seen_at
+                                    ELSE MAX(last_seen_at, excluded.last_seen_at)
+                                END;
                             DELETE FROM conversation_aliases WHERE conversation_id = @dup;
                             """;
                         moveAliases.Parameters.AddWithValue("@canonical", canonical.Id);
@@ -593,8 +609,16 @@ public sealed class ArchiveDatabase
                             INSERT INTO sender_aliases(sender_id, conversation_id, alias, first_seen_at, last_seen_at)
                             SELECT sender_id, @canonical, alias, first_seen_at, last_seen_at FROM sender_aliases WHERE conversation_id = @dup
                             ON CONFLICT(sender_id, conversation_id, alias) DO UPDATE SET
-                                first_seen_at = MIN(COALESCE(first_seen_at, excluded.first_seen_at), excluded.first_seen_at),
-                                last_seen_at = MAX(COALESCE(last_seen_at, excluded.last_seen_at), excluded.last_seen_at);
+                                first_seen_at = CASE
+                                    WHEN excluded.first_seen_at IS NULL THEN first_seen_at
+                                    WHEN first_seen_at IS NULL THEN excluded.first_seen_at
+                                    ELSE MIN(first_seen_at, excluded.first_seen_at)
+                                END,
+                                last_seen_at = CASE
+                                    WHEN excluded.last_seen_at IS NULL THEN last_seen_at
+                                    WHEN last_seen_at IS NULL THEN excluded.last_seen_at
+                                    ELSE MAX(last_seen_at, excluded.last_seen_at)
+                                END;
                             DELETE FROM sender_aliases WHERE conversation_id = @dup;
                             """;
                         moveSenderAliases.Parameters.AddWithValue("@canonical", canonical.Id);
@@ -658,16 +682,15 @@ public sealed class ArchiveDatabase
                                 moveObs.ExecuteNonQuery();
                             }
 
-                            using (var moveAtt = connection.CreateCommand())
+                            MoveAttachmentsPreferringAvailable(connection, transaction, msg.MsgId, existingTargetMsgId.Value);
+
+                            using (var remapRev = connection.CreateCommand())
                             {
-                                moveAtt.Transaction = transaction;
-                                moveAtt.CommandText = """
-                                    UPDATE OR IGNORE attachments SET message_id = @target WHERE message_id = @old;
-                                    DELETE FROM attachments WHERE message_id = @old;
-                                    """;
-                                moveAtt.Parameters.AddWithValue("@target", existingTargetMsgId.Value);
-                                moveAtt.Parameters.AddWithValue("@old", msg.MsgId);
-                                moveAtt.ExecuteNonQuery();
+                                remapRev.Transaction = transaction;
+                                remapRev.CommandText = "UPDATE messages SET revision_of_id = @target WHERE revision_of_id = @old";
+                                remapRev.Parameters.AddWithValue("@target", existingTargetMsgId.Value);
+                                remapRev.Parameters.AddWithValue("@old", msg.MsgId);
+                                remapRev.ExecuteNonQuery();
                             }
 
                             using (var delMsg = connection.CreateCommand())
@@ -733,6 +756,97 @@ public sealed class ArchiveDatabase
                 connection.Dispose();
             }
         }
+    }
+
+    private static void MoveAttachmentsPreferringAvailable(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long oldMessageId,
+        long targetMessageId)
+    {
+        var oldRows = new List<(long Id, long Ordinal, long IsAvailable, long? MediaObjectId)>();
+        using (var list = connection.CreateCommand())
+        {
+            list.Transaction = transaction;
+            list.CommandText = """
+                SELECT id, ordinal, is_available, media_object_id
+                FROM attachments
+                WHERE message_id = @old
+                """;
+            list.Parameters.AddWithValue("@old", oldMessageId);
+            using var reader = list.ExecuteReader();
+            while (reader.Read())
+            {
+                oldRows.Add((
+                    reader.GetInt64(0),
+                    reader.GetInt64(1),
+                    reader.GetInt64(2),
+                    reader.IsDBNull(3) ? null : reader.GetInt64(3)));
+            }
+        }
+
+        foreach (var old in oldRows)
+        {
+            long? targetId = null;
+            long targetAvailable = 0;
+            long? targetMedia = null;
+            using (var find = connection.CreateCommand())
+            {
+                find.Transaction = transaction;
+                find.CommandText = """
+                    SELECT id, is_available, media_object_id
+                    FROM attachments
+                    WHERE message_id = @target AND ordinal = @ordinal
+                    """;
+                find.Parameters.AddWithValue("@target", targetMessageId);
+                find.Parameters.AddWithValue("@ordinal", old.Ordinal);
+                using var reader = find.ExecuteReader();
+                if (reader.Read())
+                {
+                    targetId = reader.GetInt64(0);
+                    targetAvailable = reader.GetInt64(1);
+                    targetMedia = reader.IsDBNull(2) ? null : reader.GetInt64(2);
+                }
+            }
+
+            // UNIQUE(message_id, ordinal): keep available, else the row that still has media.
+            var oldWins = targetId is null
+                || old.IsAvailable > targetAvailable
+                || (old.IsAvailable == targetAvailable && old.MediaObjectId is not null && targetMedia is null);
+
+            if (oldWins)
+            {
+                if (targetId is not null)
+                {
+                    using var delTarget = connection.CreateCommand();
+                    delTarget.Transaction = transaction;
+                    delTarget.CommandText = "DELETE FROM attachments WHERE id = @id";
+                    delTarget.Parameters.AddWithValue("@id", targetId.Value);
+                    delTarget.ExecuteNonQuery();
+                }
+
+                using var move = connection.CreateCommand();
+                move.Transaction = transaction;
+                move.CommandText = "UPDATE attachments SET message_id = @target WHERE id = @id";
+                move.Parameters.AddWithValue("@target", targetMessageId);
+                move.Parameters.AddWithValue("@id", old.Id);
+                move.ExecuteNonQuery();
+            }
+            else
+            {
+                using var delOld = connection.CreateCommand();
+                delOld.Transaction = transaction;
+                delOld.CommandText = "DELETE FROM attachments WHERE id = @id";
+                delOld.Parameters.AddWithValue("@id", old.Id);
+                delOld.ExecuteNonQuery();
+            }
+        }
+
+        using var leftover = connection.CreateCommand();
+        leftover.Transaction = transaction;
+        leftover.CommandText = "DELETE FROM attachments WHERE message_id = @old";
+        leftover.Parameters.AddWithValue("@old", oldMessageId);
+        leftover.ExecuteNonQuery();
     }
 
     internal static string LoadSchemaSql()
