@@ -643,9 +643,45 @@ public sealed class QqChunkManifestTests : IDisposable
     }
 
     [Fact]
+    public void LegacyManifest_ResolvesRootQqNamedChunkAndIgnoresChatLabSibling()
+    {
+        var rootChunk = WriteAt(
+            Path.Combine(_root, "chunk_0.jsonl"),
+            """{"id":"q1","timestamp":1700000000,"sender":{"uid":"u_self","name":"我自己"},"content":{"type":"text","text":"root-chunk"}}""" + "\n");
+        var padded = WriteAt(
+            Path.Combine(_root, "c000001.jsonl"),
+            """{"id":"q2","timestamp":1700000001,"sender":{"uid":"u_peer","name":"群友"},"content":{"type":"text","text":"padded-chunk"}}""" + "\n");
+        var chatLab = WriteAt(
+            Path.Combine(_root, "foo.jsonl"),
+            """
+            {"_type":"header","chatlab":{"version":"0.0.2","generator":"ChatLab"},"meta":{"name":"Sibling","platform":"wechat","type":"private","ownerId":"self"}}
+            {"_type":"message","id":"chatlab-1","sender":"peer","timestamp":1700000000,"type":0,"content":"chatlab-line"}
+            """);
+        var manifest = WriteAt(
+            Path.Combine(_root, "manifest.json"),
+            """
+            {
+              "metadata": {"name": "QQChatExporter", "version": "0.2.0"},
+              "chatInfo": {"selfUid": "u_self", "peerUid": "u_peer", "name": "legacy-root", "type": "group"}
+            }
+            """);
+
+        var resolved = QqChunkManifest.ResolveChunkFiles(manifest);
+        Assert.Equal(new[] { padded, rootChunk }, resolved);
+        Assert.DoesNotContain(chatLab, resolved);
+
+        using var export = new QqChunkedExportFormat().Open(manifest);
+        var messages = export.EnumerateMessages().ToList();
+        Assert.Equal(new[] { "q2", "q1" }, messages.Select(message => message.NativeId));
+        Assert.Equal(new[] { "padded-chunk", "root-chunk" }, messages.Select(message => message.Content));
+        Assert.DoesNotContain(messages, message => message.SenderNativeId == "unknown");
+        Assert.DoesNotContain(messages, message => message.NativeId == "chatlab-1");
+    }
+
+    [Fact]
     public void ResolveChunkFiles_LegacyManifest_ScansOnlyConventionalLocationsInNaturalOrder()
     {
-        var chunk2 = WriteAt(Path.Combine(_root, "chunks", "chunk2.jsonl"), "{}\n");
+        var chunk2 = WriteAt(Path.Combine(_root, "chunk2.jsonl"), "{}\n");
         var chunk10 = WriteAt(Path.Combine(_root, "chunks", "chunk10.jsonl"), "{}\n");
         _ = WriteAt(Path.Combine(_root, "chunks", "nested", "chunk1.jsonl"), "{}\n");
         var manifest = WriteAt(Path.Combine(_root, "manifest.json"), "{\"chatInfo\":{}}");
