@@ -59,6 +59,12 @@ public sealed class TimelineStateTests
         state.BeginFocusJump();
         Assert.False(state.IsReady);
 
+        // Layout ViewChanged after context replace, before ScrollIntoView.
+        state.OnViewChanged(isIntermediate: false, offsetReported: true);
+        Assert.False(state.IsReady);
+
+        state.NoteScrollIssued();
+
         state.OnViewChanged(isIntermediate: true, offsetReported: true);
         Assert.False(state.IsReady);
 

@@ -242,7 +242,7 @@ public sealed partial class ConversationsPage : Page, IShellPage
 
         var focusSettled = _pagingReady.OnViewChanged(
             isIntermediate: e.IsIntermediate,
-            offsetReported: true);
+            offsetReported: _pagingReady.ScrollIssued);
         if (e.IsIntermediate || focusSettled)
         {
             return;
@@ -297,7 +297,13 @@ public sealed partial class ConversationsPage : Page, IShellPage
                 .FirstOrDefault(item => item.Message.Id == messageId);
             if (entry is not null)
             {
+                // UpdateLayout may have already fired ViewChanged at the post-replace offset.
+                _pagingReady.NoteScrollIssued();
                 MessageListControl.ScrollIntoView(entry);
+            }
+            else
+            {
+                _pagingReady.MarkReady();
             }
         });
     }
