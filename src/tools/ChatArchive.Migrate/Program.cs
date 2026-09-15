@@ -6,35 +6,21 @@ public static class Program
 {
     public static int Main(string[] args)
     {
-        string? from = null;
-        string? to = "E:\\ChatArchive";
-
-        for (var i = 0; i < args.Length; i++)
+        var parsed = MigrationCli.Parse(args);
+        if (!parsed.Success)
         {
-            switch (args[i])
+            if (parsed.UnknownArgument is not null)
             {
-                case "--from" when i + 1 < args.Length:
-                    from = args[++i];
-                    break;
-                case "--to" when i + 1 < args.Length:
-                    to = args[++i];
-                    break;
-                default:
-                    Console.Error.WriteLine($"未知参数: {args[i]}");
-                    PrintUsage();
-                    return 2;
+                Console.Error.WriteLine($"未知参数: {parsed.UnknownArgument}");
             }
-        }
 
-        if (string.IsNullOrEmpty(from))
-        {
             PrintUsage();
             return 2;
         }
 
         try
         {
-            var runner = new MigrationRunner(from, to);
+            var runner = new MigrationRunner(parsed.From!, parsed.To!);
             var report = runner.Run(message => Console.WriteLine(message));
             Console.WriteLine();
             Console.WriteLine("迁移完成：");
@@ -53,7 +39,7 @@ public static class Program
 
     private static void PrintUsage()
     {
-        Console.WriteLine("用法: ChatArchive.Migrate --from <旧数据目录> [--to E:\\ChatArchive]");
+        Console.WriteLine("用法: ChatArchive.Migrate --from <旧数据目录> --to <新数据目录>");
         Console.WriteLine("  --from 指向包含 chat_archive.db 与 media\\ 的目录（只读）");
     }
 }

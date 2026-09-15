@@ -92,6 +92,67 @@ public class MigrationTests : IDisposable
     }
 
     [Fact]
+    public void Copies_avatars_directory()
+    {
+        SeedSource();
+        const string avatarName = "deadbeef.png";
+        Directory.CreateDirectory(Path.Combine(_sourceDir, "avatars"));
+        File.WriteAllBytes(Path.Combine(_sourceDir, "avatars", avatarName), [1, 2, 3, 4]);
+
+        using (var connection = new ArchiveDatabase(Path.Combine(_sourceDir, "chat_archive.db")).OpenConnection())
+        {
+            Insert(connection, $"""
+                INSERT INTO contacts(display_name, custom_avatar_path)
+                VALUES ('Alice', '{avatarName}')
+                """);
+        }
+
+        new MigrationRunner(_sourceDir, _targetDir).Run();
+
+        Assert.True(File.Exists(Path.Combine(_targetDir, "avatars", avatarName)));
+    }
+
+    [Fact]
+    public void Relocates_flat_media_to_content_addressed_path()
+    {
+        var db = new ArchiveDatabase(Path.Combine(_sourceDir, "chat_archive.db"));
+        db.EnsureSchema();
+        using (var connection = db.OpenConnection())
+        {
+            Insert(connection, $"""
+                INSERT INTO media_objects(id, sha256, size, mime_type, managed_path, first_source_path)
+                VALUES (10, '{Sha}', 2, 'image/jpeg',
+                        'E:\backup\QQ+wx\chat-archive-app\data\media\{Sha}.jpg',
+                        'E:\backup\QQexports\orig.jpg')
+                """);
+        }
+
+        File.WriteAllBytes(Path.Combine(_sourceDir, "media", $"{Sha}.jpg"), [9, 9]);
+
+        new MigrationRunner(_sourceDir, _targetDir).Run();
+
+        var expectedMedia = Path.Combine(_targetDir, "media", Sha[..2], $"{Sha}.jpg");
+        Assert.True(File.Exists(expectedMedia));
+
+        using var target = OpenReadOnly(Path.Combine(_targetDir, "chat_archive.db"));
+        Assert.Equal(expectedMedia, Text(target, "SELECT managed_path FROM media_objects WHERE id=10"));
+    }
+
+    [Fact]
+    public void MigrateCli_RequiresToArgument()
+    {
+        var missingTo = MigrationCli.Parse(["--from", @"D:\old-archive"]);
+        Assert.False(missingTo.Success);
+        Assert.True(string.IsNullOrEmpty(missingTo.To));
+        Assert.NotEqual(@"E:\ChatArchive", missingTo.To);
+
+        var provided = MigrationCli.Parse(["--from", @"D:\old-archive", "--to", @"D:\new-archive"]);
+        Assert.True(provided.Success);
+        Assert.Equal(@"D:\old-archive", provided.From);
+        Assert.Equal(@"D:\new-archive", provided.To);
+    }
+
+    [Fact]
     public void Missing_source_db_throws()
     {
         Assert.Throws<FileNotFoundException>(() => new MigrationRunner(_sourceDir, _targetDir).Run());
