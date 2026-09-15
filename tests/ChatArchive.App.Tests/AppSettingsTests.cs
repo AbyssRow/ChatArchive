@@ -1,4 +1,6 @@
 using ChatArchive.App.Services;
+using ChatArchive.App.ViewModels;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace ChatArchive.App.Tests;
@@ -180,5 +182,126 @@ public class AppSettingsTests
                 try { Directory.Delete(tempDir, true); } catch { }
             }
         }
+    }
+
+    [Fact]
+    public void CopyDataDirectory_OverwriteTrue_ReplacesExistingDatabase()
+    {
+        var sourceDir = Path.Combine(Path.GetTempPath(), $"chatarchive_ow_src_{Guid.NewGuid():N}");
+        var targetDir = Path.Combine(Path.GetTempPath(), $"chatarchive_ow_dst_{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(sourceDir);
+            Directory.CreateDirectory(targetDir);
+            CreateTestDatabase(Path.Combine(sourceDir, "chat_archive.db"), "source-bytes");
+            CreateTestDatabase(Path.Combine(targetDir, "chat_archive.db"), "dest-old-bytes");
+
+            AppSettings.CopyDataDirectory(sourceDir, targetDir, overwrite: true);
+
+            Assert.Equal("source-bytes", ReadTestDatabaseContent(Path.Combine(targetDir, "chat_archive.db")));
+
+            var pageSource = ReadSettingsPageSource();
+            Assert.Contains("CopyDataDirectory(currentDir, targetPath, overwrite: true)", pageSource);
+            Assert.DoesNotContain("CopyDataDirectory(currentDir, targetPath, overwrite: false)", pageSource);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(sourceDir)) try { Directory.Delete(sourceDir, true); } catch { }
+            if (Directory.Exists(targetDir)) try { Directory.Delete(targetDir, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void CopyDataDirectory_OverwriteFalse_LeavesExistingDatabase()
+    {
+        var sourceDir = Path.Combine(Path.GetTempPath(), $"chatarchive_skip_src_{Guid.NewGuid():N}");
+        var targetDir = Path.Combine(Path.GetTempPath(), $"chatarchive_skip_dst_{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(sourceDir);
+            Directory.CreateDirectory(targetDir);
+            CreateTestDatabase(Path.Combine(sourceDir, "chat_archive.db"), "source-bytes");
+            CreateTestDatabase(Path.Combine(targetDir, "chat_archive.db"), "dest-old-bytes");
+
+            AppSettings.CopyDataDirectory(sourceDir, targetDir, overwrite: false);
+
+            Assert.Equal("dest-old-bytes", ReadTestDatabaseContent(Path.Combine(targetDir, "chat_archive.db")));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(sourceDir)) try { Directory.Delete(sourceDir, true); } catch { }
+            if (Directory.Exists(targetDir)) try { Directory.Delete(targetDir, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void StorageRefresh_IgnoresStaleGeneration()
+    {
+        var gate = new LatestRequestGate();
+        var first = gate.Next();
+        var second = gate.Next();
+
+        string? applied = null;
+        if (gate.IsCurrent(first))
+        {
+            applied = "old-dir-sizes";
+        }
+
+        if (gate.IsCurrent(second))
+        {
+            applied = "new-dir-sizes";
+        }
+
+        Assert.Equal("new-dir-sizes", applied);
+        Assert.False(gate.IsCurrent(first));
+
+        var pageSource = ReadSettingsPageSource();
+        Assert.Contains("var generation = _refreshGate.Next();", pageSource);
+        Assert.Contains("if (!_refreshGate.IsCurrent(generation))", pageSource);
+    }
+
+    private static void CreateTestDatabase(string path, string content)
+    {
+        using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder
+            {
+                DataSource = path,
+                Mode = SqliteOpenMode.ReadWriteCreate
+            }.ToString());
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "CREATE TABLE test (id INTEGER PRIMARY KEY, content TEXT); INSERT INTO test VALUES (1, @content);";
+        cmd.Parameters.AddWithValue("@content", content);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static string ReadTestDatabaseContent(string path)
+    {
+        using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder
+            {
+                DataSource = path,
+                Mode = SqliteOpenMode.ReadOnly
+            }.ToString());
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT content FROM test WHERE id = 1";
+        return (string)cmd.ExecuteScalar()!;
+    }
+
+    private static string ReadSettingsPageSource()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "src", "ChatArchive.App", "Views", "SettingsPage.xaml.cs");
+            if (File.Exists(candidate))
+            {
+                return File.ReadAllText(candidate);
+            }
+        }
+
+        throw new FileNotFoundException("SettingsPage.xaml.cs");
     }
 }
