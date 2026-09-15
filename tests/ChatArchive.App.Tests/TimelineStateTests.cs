@@ -76,6 +76,38 @@ public sealed class TimelineStateTests
     }
 
     [Fact]
+    public void TimelinePaging_SettledNearTop_LoadsMoreWhenHasMore()
+    {
+        var state = new TimelinePagingReadyState();
+        state.BeginFocusJump();
+        state.NoteScrollIssued();
+
+        Assert.True(state.ShouldLoadMoreAfterViewChanged(
+            isIntermediate: false,
+            offsetReported: true,
+            verticalOffset: 0,
+            hasMore: true,
+            isLoading: false));
+        Assert.True(state.IsReady);
+    }
+
+    [Fact]
+    public void TimelinePaging_MarkReadyNearTop_LoadsMoreWithoutViewChanged()
+    {
+        var state = new TimelinePagingReadyState();
+        state.BeginFocusJump();
+        state.NoteScrollIssued();
+        Assert.False(state.ShouldLoadMore(verticalOffset: 0, hasMore: true, isLoading: false));
+
+        state.MarkReady();
+
+        Assert.True(state.IsReady);
+        Assert.True(state.ShouldLoadMore(verticalOffset: 0, hasMore: true, isLoading: false));
+        Assert.False(state.ShouldLoadMore(verticalOffset: 80, hasMore: true, isLoading: false));
+        Assert.False(state.ShouldLoadMore(verticalOffset: 0, hasMore: false, isLoading: false));
+    }
+
+    [Fact]
     public void ContextHasMore_FalseWhenCursorIsTheFirstMessage()
     {
         var state = new TimelineRequestState();

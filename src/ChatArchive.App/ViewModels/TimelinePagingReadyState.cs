@@ -46,4 +46,23 @@ public sealed class TimelinePagingReadyState
         IsReady = true;
         return true;
     }
+
+    public bool ShouldLoadMore(double verticalOffset, bool hasMore, bool isLoading) =>
+        IsReady && verticalOffset < 80 && hasMore && !isLoading;
+
+    public bool ShouldLoadMoreAfterViewChanged(
+        bool isIntermediate,
+        bool offsetReported,
+        double verticalOffset,
+        bool hasMore,
+        bool isLoading)
+    {
+        OnViewChanged(isIntermediate, offsetReported);
+        if (isIntermediate)
+        {
+            return false;
+        }
+
+        return ShouldLoadMore(verticalOffset, hasMore, isLoading);
+    }
 }
