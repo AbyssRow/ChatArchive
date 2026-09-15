@@ -153,10 +153,12 @@ internal static class QqChunkManifest
                 "*.jsonl",
                 SearchOption.TopDirectoryOnly));
         }
+
         AddValidatedCandidates(Directory.EnumerateFiles(
             exportRoot,
             "*.jsonl",
-            SearchOption.TopDirectoryOnly));
+            SearchOption.TopDirectoryOnly)
+            .Where(path => IsLegacyRootQqChunkFileName(Path.GetFileName(path))));
 
         try
         {
@@ -213,6 +215,36 @@ internal static class QqChunkManifest
                 }
             }
         }
+    }
+
+    private static bool IsLegacyRootQqChunkFileName(string fileName)
+    {
+        const string extension = ".jsonl";
+        if (!fileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var stem = fileName.AsSpan(0, fileName.Length - extension.Length);
+        if (stem.StartsWith("chunk", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (stem.Length < 2 || stem[0] is not ('c' or 'C'))
+        {
+            return false;
+        }
+
+        for (var i = 1; i < stem.Length; i++)
+        {
+            if (!char.IsDigit(stem[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static string ResolveChunkDeclaration(

@@ -663,7 +663,12 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
             ImportText.Clean(meta["selfId"]),
             ImportText.Clean(meta["accountId"])));
 
-        var selfSender = !string.IsNullOrEmpty(ownerId) ? ownerId : null;
+        var selfSender = !string.IsNullOrEmpty(ownerId)
+            ? ownerId
+            : ChatLabParser.InferSelfSender(
+                ChatLabParser.EnumerateJsonlMessageObjects(filePath, cancellationToken),
+                conversation,
+                cancellationToken);
 
         return new ExportFile(
             conversation,

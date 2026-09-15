@@ -46,3 +46,13 @@ public sealed class TimelineRequestState
         Current = new TimelineRequest(++_generation, 0, null);
     }
 }
+
+internal static class TimelineContextPaging
+{
+    // Context encodes Messages[0] even when that row is the conversation start.
+    public static bool HasMoreFromContext(string? cursor) => false;
+
+    public static bool HasMoreFromPage(string? nextCursor) => nextCursor is not null;
+
+    public static bool HasMoreFromOlderItems(int olderItemCount) => olderItemCount > 0;
+}

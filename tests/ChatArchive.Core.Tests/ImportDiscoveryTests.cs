@@ -311,6 +311,64 @@ public class ImportDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void Discover_DoesNotSkipChatLabJsonlBesideQqManifest()
+    {
+        var chunkedRoot = Directory.CreateDirectory(Path.Combine(_tempDir, "qq-chunked-sibling")).FullName;
+        Directory.CreateDirectory(Path.Combine(chunkedRoot, "chunks"));
+        var chunkedManifest = Path.Combine(chunkedRoot, "manifest.json");
+        File.WriteAllText(
+            chunkedManifest,
+            """
+            {
+              "metadata": {"name": "QQChatExporter", "version": "0.2.0"},
+              "chatInfo": {"selfUid": "self", "peerUid": "chunked-peer", "name": "chunked", "type": "group"},
+              "chunked": {"chunks": [{"relativePath": "chunks/c000001.jsonl"}]}
+            }
+            """);
+        var chunkedChunk = Path.Combine(chunkedRoot, "chunks", "c000001.jsonl");
+        File.WriteAllText(
+            chunkedChunk,
+            """{"id":"q1","timestamp":1700000000,"sender":{"uid":"self","name":"我"},"content":{"type":"text","text":"chunked"}}""" + "\n");
+        var chunkedChatLab = WriteValidChatLabJsonl(chunkedRoot, "chatlab.jsonl", "chunked-chatlab");
+
+        var legacyRoot = Directory.CreateDirectory(Path.Combine(_tempDir, "qq-legacy-sibling")).FullName;
+        Directory.CreateDirectory(Path.Combine(legacyRoot, "chunks"));
+        var legacyManifest = Path.Combine(legacyRoot, "manifest.json");
+        File.WriteAllText(
+            legacyManifest,
+            """
+            {
+              "metadata": {"name": "QQChatExporter", "version": "0.2.0"},
+              "chatInfo": {"selfUid": "self", "peerUid": "legacy-peer", "name": "legacy", "type": "group"}
+            }
+            """);
+        var legacyChunk = Path.Combine(legacyRoot, "chunks", "chunk_0.jsonl");
+        File.WriteAllText(
+            legacyChunk,
+            """{"id":"q2","timestamp":1700000000,"sender":{"uid":"self","name":"我"},"content":{"type":"text","text":"legacy"}}""" + "\n");
+        var legacyChatLab = WriteValidChatLabJsonl(legacyRoot, "foo.jsonl", "legacy-chatlab");
+
+        var discovered = ImportDiscovery.Discover([_tempDir]);
+        var byPath = discovered.ToDictionary(
+            item => Path.GetFullPath(item.FilePath),
+            item => item,
+            StringComparer.OrdinalIgnoreCase);
+
+        Assert.Equal("qq", byPath[Path.GetFullPath(chunkedManifest)].Platform);
+        Assert.Null(byPath[Path.GetFullPath(chunkedManifest)].Error);
+        Assert.Equal("wechat", byPath[Path.GetFullPath(chunkedChatLab)].Platform);
+        Assert.Null(byPath[Path.GetFullPath(chunkedChatLab)].Error);
+
+        Assert.Equal("qq", byPath[Path.GetFullPath(legacyManifest)].Platform);
+        Assert.Null(byPath[Path.GetFullPath(legacyManifest)].Error);
+        Assert.Equal("wechat", byPath[Path.GetFullPath(legacyChatLab)].Platform);
+        Assert.Null(byPath[Path.GetFullPath(legacyChatLab)].Error);
+
+        Assert.DoesNotContain(Path.GetFullPath(chunkedChunk), byPath.Keys);
+        Assert.DoesNotContain(Path.GetFullPath(legacyChunk), byPath.Keys);
+    }
+
+    [Fact]
     public void ImportDiscovery_MalformedStrictQqManifest_DoesNotPruneValidSiblingJsonl()
     {
         var exportRoot = Directory.CreateDirectory(Path.Combine(_tempDir, "malformed-export")).FullName;

@@ -308,7 +308,7 @@ public static class WeFlowMarkdownParser
         foreach (Match match in MarkdownLinkRegex.Matches(content))
         {
             var declaredPath = match.Groups["path"].Value.Trim();
-            if (declaredPath.Length == 0) continue;
+            if (declaredPath.Length == 0 || ImportText.IsRootedOrUriLikeDeclaration(declaredPath)) continue;
             var label = match.Groups["label"].Value.Trim();
             var mime = ImportText.GuessMime(declaredPath);
             var kind = match.Value.StartsWith('!') || mime?.StartsWith("image/", StringComparison.Ordinal) == true ? "image"

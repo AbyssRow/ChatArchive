@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ChatArchive.App.Navigation;
 using ChatArchive.App.Services;
+using ChatArchive.App.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.Storage.Pickers;
@@ -9,6 +10,7 @@ namespace ChatArchive.App.Views;
 
 public sealed partial class SettingsPage : Page, IShellPage
 {
+    private readonly LatestRequestGate _refreshGate = new();
     private IAppShell? _shell;
     private bool _attached;
 
@@ -41,6 +43,7 @@ public sealed partial class SettingsPage : Page, IShellPage
         try
         {
             var currentDir = AppServices.Instance.Settings.GetValidDataDirectory();
+            var generation = _refreshGate.Next();
             SettingsDataPathText.Text = currentDir;
             SettingsTotalSizeText.Text = "计算中…";
             SettingsDbSizeText.Text = "计算中…";
@@ -48,6 +51,11 @@ public sealed partial class SettingsPage : Page, IShellPage
             SettingsAvatarSizeText.Text = "计算中…";
 
             var usage = await Task.Run(() => AppSettings.GetStorageUsage(currentDir));
+            if (!_refreshGate.IsCurrent(generation))
+            {
+                return;
+            }
+
             SettingsTotalSizeText.Text = usage.FormattedTotalSize;
             SettingsDbSizeText.Text = usage.FormattedDatabaseSize;
             SettingsMediaSizeText.Text = usage.FormattedMediaSize;
@@ -132,7 +140,7 @@ public sealed partial class SettingsPage : Page, IShellPage
 
             if (result == ContentDialogResult.Primary)
             {
-                await Task.Run(() => AppSettings.CopyDataDirectory(currentDir, targetPath, overwrite: false));
+                await Task.Run(() => AppSettings.CopyDataDirectory(currentDir, targetPath, overwrite: true));
             }
 
             var settings = AppServices.Instance.Settings;

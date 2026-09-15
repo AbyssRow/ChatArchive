@@ -194,6 +194,42 @@ public sealed class ContactsViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateNewContactAsync_NameOnly_ThenLoadAsync_LeavesSelectedDetail()
+    {
+        var viewModel = new ContactsViewModel(_contactRepository, _avatarStorage);
+
+        var detail = await viewModel.CreateNewContactAsync("只是姓名");
+        Assert.NotNull(detail);
+        var newId = detail.ContactId;
+        Assert.True(newId > 0);
+
+        await viewModel.LoadAsync(preferredSelectedContactId: newId);
+
+        Assert.Contains(viewModel.Contacts, c => c.Id == newId);
+        Assert.NotNull(viewModel.SelectedDetail);
+        Assert.Equal(newId, viewModel.SelectedDetail.ContactId);
+        Assert.Equal("只是姓名", viewModel.SelectedDetail.DisplayName);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WhenPreferredIdMissingFromList_DoesNotClearSelectedDetail()
+    {
+        var viewModel = new ContactsViewModel(_contactRepository, _avatarStorage);
+
+        var detail = await viewModel.CreateNewContactAsync("只是姓名");
+        var newId = detail.ContactId;
+        Assert.NotNull(viewModel.SelectedDetail);
+        Assert.Equal(newId, viewModel.SelectedDetail.ContactId);
+
+        await viewModel.LoadAsync(keyword: "NonexistentString", preferredSelectedContactId: newId);
+
+        Assert.Empty(viewModel.Contacts);
+        Assert.NotNull(viewModel.SelectedDetail);
+        Assert.Equal(newId, viewModel.SelectedDetail.ContactId);
+        Assert.Equal("只是姓名", viewModel.SelectedDetail.DisplayName);
+    }
+
+    [Fact]
     public async Task ContactsViewModel_DeleteContactAsync_RemovesContactAndClearsSelection()
     {
         var cId = _contactRepository.CreateContact("将被删除", note: "待删");

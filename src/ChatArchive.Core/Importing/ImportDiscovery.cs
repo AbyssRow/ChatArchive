@@ -50,6 +50,10 @@ public static class ImportDiscovery
             .ToList();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var found = new List<(string Path, string Platform, long Size, string? Error)>();
+        var qqChunkSkip = new HashSet<string>(
+            OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal);
 
         foreach (var rawRoot in roots)
         {
@@ -121,28 +125,51 @@ public static class ImportDiscovery
                     continue;
                 }
 
-                var hasQqChunkedManifest = files.Any(file =>
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    return string.Equals(
-                               Path.GetFileName(file),
-                               "manifest.json",
-                               StringComparison.OrdinalIgnoreCase)
-                           && IsSafeRegularFileForSniffing(file)
-                           && formats.Any(format =>
-                               format is QqChunkedExportFormat
-                               && SafeMatches(format, file, cancellationToken));
-                });
-
+                var hasQqChunkedManifest = false;
                 foreach (var file in files)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var ext = Path.GetExtension(file);
-                    if (hasQqChunkedManifest && string.Equals(ext, ".jsonl", StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(
+                            Path.GetFileName(file),
+                            "manifest.json",
+                            StringComparison.OrdinalIgnoreCase)
+                        || !IsSafeRegularFileForSniffing(file)
+                        || !formats.Any(format =>
+                            format is QqChunkedExportFormat
+                            && SafeMatches(format, file, cancellationToken)))
                     {
                         continue;
                     }
 
+                    hasQqChunkedManifest = true;
+                    try
+                    {
+                        foreach (var chunk in QqChunkManifest.ResolveChunkFiles(file, cancellationToken))
+                        {
+                            qqChunkSkip.Add(Path.GetFullPath(chunk));
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch
+                    {
+                        // Matches already accepted this manifest; a later resolve race must not hide siblings.
+                    }
+
+                    break;
+                }
+
+                foreach (var file in files)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (qqChunkSkip.Contains(Path.GetFullPath(file)))
+                    {
+                        continue;
+                    }
+
+                    var ext = Path.GetExtension(file);
                     if (SupportedExtensions.Contains(ext))
                     {
                         Consider(file);

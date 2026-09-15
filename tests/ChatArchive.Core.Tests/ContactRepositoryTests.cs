@@ -48,6 +48,20 @@ public sealed class ContactRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void ListContacts_IncludesNameOnlyContact()
+    {
+        var id = _repository.CreateContact("只是姓名", customAvatarPath: null, note: null, initialBindings: null);
+        var list = _repository.ListContacts();
+        Assert.Contains(list, c => c.Id == id);
+
+        var byName = _repository.ListContacts("只是姓名");
+        Assert.Contains(byName, c => c.Id == id);
+
+        var miss = _repository.ListContacts("NonexistentString");
+        Assert.DoesNotContain(miss, c => c.Id == id);
+    }
+
+    [Fact]
     public void CreateContact_WithInitialBindings_BindsMultipleSenders()
     {
         var sender1 = _archive.AddSender("10001", "Alice QQ", platform: "qq");

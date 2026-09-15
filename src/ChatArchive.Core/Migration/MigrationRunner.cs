@@ -72,6 +72,8 @@ public sealed class MigrationRunner
         var (copied, skipped) = CopyMedia(Path.Combine(_sourceDir, "media"), Path.Combine(_targetDir, "media"));
         Say($"媒体：新增 {copied}，已有跳过 {skipped}");
 
+        CopyMedia(Path.Combine(_sourceDir, "avatars"), Path.Combine(_targetDir, "avatars"));
+
         Say("改写 managed_path 前缀 …");
         var rewritten = RewriteManagedPaths(targetDb, Path.Combine(_targetDir, "media"));
 
@@ -134,7 +136,9 @@ public sealed class MigrationRunner
                     suffix = string.Empty;
                 }
 
-                updates.Add((reader.GetInt64(0), Path.Combine(targetMediaDir, sha[..2], sha + suffix)));
+                var newPath = Path.Combine(targetMediaDir, sha[..2], sha + suffix);
+                RelocateCopiedMedia(targetMediaDir, sha, suffix, oldPath, newPath);
+                updates.Add((reader.GetInt64(0), newPath));
             }
         }
 
@@ -151,6 +155,40 @@ public sealed class MigrationRunner
 
         transaction.Commit();
         return updates.Count;
+    }
+
+    private static void RelocateCopiedMedia(
+        string targetMediaDir,
+        string sha,
+        string suffix,
+        string oldPath,
+        string newPath)
+    {
+        if (File.Exists(newPath))
+        {
+            return;
+        }
+
+        foreach (var candidate in new[]
+                 {
+                     Path.Combine(targetMediaDir, sha + suffix),
+                     Path.Combine(targetMediaDir, Path.GetFileName(oldPath)),
+                 })
+        {
+            if (string.IsNullOrEmpty(candidate) || !File.Exists(candidate))
+            {
+                continue;
+            }
+
+            if (string.Equals(Path.GetFullPath(candidate), Path.GetFullPath(newPath), StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
+            File.Move(candidate, newPath);
+            return;
+        }
     }
 
     private static (long Conversations, long Messages, long Attachments, long MediaObjects) VerifyCounts(string sourceDb, string targetDb)
@@ -200,6 +238,7 @@ public sealed class MigrationRunner
             | `chat_archive.db` | SQLite 主库：消息、会话、联系人、别名、附件元数据、FTS5 中文全文索引 |
             | `chat_archive.db-wal` / `-shm` | SQLite WAL 临时文件，应用运行时出现，属正常现象 |
             | `media\\<sha前两位>\\<sha256><后缀>` | 内容寻址媒体库；同一文件全库只存一份 |
+            | `avatars\\<sha256><后缀>` | 自定义联系人头像；`contacts.custom_avatar_path` 存相对文件名 |
 
             ## 备份
 

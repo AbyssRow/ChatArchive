@@ -74,10 +74,17 @@ public sealed class ChatLabMediaPolicyTests : IDisposable
 
         Assert.True(adapter.Matches(path));
         using var export = adapter.Open(path);
-        var attachment = Assert.Single(Assert.Single(export.EnumerateMessages()).Attachments);
-
-        Assert.Equal("../images/one.jpg", attachment.DeclaredPath);
-        Assert.Equal(resolves ? image : null, attachment.SourcePath);
+        var message = Assert.Single(export.EnumerateMessages());
+        if (resolves)
+        {
+            var attachment = Assert.Single(message.Attachments);
+            Assert.Equal("../images/one.jpg", attachment.DeclaredPath);
+            Assert.Equal(image, attachment.SourcePath);
+        }
+        else
+        {
+            Assert.Empty(message.Attachments);
+        }
     }
 
     public void Dispose()
