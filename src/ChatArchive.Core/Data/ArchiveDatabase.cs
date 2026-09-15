@@ -431,6 +431,9 @@ public sealed class ArchiveDatabase
 
                 if (sendersInGroup.Count <= 1) continue;
 
+                sendersInGroup = SelectDefaultFoldGroup(sendersInGroup, row => row.AccountId);
+                if (sendersInGroup.Count <= 1) continue;
+
                 var canonical = sendersInGroup[0];
                 var duplicates = sendersInGroup.Skip(1).ToList();
 
@@ -558,6 +561,9 @@ public sealed class ArchiveDatabase
                     }
                 }
 
+                if (convsInGroup.Count <= 1) continue;
+
+                convsInGroup = SelectDefaultFoldGroup(convsInGroup, row => row.AccountId);
                 if (convsInGroup.Count <= 1) continue;
 
                 var canonical = convsInGroup[0];
@@ -756,6 +762,46 @@ public sealed class ArchiveDatabase
                 connection.Dispose();
             }
         }
+    }
+
+    private static bool IsDefaultAccount(string accountId) =>
+        accountId.EndsWith("-default", StringComparison.OrdinalIgnoreCase);
+
+    private static List<T> SelectDefaultFoldGroup<T>(IReadOnlyList<T> rows, Func<T, string> accountId)
+    {
+        var reals = new List<T>();
+        var defaults = new List<T>();
+        foreach (var row in rows)
+        {
+            if (IsDefaultAccount(accountId(row)))
+            {
+                defaults.Add(row);
+            }
+            else
+            {
+                reals.Add(row);
+            }
+        }
+
+        if (reals.Count >= 2)
+        {
+            // Two real accounts share this native id; folding either would undo multi-account import.
+            return defaults.Count > 1 ? defaults : new List<T>();
+        }
+
+        if (reals.Count == 1)
+        {
+            if (defaults.Count == 0)
+            {
+                return new List<T>();
+            }
+
+            var fold = new List<T>(1 + defaults.Count) { reals[0] };
+            fold.AddRange(defaults);
+            return fold;
+        }
+
+        return rows as List<T> ?? rows.ToList();
     }
 
     private static void MoveAttachmentsPreferringAvailable(

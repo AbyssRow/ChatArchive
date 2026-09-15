@@ -706,6 +706,59 @@ public class ArchiveDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void RepairDuplicateConversationsAndSenders_LeavesTwoRealAccountsAlone()
+    {
+        var db = new ArchiveDatabase(_databasePath);
+        db.EnsureSchema();
+
+        using (var connection = db.OpenConnection())
+        {
+            Execute(connection, """
+                INSERT INTO senders(id, platform, account_id, native_id, current_name, is_self)
+                VALUES (1, 'wechat', 'wxid_acct_a', 'wxid_acct_a', '账号A', 1),
+                       (2, 'wechat', 'wxid_acct_b', 'wxid_acct_b', '账号B', 1),
+                       (3, 'wechat', 'wxid_acct_a', 'wxid_peer', '共同好友', 0),
+                       (4, 'wechat', 'wxid_acct_b', 'wxid_peer', '共同好友', 0);
+                """);
+
+            Execute(connection, """
+                INSERT INTO conversations(id, platform, account_id, native_id, kind, title, message_count)
+                VALUES (10, 'wechat', 'wxid_acct_a', 'wxid_peer', 'private', '共同好友', 1),
+                       (20, 'wechat', 'wxid_acct_b', 'wxid_peer', 'private', '共同好友', 1);
+                """);
+        }
+
+        var merged = db.RepairDuplicateConversationsAndSenders();
+        Assert.Equal(0, merged);
+
+        using (var connection = db.OpenConnection())
+        {
+            Assert.Equal(2L, Scalar(connection, "SELECT COUNT(*) FROM conversations"));
+            Assert.Equal(
+                1L,
+                Scalar(connection, "SELECT COUNT(*) FROM conversations WHERE native_id = 'wxid_peer' AND account_id = 'wxid_acct_a'"));
+            Assert.Equal(
+                1L,
+                Scalar(connection, "SELECT COUNT(*) FROM conversations WHERE native_id = 'wxid_peer' AND account_id = 'wxid_acct_b'"));
+
+            Assert.Equal(2L, Scalar(connection, "SELECT COUNT(*) FROM senders WHERE is_self = 1"));
+            Assert.Equal(
+                1L,
+                Scalar(connection, "SELECT COUNT(*) FROM senders WHERE native_id = 'wxid_acct_a' AND is_self = 1 AND account_id = 'wxid_acct_a'"));
+            Assert.Equal(
+                1L,
+                Scalar(connection, "SELECT COUNT(*) FROM senders WHERE native_id = 'wxid_acct_b' AND is_self = 1 AND account_id = 'wxid_acct_b'"));
+            Assert.Equal(2L, Scalar(connection, "SELECT COUNT(*) FROM senders WHERE native_id = 'wxid_peer'"));
+            Assert.Equal(
+                1L,
+                Scalar(connection, "SELECT COUNT(*) FROM senders WHERE native_id = 'wxid_peer' AND account_id = 'wxid_acct_a'"));
+            Assert.Equal(
+                1L,
+                Scalar(connection, "SELECT COUNT(*) FROM senders WHERE native_id = 'wxid_peer' AND account_id = 'wxid_acct_b'"));
+        }
+    }
+
+    [Fact]
     public void RepairDuplicateConversations_PreservesAttachmentsFromDuplicateMessages()
     {
         var db = new ArchiveDatabase(_databasePath);
