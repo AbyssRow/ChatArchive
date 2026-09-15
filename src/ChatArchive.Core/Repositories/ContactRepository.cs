@@ -438,6 +438,7 @@ public sealed class ContactRepository
                 EXISTS (SELECT 1 FROM contact_senders cs WHERE cs.contact_id = c.id)
                 OR (c.note IS NOT NULL AND c.note != '')
                 OR (c.custom_avatar_path IS NOT NULL AND c.custom_avatar_path != '')
+                OR (c.display_name IS NOT NULL AND c.display_name != '')
             )
             """
         };

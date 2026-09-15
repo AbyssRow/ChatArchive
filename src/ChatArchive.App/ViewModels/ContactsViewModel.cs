@@ -85,10 +85,6 @@ public partial class ContactsViewModel : ObservableObject
                     {
                         await SelectContactAsync(match);
                     }
-                    else
-                    {
-                        await SelectContactAsync(null);
-                    }
                 }
             }
 
