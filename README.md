@@ -46,15 +46,19 @@ ChatArchive 采用来源专属适配器与自动嗅探引擎，支持通过软�
 
 ### 编译与测试
 
+需要 **Windows** + **.NET 10**。单元测试通过 xUnit v3 进程内宿主 exe 运行（`dotnet test` / Microsoft.Testing.Platform 当前会列出 0 个测试，请勿依赖）。
+
 ```bash
 # 克隆仓库
 git clone https://github.com/AbyssRow/ChatArchive.git
 cd ChatArchive
 
-# 运行全套单元测试
-dotnet test
+dotnet build tests/ChatArchive.Core.Tests/ChatArchive.Core.Tests.csproj
+dotnet build tests/ChatArchive.App.Tests/ChatArchive.App.Tests.csproj
+# xUnit v3 in-proc host (dotnet test / MTP currently lists 0 tests)
+./tests/ChatArchive.Core.Tests/bin/Debug/net10.0/ChatArchive.Core.Tests.exe -noLogo -automated
+./tests/ChatArchive.App.Tests/bin/Debug/net10.0-windows10.0.19041.0/win-x64/ChatArchive.App.Tests.exe -noLogo -automated
 
-# 构建项目
 dotnet build
 ```
 
