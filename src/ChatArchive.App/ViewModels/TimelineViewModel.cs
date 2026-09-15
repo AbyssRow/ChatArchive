@@ -183,11 +183,12 @@ public partial class TimelineViewModel : ObservableObject
                 }
 
                 var contextRequest = _requestState.StartContext(context);
-                HasMore = contextRequest.Cursor is not null;
+                HasMore = TimelineContextPaging.HasMoreFromContext(contextRequest.Cursor);
                 Title = context.ConversationTitle + "（定位消息）";
                 Entries.Clear();
                 AppendWithSeparators(context.Messages);
                 FocusMessageLoaded?.Invoke(context.FocusMessageId);
+                ProbeOlderPage(contextRequest);
             });
         });
     }
@@ -235,12 +236,34 @@ public partial class TimelineViewModel : ObservableObject
                 }
 
                 _requestState.UpdateCursor(page.NextCursor);
-                HasMore = page.NextCursor is not null;
+                HasMore = TimelineContextPaging.HasMoreFromPage(page.NextCursor);
                 IsLoading = false;
                 if (initial)
                 {
                     InitialPageLoaded?.Invoke();
                 }
+            });
+        });
+    }
+
+    private void ProbeOlderPage(TimelineRequest request)
+    {
+        if (request.Cursor is null)
+        {
+            return;
+        }
+
+        // Prepending here would snap KeepLastItemInView away from the focused row.
+        Task.Run(() => _repository.ListMessages(request.ConversationId, request.Cursor, 1)).ContinueWith(task =>
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (!_requestState.IsCurrent(request) || !task.IsCompletedSuccessfully)
+                {
+                    return;
+                }
+
+                HasMore = TimelineContextPaging.HasMoreFromOlderItems(task.Result.Items.Count);
             });
         });
     }

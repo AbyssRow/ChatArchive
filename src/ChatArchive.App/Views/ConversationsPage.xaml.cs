@@ -24,7 +24,7 @@ public sealed partial class ConversationsPage : Page, IShellPage
     private readonly TimelineInitialPositionState _initialTimelinePosition = new();
     private CancellationTokenSource? _queryDebounce;
     private ScrollViewer? _messageScroll;
-    private bool _messagePagingReady;
+    private readonly TimelinePagingReadyState _pagingReady = new();
     private readonly ExclusiveInteractionGate _senderProfileGate = new();
 
     public ConversationsPage()
@@ -53,6 +53,7 @@ public sealed partial class ConversationsPage : Page, IShellPage
         ConversationListControl.ItemsSource = conversations.Conversations;
         MessageListControl.ItemsSource = timeline.Entries;
         conversations.ConversationActivated += info => timeline.Load(info);
+        conversations.Reloaded += OnConversationsReloaded;
         timeline.InitialPageLoaded += PositionTimelineAtBottom;
         timeline.FocusMessageLoaded += FocusTimelineMessage;
         timeline.PropertyChanged += TimelineOnPropertyChanged;
@@ -212,14 +213,42 @@ public sealed partial class ConversationsPage : Page, IShellPage
         };
     }
 
-    private void MessageScroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    private void OnConversationsReloaded()
     {
-        if (_messageScroll is null || e.IsIntermediate || _timeline is null)
+        if (_conversations is null)
         {
             return;
         }
 
-        if (_messagePagingReady
+        _isApplyingConversation = true;
+        try
+        {
+            ConversationListControl.SelectedItem = _conversations.SelectedConversation is { } selected
+                ? _conversations.Conversations.FirstOrDefault(item => item.Id == selected.Id) ?? selected
+                : null;
+        }
+        finally
+        {
+            _isApplyingConversation = false;
+        }
+    }
+
+    private void MessageScroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (_messageScroll is null || _timeline is null)
+        {
+            return;
+        }
+
+        var focusSettled = _pagingReady.OnViewChanged(
+            isIntermediate: e.IsIntermediate,
+            offsetReported: true);
+        if (e.IsIntermediate || focusSettled)
+        {
+            return;
+        }
+
+        if (_pagingReady.IsReady
             && _messageScroll.VerticalOffset < 80
             && _timeline.HasMore
             && !_timeline.IsLoading)
@@ -231,7 +260,7 @@ public sealed partial class ConversationsPage : Page, IShellPage
     private void PositionTimelineAtBottom()
     {
         _initialTimelinePosition.RequestBottom();
-        _messagePagingReady = false;
+        _pagingReady.Reset();
         TryPositionTimelineAtBottom();
     }
 
@@ -252,14 +281,14 @@ public sealed partial class ConversationsPage : Page, IShellPage
             DispatcherQueue.TryEnqueue(() =>
             {
                 _messageScroll?.ChangeView(null, _messageScroll.ScrollableHeight, null, true);
-                _messagePagingReady = true;
+                _pagingReady.MarkReady();
             });
         });
     }
 
     private void FocusTimelineMessage(long messageId)
     {
-        _messagePagingReady = false;
+        _pagingReady.BeginFocusJump();
         DispatcherQueue.TryEnqueue(() =>
         {
             MessageListControl.UpdateLayout();
@@ -270,8 +299,6 @@ public sealed partial class ConversationsPage : Page, IShellPage
             {
                 MessageListControl.ScrollIntoView(entry);
             }
-
-            _messagePagingReady = true;
         });
     }
 

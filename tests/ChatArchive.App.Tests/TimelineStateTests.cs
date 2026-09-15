@@ -51,6 +51,46 @@ public sealed class TimelineStateTests
         Assert.False(state.TryTakeBottomRequest(canPosition: true));
     }
 
+    [Fact]
+    public void TimelinePaging_NotReadyUntilFocusSettled()
+    {
+        var state = new TimelinePagingReadyState();
+
+        state.BeginFocusJump();
+        Assert.False(state.IsReady);
+
+        state.OnViewChanged(isIntermediate: true, offsetReported: true);
+        Assert.False(state.IsReady);
+
+        state.OnViewChanged(isIntermediate: false, offsetReported: false);
+        Assert.False(state.IsReady);
+
+        state.OnViewChanged(isIntermediate: false, offsetReported: true);
+        Assert.True(state.IsReady);
+    }
+
+    [Fact]
+    public void ContextHasMore_FalseWhenCursorIsTheFirstMessage()
+    {
+        var state = new TimelineRequestState();
+        var messages = new[]
+        {
+            Message(7, 1_700_000_000_000),
+            Message(8, 1_700_000_001_000),
+        };
+        var context = new MessageContext(42, "目标会话", 8, messages);
+
+        var request = state.StartContext(context);
+
+        Assert.Equal(CursorCodec.Encode(messages[0].TimestampMs, messages[0].Id), request.Cursor);
+        Assert.False(TimelineContextPaging.HasMoreFromContext(request.Cursor));
+        Assert.False(TimelineContextPaging.HasMoreFromOlderItems(0));
+        Assert.True(TimelineContextPaging.HasMoreFromOlderItems(1));
+        Assert.False(TimelineContextPaging.HasMoreFromPage(nextCursor: null));
+        Assert.True(TimelineContextPaging.HasMoreFromPage(
+            nextCursor: CursorCodec.Encode(1_699_000_000_000, 1)));
+    }
+
     private static MessageItem Message(long id, long timestampMs)
     {
         return new MessageItem(

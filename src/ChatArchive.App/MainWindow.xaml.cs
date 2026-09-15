@@ -138,7 +138,7 @@ public sealed partial class MainWindow : Window, IAppShell
 
             _import.ImportFinished += () =>
             {
-                _conversations.Reload();
+                _conversations.Reload(refreshSelectedTimeline: true);
                 if (_searchPage is not null)
                 {
                     _searchPage.ReloadOptions();

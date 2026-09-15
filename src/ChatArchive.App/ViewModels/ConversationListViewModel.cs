@@ -34,6 +34,8 @@ public partial class ConversationListViewModel : ObservableObject
 
     public event Action<ConversationInfo>? ConversationActivated;
 
+    public event Action? Reloaded;
+
     public ConversationListViewModel(
         ChatArchive.Core.Repositories.ConversationRepository repository,
         DispatcherQueue dispatcher)
@@ -42,7 +44,7 @@ public partial class ConversationListViewModel : ObservableObject
         _dispatcher = dispatcher;
     }
 
-    public void Reload()
+    public void Reload(bool refreshSelectedTimeline = false)
     {
         var request = _requestGate.Next();
         var platform = PlatformFilter;
@@ -68,13 +70,40 @@ public partial class ConversationListViewModel : ObservableObject
                     return;
                 }
 
-                Conversations.Clear();
-                foreach (var item in task.Result)
-                {
-                    Conversations.Add(item);
-                }
+                ApplyReload(task.Result, refreshSelectedTimeline);
             });
         });
+    }
+
+    internal void ApplyReload(IReadOnlyList<ConversationInfo> items, bool refreshSelectedTimeline)
+    {
+        var selectedId = SelectedConversation?.Id;
+        Conversations.Clear();
+        foreach (var item in items)
+        {
+            Conversations.Add(item);
+        }
+
+        var match = selectedId is long id
+            ? Conversations.FirstOrDefault(item => item.Id == id)
+            : null;
+        if (match is not null)
+        {
+            if (refreshSelectedTimeline)
+            {
+                Activate(match);
+            }
+            else
+            {
+                SelectedConversation = match;
+            }
+        }
+        else if (selectedId is not null)
+        {
+            SelectedConversation = null;
+        }
+
+        Reloaded?.Invoke();
     }
 
     public void Activate(ConversationInfo conversation)
