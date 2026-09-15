@@ -611,6 +611,38 @@ public sealed class QqChunkManifestTests : IDisposable
     }
 
     [Fact]
+    public void LegacyManifest_DoesNotParseUnrelatedJsonlAsQqChunks()
+    {
+        var chunk = WriteAt(
+            Path.Combine(_root, "chunks", "chunk_0.jsonl"),
+            """{"id":"q1","timestamp":1700000000,"sender":{"uid":"u_self","name":"我自己"},"content":{"type":"text","text":"qq-chunk"}}""" + "\n");
+        var chatLab = WriteAt(
+            Path.Combine(_root, "foo.jsonl"),
+            """
+            {"_type":"header","chatlab":{"version":"0.0.2","generator":"ChatLab"},"meta":{"name":"Sibling","platform":"wechat","type":"private","ownerId":"self"}}
+            {"_type":"message","id":"chatlab-1","sender":"peer","timestamp":1700000000,"type":0,"content":"chatlab-line"}
+            """);
+        var manifest = WriteAt(
+            Path.Combine(_root, "manifest.json"),
+            """
+            {
+              "metadata": {"name": "QQChatExporter", "version": "0.2.0"},
+              "chatInfo": {"selfUid": "u_self", "peerUid": "u_peer", "name": "legacy", "type": "group"}
+            }
+            """);
+
+        var resolved = QqChunkManifest.ResolveChunkFiles(manifest);
+        Assert.Equal(new[] { chunk }, resolved);
+        Assert.DoesNotContain(chatLab, resolved);
+
+        using var export = new QqChunkedExportFormat().Open(manifest);
+        var message = Assert.Single(export.EnumerateMessages());
+        Assert.Equal("q1", message.NativeId);
+        Assert.Equal("qq-chunk", message.Content);
+        Assert.NotEqual("unknown", message.SenderNativeId);
+    }
+
+    [Fact]
     public void ResolveChunkFiles_LegacyManifest_ScansOnlyConventionalLocationsInNaturalOrder()
     {
         var chunk2 = WriteAt(Path.Combine(_root, "chunks", "chunk2.jsonl"), "{}\n");

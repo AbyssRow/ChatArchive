@@ -153,10 +153,6 @@ internal static class QqChunkManifest
                 "*.jsonl",
                 SearchOption.TopDirectoryOnly));
         }
-        AddValidatedCandidates(Directory.EnumerateFiles(
-            exportRoot,
-            "*.jsonl",
-            SearchOption.TopDirectoryOnly));
 
         try
         {
