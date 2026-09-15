@@ -1049,6 +1049,9 @@ public class ParserTests : IDisposable
             """;
         var pathJson = Path.Combine(_dir, "chatlab_test.json");
         File.WriteAllText(pathJson, jsonContent);
+        var imageDir = Path.Combine(_dir, "media", "images");
+        Directory.CreateDirectory(imageDir);
+        File.WriteAllText(Path.Combine(imageDir, "pic.jpg"), "fake image bytes");
 
         var formatJson = new ChatLabJsonExportFormat();
         Assert.True(formatJson.Matches(pathJson));
@@ -1116,7 +1119,7 @@ public class ParserTests : IDisposable
         Assert.Equal("text", messages[0].MessageType);
         Assert.Equal("image", messages[1].MessageType);
         Assert.Equal("audio", messages[2].MessageType);
-        Assert.Equal(4.5, messages[2].Attachments[0].Duration);
+        Assert.Empty(messages[2].Attachments);
         Assert.Equal("video", messages[3].MessageType);
         Assert.Equal("file", messages[4].MessageType);
         Assert.Equal("emoji", messages[5].MessageType);
@@ -1616,6 +1619,142 @@ public class ParserTests : IDisposable
     }
 
     [Fact]
+    public void ChatLabParser_ImageCaptionWithDot_DoesNotCreateFakeAttachment()
+    {
+        var json = """
+            {
+              "chatlab": {
+                "version": "0.0.2",
+                "generator": "ChatLab"
+              },
+              "meta": {
+                "name": "好友",
+                "platform": "wechat",
+                "type": "private",
+                "ownerId": "wxid_self"
+              },
+              "members": [
+                { "platformId": "wxid_friend", "accountName": "好友" }
+              ],
+              "messages": [
+                {
+                  "id": "cap1",
+                  "sender": "wxid_friend",
+                  "accountName": "好友",
+                  "timestamp": 1700000100,
+                  "type": 1,
+                  "content": "see v1.2"
+                },
+                {
+                  "id": "cap2",
+                  "sender": "wxid_friend",
+                  "accountName": "好友",
+                  "timestamp": 1700000101,
+                  "type": 1,
+                  "content": "ok."
+                }
+              ]
+            }
+            """;
+
+        var path = Path.Combine(_dir, "chatlab_caption_dot.json");
+        File.WriteAllText(path, json);
+
+        var format = new ChatLabJsonExportFormat();
+        using var exportFile = format.Open(path);
+        var messages = exportFile.EnumerateMessages().ToList();
+        Assert.Equal(2, messages.Count);
+
+        AssertCaptionHasNoFakeMedia(messages[0], "see v1.2", 1700000100000L);
+        AssertCaptionHasNoFakeMedia(messages[1], "ok.", 1700000101000L);
+    }
+
+    [Fact]
+    public void ChatLabJsonl_WithoutOwnerId_InfersSelfSenderLikeJson()
+    {
+        var json = """
+            {
+              "chatlab": { "version": "0.0.2", "generator": "ChatLab" },
+              "meta": { "name": "私聊", "platform": "wechat", "type": "private" },
+              "members": [
+                { "platformId": "wxid_peer", "accountName": "Peer" },
+                { "platformId": "wxid_me", "accountName": "Me" }
+              ],
+              "messages": [
+                { "id": "out", "sender": "wxid_me", "accountName": "Me", "timestamp": 1700000000, "type": 0, "content": "from me", "isSend": 1 },
+                { "id": "in", "sender": "wxid_peer", "accountName": "Peer", "timestamp": 1700000001, "type": 0, "content": "from peer" },
+                { "id": "out2", "sender": "wxid_me", "accountName": "Me", "timestamp": 1700000002, "type": 0, "content": "also me" }
+              ]
+            }
+            """;
+        var jsonlLines = new[]
+        {
+            """{"_type":"header","chatlab":{"version":"0.0.2","generator":"ChatLab"},"meta":{"name":"私聊","platform":"wechat","type":"private"}}""",
+            """{"_type":"member","platformId":"wxid_peer","accountName":"Peer"}""",
+            """{"_type":"member","platformId":"wxid_me","accountName":"Me"}""",
+            """{"_type":"message","id":"out","sender":"wxid_me","accountName":"Me","timestamp":1700000000,"type":0,"content":"from me","isSend":1}""",
+            """{"_type":"message","id":"in","sender":"wxid_peer","accountName":"Peer","timestamp":1700000001,"type":0,"content":"from peer"}""",
+            """{"_type":"message","id":"out2","sender":"wxid_me","accountName":"Me","timestamp":1700000002,"type":0,"content":"also me"}""",
+        };
+
+        var jsonPath = Path.Combine(_dir, "chatlab_self.json");
+        var jsonlPath = Path.Combine(_dir, "chatlab_self.jsonl");
+        File.WriteAllText(jsonPath, json);
+        File.WriteAllLines(jsonlPath, jsonlLines);
+
+        using var jsonFile = new ChatLabJsonExportFormat().Open(jsonPath);
+        using var jsonlFile = new ChatLabJsonlExportFormat().Open(jsonlPath);
+        var jsonMessages = jsonFile.EnumerateMessages().ToList();
+        var jsonlMessages = jsonlFile.EnumerateMessages().ToList();
+        Assert.Equal(3, jsonMessages.Count);
+        Assert.Equal(3, jsonlMessages.Count);
+
+        var jsonOut = jsonMessages.Single(message => message.NativeId == "out");
+        var jsonlOut = jsonlMessages.Single(message => message.NativeId == "out");
+        var jsonOut2 = jsonMessages.Single(message => message.NativeId == "out2");
+        var jsonlOut2 = jsonlMessages.Single(message => message.NativeId == "out2");
+        var jsonIn = jsonMessages.Single(message => message.NativeId == "in");
+        var jsonlIn = jsonlMessages.Single(message => message.NativeId == "in");
+
+        Assert.Equal("outgoing", jsonOut.Direction);
+        Assert.Equal("outgoing", jsonOut2.Direction);
+        Assert.Equal("incoming", jsonIn.Direction);
+        Assert.Equal(jsonOut.Direction, jsonlOut.Direction);
+        Assert.Equal(jsonOut2.Direction, jsonlOut2.Direction);
+        Assert.Equal(jsonIn.Direction, jsonlIn.Direction);
+        Assert.Equal(jsonOut.SenderNativeId, jsonlOut.SenderNativeId);
+        Assert.Equal(jsonOut2.SenderNativeId, jsonlOut2.SenderNativeId);
+    }
+
+    [Fact]
+    public void WeFlowMarkdown_HttpLink_IsNotAnAttachment()
+    {
+        var path = Path.Combine(_dir, "weflow_http_link.md");
+        File.WriteAllText(path, """
+            # 项目群
+
+            - 会话ID: `group@chatroom`
+            - 会话类型: 群聊
+            - 消息数量: 1
+            - 导出时间: 2023-11-15 06:16:00
+            - 导出工具: WeFlow
+
+            ---
+
+            ## 2023-11-15 06:15:23 Alice
+
+            see [docs](https://example.com/a)
+            """);
+
+        var format = new WeFlowMarkdownExportFormat();
+        Assert.True(format.Matches(path));
+        using var export = format.Open(path);
+        var message = Assert.Single(export.EnumerateMessages());
+        Assert.Contains("[docs](https://example.com/a)", message.Content);
+        Assert.Empty(message.Attachments);
+    }
+
+    [Fact]
     public void QqChunked_ResolvesMediaUnderExportRootResources_WhenChunksInSubdir()
     {
         var exportRoot = Path.Combine(_dir, "qq_chunked_export");
@@ -1763,6 +1902,43 @@ public class ParserTests : IDisposable
             }
             """);
         return (manifest, chunk);
+    }
+
+    private static void AssertCaptionHasNoFakeMedia(ParsedMessage message, string content, long timestampMs)
+    {
+        Assert.Equal("image", message.MessageType);
+        Assert.Empty(message.Attachments);
+        Assert.Empty(message.CompatiblePayloadHashes);
+
+        var withoutFakeName = CanonicalJson.HashHex(new JsonObject
+        {
+            ["timestamp_ms"] = timestampMs,
+            ["sender"] = "wxid_friend",
+            ["direction"] = "incoming",
+            ["local_type"] = "1",
+            ["media_type"] = "image",
+            ["message_type"] = "image",
+            ["content"] = content,
+            ["media_name"] = null,
+            ["reply_to_native_id"] = null,
+            ["search_text"] = content,
+        });
+        var withFakeName = CanonicalJson.HashHex(new JsonObject
+        {
+            ["timestamp_ms"] = timestampMs,
+            ["sender"] = "wxid_friend",
+            ["direction"] = "incoming",
+            ["local_type"] = "1",
+            ["media_type"] = "image",
+            ["message_type"] = "image",
+            ["content"] = content,
+            ["media_name"] = content,
+            ["reply_to_native_id"] = null,
+            ["search_text"] = content,
+        });
+
+        Assert.Equal(withoutFakeName, message.PayloadHash);
+        Assert.NotEqual(withFakeName, message.PayloadHash);
     }
 
     public void Dispose()

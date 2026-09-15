@@ -411,7 +411,7 @@ public static class ImportText
         }
     }
 
-    private static bool IsRootedOrUriLikeDeclaration(string declaredPath)
+    internal static bool IsRootedOrUriLikeDeclaration(string declaredPath)
     {
         return declaredPath[0] is '/' or '\\'
             || Path.IsPathRooted(declaredPath)

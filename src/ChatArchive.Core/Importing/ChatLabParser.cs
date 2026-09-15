@@ -294,6 +294,48 @@ public static class ChatLabParser
         }
     }
 
+    internal static IEnumerable<JsonObject> EnumerateJsonlMessageObjects(
+        string filePath,
+        CancellationToken cancellationToken)
+    {
+        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
+        using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
+
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0)
+            {
+                continue;
+            }
+
+            JsonObject? raw;
+            try
+            {
+                raw = JsonNode.Parse(trimmed) as JsonObject;
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            if (raw is null)
+            {
+                continue;
+            }
+
+            var typeTag = ImportText.Clean(TryGetRaw(raw, "_type")).ToLowerInvariant();
+            if (typeTag is "header" or "member")
+            {
+                continue;
+            }
+
+            yield return raw;
+        }
+    }
+
     public static IEnumerable<ParsedMessage> IterateJsonlMessages(
         string filePath,
         ParsedConversation conversation,
@@ -695,7 +737,7 @@ public static class ChatLabParser
         {
             foreach (var text in new[] { content, rawContent })
             {
-                if ((text.Contains('/') || text.Contains('\\') || text.Contains('.'))
+                if ((text.Contains('/') || text.Contains('\\'))
                     && !text.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
                     && !text.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 {
@@ -749,23 +791,6 @@ public static class ChatLabParser
             {
                 return (normalized, resolved, filename.Length > 0 ? filename : null);
             }
-        }
-
-        foreach (var candidate in candidatePaths)
-        {
-            var normalized = candidate.Replace('\\', '/').Trim();
-            if (normalized.Length == 0)
-            {
-                continue;
-            }
-
-            var filename = Path.GetFileName(normalized);
-            var resolved = ImportText.SafeResolveMedia(
-                exportRoot,
-                normalized,
-                sessionTitle,
-                mediaResolutionPolicy);
-            return (normalized, resolved, filename.Length > 0 ? filename : null);
         }
 
         return (null, null, null);
