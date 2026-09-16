@@ -1,4 +1,3 @@
-using ChatArchive.Core.Data;
 using Microsoft.Data.Sqlite;
 
 namespace ChatArchive.Core.Migration;
@@ -12,13 +11,8 @@ public sealed record MigrationReport(
     long Conversations,
     long Messages,
     long Attachments,
-    long MediaObjects,
-    bool Verified);
+    long MediaObjects);
 
-/// <summary>
-/// 一次性数据迁移：把旧档案库与媒体库复制到新位置，改写 managed_path
-/// 前缀，校验行数一致并生成结构说明 README.md。源目录全程只读。
-/// </summary>
 public sealed class MigrationRunner
 {
     private readonly string _sourceDir;
@@ -45,26 +39,18 @@ public sealed class MigrationRunner
         if (File.Exists(targetDb))
         {
             var backup = targetDb + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            using (var targetConn = new SqliteConnection(
-                       new SqliteConnectionStringBuilder { DataSource = targetDb, Mode = SqliteOpenMode.ReadOnly }.ToString()))
-            using (var backupConn = new SqliteConnection(
-                       new SqliteConnectionStringBuilder { DataSource = backup, Mode = SqliteOpenMode.ReadWriteCreate }.ToString()))
+            using (var targetConn = Open(targetDb, SqliteOpenMode.ReadOnly))
+            using (var backupConn = Open(backup, SqliteOpenMode.ReadWriteCreate))
             {
-                targetConn.Open();
-                backupConn.Open();
                 targetConn.BackupDatabase(backupConn);
             }
             Say($"已备份现有目标库 → {backup}");
         }
 
         Say("复制数据库（SQLite Backup API，自动包含 WAL 内容，源库只读）…");
-        using (var source = new SqliteConnection(
-                   new SqliteConnectionStringBuilder { DataSource = sourceDb, Mode = SqliteOpenMode.ReadOnly }.ToString()))
-        using (var target = new SqliteConnection(
-                   new SqliteConnectionStringBuilder { DataSource = targetDb, Mode = SqliteOpenMode.ReadWriteCreate }.ToString()))
+        using (var source = Open(sourceDb, SqliteOpenMode.ReadOnly))
+        using (var target = Open(targetDb, SqliteOpenMode.ReadWriteCreate))
         {
-            source.Open();
-            target.Open();
             source.BackupDatabase(target);
         }
 
@@ -82,9 +68,17 @@ public sealed class MigrationRunner
 
         WriteReadme();
 
-        return new MigrationReport(sourceDb, targetDb, copied, skipped, rewritten,
-            counts.Conversations, counts.Messages, counts.Attachments, counts.MediaObjects,
-            true);
+        return new MigrationReport(
+            sourceDb, targetDb, copied, skipped, rewritten,
+            counts.Conversations, counts.Messages, counts.Attachments, counts.MediaObjects);
+    }
+
+    private static SqliteConnection Open(string path, SqliteOpenMode mode)
+    {
+        var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = path, Mode = mode }.ToString());
+        connection.Open();
+        return connection;
     }
 
     private (long Copied, long Skipped) CopyMedia(string sourceMedia, string targetMedia)
@@ -114,12 +108,9 @@ public sealed class MigrationRunner
         return (copied, skipped);
     }
 
-    /// <summary>把 managed_path 统一重写为目标媒体库的内容寻址路径；first_source_path 保持原值。</summary>
     private static long RewriteManagedPaths(string targetDb, string targetMediaDir)
     {
-        using var connection = new SqliteConnection(
-            new SqliteConnectionStringBuilder { DataSource = targetDb, Mode = SqliteOpenMode.ReadWrite }.ToString());
-        connection.Open();
+        using var connection = Open(targetDb, SqliteOpenMode.ReadWrite);
 
         var updates = new List<(long Id, string NewPath)>();
         using (var select = connection.CreateCommand())
@@ -191,36 +182,31 @@ public sealed class MigrationRunner
         }
     }
 
-    private static (long Conversations, long Messages, long Attachments, long MediaObjects) VerifyCounts(string sourceDb, string targetDb)
+    private static (long Conversations, long Messages, long Attachments, long MediaObjects) VerifyCounts(
+        string sourceDb,
+        string targetDb)
     {
-        static Dictionary<string, long> CountAll(string db)
+        var source = CountAll(sourceDb);
+        var target = CountAll(targetDb);
+        if (source != target)
         {
-            var result = new Dictionary<string, long>();
-            using var connection = new SqliteConnection(
-                new SqliteConnectionStringBuilder { DataSource = db, Mode = SqliteOpenMode.ReadOnly }.ToString());
-            connection.Open();
-            foreach (var table in new[] { "conversations", "messages", "attachments", "media_objects" })
-            {
-                using var command = connection.CreateCommand();
-                command.CommandText = $"SELECT COUNT(*) FROM {table}";
-                result[table] = (long)command.ExecuteScalar()!;
-            }
-
-            return result;
+            throw new InvalidOperationException($"校验失败：行数不一致 源={source} 目标={target}");
         }
 
-        var sourceCounts = CountAll(sourceDb);
-        var targetCounts = CountAll(targetDb);
-        foreach (var key in sourceCounts.Keys)
+        return source;
+    }
+
+    private static (long Conversations, long Messages, long Attachments, long MediaObjects) CountAll(string db)
+    {
+        using var connection = Open(db, SqliteOpenMode.ReadOnly);
+        long Count(string table)
         {
-            if (sourceCounts[key] != targetCounts[key])
-            {
-                throw new InvalidOperationException($"校验失败：{key} 行数不一致 源={sourceCounts[key]} 目标={targetCounts[key]}");
-            }
+            using var command = connection.CreateCommand();
+            command.CommandText = $"SELECT COUNT(*) FROM {table}";
+            return (long)command.ExecuteScalar()!;
         }
 
-        return (sourceCounts["conversations"], sourceCounts["messages"],
-            sourceCounts["attachments"], sourceCounts["media_objects"]);
+        return (Count("conversations"), Count("messages"), Count("attachments"), Count("media_objects"));
     }
 
     private void WriteReadme()

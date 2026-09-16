@@ -27,7 +27,7 @@ public static class Program
             Console.WriteLine($"  会话 {report.Conversations} | 消息 {report.Messages} | 附件 {report.Attachments} | 媒体 {report.MediaObjects}");
             Console.WriteLine($"  媒体文件 新增 {report.MediaFilesCopied}/跳过 {report.MediaFilesSkipped}，路径改写 {report.ManagedPathsRewritten}");
             Console.WriteLine($"  数据库 {report.TargetDb}");
-            Console.WriteLine($"  校验 {(report.Verified ? "通过" : "失败")}");
+            Console.WriteLine("  校验通过");
             return 0;
         }
         catch (Exception ex)

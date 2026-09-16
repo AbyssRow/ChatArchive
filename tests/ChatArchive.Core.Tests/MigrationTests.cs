@@ -64,7 +64,6 @@ public class MigrationTests : IDisposable
         Assert.Equal(1L, report.MediaObjects);
         Assert.Equal(1L, report.MediaFilesCopied);
         Assert.Equal(1L, report.ManagedPathsRewritten);
-        Assert.True(report.Verified);
 
         var expectedMedia = Path.Combine(_targetDir, "media", Sha[..2], $"{Sha}.jpg");
         Assert.True(File.Exists(expectedMedia));
@@ -176,7 +175,6 @@ public class MigrationTests : IDisposable
         Assert.Equal(0L, report.MediaFilesCopied);
         Assert.Equal(0L, report.MediaFilesSkipped);
         Assert.Equal(1L, report.Conversations);
-        Assert.True(report.Verified);
     }
 
     [Fact]
@@ -188,7 +186,7 @@ public class MigrationTests : IDisposable
 
         // Target db now exists. Run again to trigger backup.
         var second = runner.Run();
-        Assert.True(second.Verified);
+        Assert.Equal(1L, second.Conversations);
 
         var backups = Directory.GetFiles(_targetDir, "chat_archive.db.bak-*");
         Assert.Single(backups);
