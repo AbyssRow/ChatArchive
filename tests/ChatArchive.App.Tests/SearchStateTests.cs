@@ -214,8 +214,8 @@ public sealed class SearchStateTests
     public void SearchHitProxy_MapsPlatformLabelCorrectly(string? platform, string expectedLabel)
     {
         var hit = new SearchHit(
-            1, 10, "Test Title", platform ?? string.Empty, "group", 100L,
-            "Alice", "Hello snippet", "text", "incoming", 1700000000000L);
+            1, 10, "Test Title", platform ?? string.Empty,
+            "Alice", "Hello snippet", 1700000000000L);
         var proxy = new SearchHitProxy(hit);
         Assert.Equal(expectedLabel, proxy.PlatformLabel);
     }
@@ -226,8 +226,8 @@ public sealed class SearchStateTests
     public void SearchHitProxy_ClampsOutOfRangeTimestamp(long timestampMs)
     {
         var hit = new SearchHit(
-            1, 10, "Test Title", "qq", "group", 100L,
-            "Alice", "Hello snippet", "text", "incoming", timestampMs);
+            1, 10, "Test Title", "qq",
+            "Alice", "Hello snippet", timestampMs);
         var proxy = new SearchHitProxy(hit);
         Assert.NotNull(proxy.TimeText);
         Assert.NotEmpty(proxy.TimeText);
@@ -313,8 +313,7 @@ public sealed class SearchStateTests
     private static SearchOptionsSnapshot OptionsSnapshot(long id, string title, string messageType)
     {
         var conversation = new ConversationInfo(
-            id, "qq", "account", $"native-{id}", "private", title,
-            null, null, 1, null, 0);
+            id, "qq", "private", title, null, null);
         return new SearchOptionsSnapshot(
             [conversation],
             new FilterOptions([new FilterOptionItem(messageType, 1)], []));

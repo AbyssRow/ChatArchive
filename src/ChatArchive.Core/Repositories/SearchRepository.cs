@@ -43,9 +43,9 @@ public sealed class SearchRepository
             + "JOIN conversations c ON c.id = m.conversation_id";
         var matchClause = useFts ? "messages_fts MATCH @match" : "m.search_text LIKE @pattern ESCAPE '/'";
         command.CommandText = $$"""
-            SELECT m.id, m.conversation_id, c.title, c.platform, c.kind,
-                   m.sender_id, m.sender_name_snapshot, m.timestamp_ms,
-                   m.content, m.search_text, m.message_type, m.direction
+            SELECT m.id, m.conversation_id, c.title, c.platform,
+                   m.sender_name_snapshot, m.timestamp_ms,
+                   m.content, m.search_text
             FROM {{(useFts ? ftsFrom : plainFrom)}}
             WHERE {{matchClause}}
             """ + BuildFilterSql(filter);
@@ -79,21 +79,15 @@ public sealed class SearchRepository
         {
             while (reader.Read())
             {
-                var content = reader.GetString(8);
-                var searchText = reader.GetString(9);
-                snippetSources.Add((content, searchText));
+                snippetSources.Add((reader.GetString(6), reader.GetString(7)));
                 hits.Add(new SearchHit(
                     reader.GetInt64(0),
                     reader.GetInt64(1),
                     reader.GetString(2),
                     reader.GetString(3),
                     reader.GetString(4),
-                    reader.IsDBNull(5) ? null : reader.GetInt64(5),
-                    reader.GetString(6),
                     string.Empty,
-                    reader.GetString(10),
-                    reader.GetString(11),
-                    reader.GetInt64(7)));
+                    reader.GetInt64(5)));
             }
         }
 

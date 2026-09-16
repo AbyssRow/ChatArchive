@@ -1,4 +1,3 @@
-using System.Globalization;
 using ChatArchive.Core.Data;
 using ChatArchive.Core.Models;
 using Microsoft.Data.Sqlite;
@@ -268,7 +267,7 @@ public sealed class ContactRepository
         }
 
         var boundSenders = MapSenders(connection, senderRawList);
-        var conversations = LoadConversationsForContact(connection, contactId, displayName);
+        var conversations = LoadConversationsForContact(connection, contactId);
 
         return new ContactDetail(
             contactId,
@@ -277,8 +276,8 @@ public sealed class ContactRepository
             note,
             boundSenders,
             conversations,
-            boundSenders.Sum(s => s.MessageCount)
-        ) { IdentityToken = identityToken };
+            boundSenders.Sum(s => s.MessageCount),
+            identityToken);
     }
 
     public ContactInfo? FindContactBySenderId(long senderId)
@@ -290,7 +289,7 @@ public sealed class ContactRepository
                    (SELECT COUNT(*) FROM messages m
                     JOIN contact_senders cs2 ON cs2.sender_id = m.sender_id
                     WHERE cs2.contact_id = c.id) AS total_messages,
-                   c.created_at, c.updated_at, c.identity_token
+                   c.identity_token
             FROM contacts c
             JOIN contact_senders cs ON cs.contact_id = c.id
             WHERE cs.sender_id = @sid
@@ -309,9 +308,7 @@ public sealed class ContactRepository
             reader.IsDBNull(2) ? null : reader.GetString(2),
             reader.IsDBNull(3) ? null : reader.GetString(3),
             reader.GetInt64(4),
-            ParseTimestampMs(reader.GetValue(5)),
-            ParseTimestampMs(reader.GetValue(6))
-        ) { IdentityToken = reader.GetString(7) };
+            reader.GetString(5));
     }
 
     public IReadOnlyList<ContactInfo> ListContacts(string? keyword = null)
@@ -350,7 +347,7 @@ public sealed class ContactRepository
                    (SELECT COUNT(*) FROM messages m
                     JOIN contact_senders cs ON cs.sender_id = m.sender_id
                     WHERE cs.contact_id = c.id) AS total_messages,
-                   c.created_at, c.updated_at, c.identity_token
+                   c.identity_token
             FROM contacts c
             {whereClause}
             ORDER BY c.updated_at DESC, c.id DESC;
@@ -366,9 +363,7 @@ public sealed class ContactRepository
                 reader.IsDBNull(2) ? null : reader.GetString(2),
                 reader.IsDBNull(3) ? null : reader.GetString(3),
                 reader.GetInt64(4),
-                ParseTimestampMs(reader.GetValue(5)),
-                ParseTimestampMs(reader.GetValue(6))
-            ) { IdentityToken = reader.GetString(7) });
+                reader.GetString(5)));
         }
 
         return list;
@@ -572,11 +567,9 @@ public sealed class ContactRepository
                 raw.AccountLabel,
                 raw.IsPrimary,
                 raw.MessageCount,
-                raw.BoundContactName)
-            {
-                BoundContactId = raw.BoundContactId,
-                BoundContactIdentityToken = raw.BoundContactIdentityToken,
-            });
+                raw.BoundContactName,
+                raw.BoundContactId,
+                raw.BoundContactIdentityToken));
         }
 
         return result;
@@ -827,92 +820,30 @@ public sealed class ContactRepository
 
     private static List<SenderConversationInfo> LoadConversationsForContact(
         SqliteConnection connection,
-        long contactId,
-        string contactDisplayName)
+        long contactId)
     {
         var result = new List<SenderConversationInfo>();
-        var convSenderMap = new Dictionary<long, List<long>>();
-
-        using (var cmd = connection.CreateCommand())
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT c.id, c.title, COUNT(m.id)
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            JOIN contact_senders cs ON cs.sender_id = m.sender_id
+            WHERE cs.contact_id = @id
+            GROUP BY c.id
+            ORDER BY MAX(m.timestamp_ms) DESC, c.id DESC;
+            """;
+        cmd.Parameters.AddWithValue("@id", contactId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
         {
-            cmd.CommandText = """
-                SELECT c.id, c.title, MIN(m.timestamp_ms), MAX(m.timestamp_ms), COUNT(m.id)
-                FROM messages m
-                JOIN conversations c ON c.id = m.conversation_id
-                JOIN contact_senders cs ON cs.sender_id = m.sender_id
-                WHERE cs.contact_id = @id
-                GROUP BY c.id
-                ORDER BY MAX(m.timestamp_ms) DESC, c.id DESC;
-                """;
-            cmd.Parameters.AddWithValue("@id", contactId);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                result.Add(new SenderConversationInfo(
-                    reader.GetInt64(0),
-                    reader.GetString(1),
-                    contactDisplayName,
-                    reader.GetInt64(4),
-                    reader.IsDBNull(2) ? null : reader.GetInt64(2),
-                    reader.IsDBNull(3) ? null : reader.GetInt64(3)
-                ));
-            }
+            result.Add(new SenderConversationInfo(
+                reader.GetInt64(0),
+                reader.GetString(1),
+                reader.GetInt64(2)));
         }
 
-        using (var cmd = connection.CreateCommand())
-        {
-            cmd.CommandText = """
-                SELECT DISTINCT m.conversation_id, m.sender_id
-                FROM messages m
-                JOIN contact_senders cs ON cs.sender_id = m.sender_id
-                WHERE cs.contact_id = @id;
-                """;
-            cmd.Parameters.AddWithValue("@id", contactId);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                var convId = reader.GetInt64(0);
-                var senderId = reader.GetInt64(1);
-                if (!convSenderMap.TryGetValue(convId, out var senders))
-                {
-                    senders = new List<long>();
-                    convSenderMap[convId] = senders;
-                }
-                senders.Add(senderId);
-            }
-        }
-
-        var keysToResolve = new List<(long SenderId, long? ConversationId)>();
-        foreach (var (convId, senders) in convSenderMap)
-        {
-            foreach (var senderId in senders)
-            {
-                keysToResolve.Add((senderId, convId));
-            }
-        }
-
-        var resolved = SenderDisplayName.Resolve(connection, keysToResolve);
-
-        var finalResult = new List<SenderConversationInfo>(result.Count);
-        foreach (var conv in result)
-        {
-            string nameInConv = contactDisplayName;
-            if (convSenderMap.TryGetValue(conv.ConversationId, out var sList))
-            {
-                foreach (var sId in sList)
-                {
-                    if (resolved.TryGetValue((sId, conv.ConversationId), out var resolvedName))
-                    {
-                        nameInConv = resolvedName;
-                        break;
-                    }
-                }
-            }
-
-            finalResult.Add(conv with { NameInConversation = nameInConv });
-        }
-
-        return finalResult;
+        return result;
     }
 
     private static Dictionary<long, List<AliasInfo>> LoadAliasesBatch(
@@ -931,7 +862,7 @@ public sealed class ContactRepository
             var placeholders = string.Join(",", chunk.Select((_, i) => $"@s{i}"));
             using var command = connection.CreateCommand();
             command.CommandText = $"""
-                SELECT sender_id, alias, MIN(first_seen_at), MAX(last_seen_at), COUNT(DISTINCT conversation_id)
+                SELECT sender_id, alias, MAX(last_seen_at)
                 FROM sender_aliases
                 WHERE sender_id IN ({placeholders})
                 GROUP BY sender_id, alias
@@ -947,8 +878,7 @@ public sealed class ContactRepository
             {
                 var senderId = reader.GetInt64(0);
                 var alias = reader.GetString(1);
-                var firstSeen = reader.IsDBNull(2) ? null : (long?)reader.GetInt64(2);
-                var lastSeen = reader.IsDBNull(3) ? null : (long?)reader.GetInt64(3);
+                var lastSeen = reader.IsDBNull(2) ? null : (long?)reader.GetInt64(2);
 
                 if (!result.TryGetValue(senderId, out var list))
                 {
@@ -956,24 +886,10 @@ public sealed class ContactRepository
                     result[senderId] = list;
                 }
 
-                list.Add(new AliasInfo(alias, null, firstSeen, lastSeen));
+                list.Add(new AliasInfo(alias, lastSeen));
             }
         }
 
         return result;
-    }
-
-    private static long ParseTimestampMs(object? value)
-    {
-        if (value is null or DBNull) return 0;
-        if (value is long l) return l;
-        var str = value.ToString();
-        if (string.IsNullOrWhiteSpace(str)) return 0;
-        if (long.TryParse(str, out var ms)) return ms;
-        if (DateTimeOffset.TryParse(str, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var dto))
-        {
-            return dto.ToUnixTimeMilliseconds();
-        }
-        return 0;
     }
 }

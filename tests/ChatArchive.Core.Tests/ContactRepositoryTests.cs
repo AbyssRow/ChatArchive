@@ -43,8 +43,6 @@ public sealed class ContactRepositoryTests : IDisposable
         Assert.Single(list);
         Assert.Equal("Alice", list[0].DisplayName);
         Assert.Equal(detail.IdentityToken, list[0].IdentityToken);
-        Assert.True(list[0].CreatedAtMs > 0);
-        Assert.True(list[0].UpdatedAtMs > 0);
     }
 
     [Fact]

@@ -38,7 +38,7 @@ public partial class StatsViewModel : ObservableObject
                     $"消息总数 {Format(s.TotalMessages)}（QQ {Format(s.QQMessages)} / 微信 {Format(s.WeChatMessages)}）\n" +
                     $"会话 {Format(s.TotalConversations)}：私聊 {Format(s.PrivateConversations)}，群聊 {Format(s.GroupConversations)}\n" +
                     $"联系人 {Format(s.SenderCount)}\n" +
-                    $"附件 {Format(s.AttachmentCount)}，可用 {Format(s.AvailableAttachments)}，缺失 {Format(s.MissingAttachments)}\n" +
+                    $"附件 {Format(s.AttachmentCount)}，可用 {Format(s.AttachmentCount - s.MissingAttachments)}，缺失 {Format(s.MissingAttachments)}\n" +
                     $"媒体文件 {Format(s.MediaFileCount)}，共 {FormatBytes(s.MediaTotalBytes)}";
             }
             else

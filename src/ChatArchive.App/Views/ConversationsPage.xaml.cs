@@ -79,7 +79,7 @@ public sealed partial class ConversationsPage : Page, IShellPage
                         return;
                     }
 
-                    if (!task.IsCompletedSuccessfully || task.Result?.Conversation is not { } info)
+                    if (!task.IsCompletedSuccessfully || task.Result is not { } info)
                     {
                         var message = args.FocusMessageId.HasValue
                             ? "打开搜索结果失败：未找到对应会话"

@@ -77,7 +77,7 @@ public sealed class UiInputTests
                 ErrorMessage = "Previous error",
                 ModeLabel = "全文索引"
             };
-            vm.Results.Add(new SearchHitProxy(new SearchHit(1, 1, "t", "qq", "private", null, "s", "snip", "text", "incoming", 1700000000000)));
+            vm.Results.Add(new SearchHitProxy(new SearchHit(1, 1, "t", "qq", "s", "snip", 1700000000000)));
 
             // Clearing query resets IsLoading and state
             vm.Query = string.Empty;

@@ -55,15 +55,13 @@ public class ConversationRepositoryTests : IDisposable
     }
 
     [Fact]
-    public void GetConversation_returns_aliases()
+    public void GetConversation_returns_info()
     {
         var id = TestArchive.AddConversation(_archive.Open(), "c1", "老张");
-        _archive.AddAlias(id, "张三");
 
-        var detail = _repository.GetConversation(id);
-        Assert.NotNull(detail);
-        Assert.Single(detail!.Aliases);
-        Assert.Equal("张三", detail.Aliases[0]);
+        var info = _repository.GetConversation(id);
+        Assert.NotNull(info);
+        Assert.Equal("老张", info!.Title);
         Assert.Null(_repository.GetConversation(9999));
     }
 
@@ -134,9 +132,6 @@ public class ConversationRepositoryTests : IDisposable
         Assert.True(attachments[0].IsAvailable);
         Assert.Equal(sha, attachments[0].MediaSha256);
         Assert.False(attachments[1].IsAvailable);
-
-        var list = new ConversationRepository(_archive.Db).ListConversations();
-        Assert.Equal(1, list[0].MissingMediaCount);
     }
 
     [Fact]

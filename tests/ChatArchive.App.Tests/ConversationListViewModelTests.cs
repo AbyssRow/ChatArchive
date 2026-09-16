@@ -13,15 +13,10 @@ public class ConversationListViewModelTests
         var conversation = new ConversationInfo(
             Id: 1,
             Platform: "qq",
-            AccountId: "acc",
-            NativeId: "123",
             Kind: "private",
             Title: "Test Chat",
-            FirstMessageAt: 1700000000000,
             LastMessageAt: 1700000000000,
-            MessageCount: 10,
-            LastMessagePreview: "Hello",
-            MissingMediaCount: 0);
+            LastMessagePreview: "Hello");
 
         var activations = 0;
         vm.ConversationActivated += info =>
@@ -116,14 +111,9 @@ public class ConversationListViewModelTests
         return new ConversationInfo(
             Id: id,
             Platform: "qq",
-            AccountId: "acc",
-            NativeId: id.ToString(),
             Kind: "private",
             Title: "Test Chat",
-            FirstMessageAt: 1700000000000,
             LastMessageAt: 1700000000000,
-            MessageCount: 10,
-            LastMessagePreview: preview,
-            MissingMediaCount: 0);
+            LastMessagePreview: preview);
     }
 }

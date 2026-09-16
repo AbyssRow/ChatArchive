@@ -21,10 +21,9 @@ public sealed class SenderRepository
         string platform;
         string nativeId;
         string currentName;
-        bool isSelf;
         using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT platform, native_id, current_name, is_self FROM senders WHERE id = @id";
+            command.CommandText = "SELECT platform, native_id, current_name FROM senders WHERE id = @id";
             command.Parameters.AddWithValue("@id", senderId);
             using var reader = command.ExecuteReader();
             if (!reader.Read())
@@ -35,11 +34,10 @@ public sealed class SenderRepository
             platform = reader.GetString(0);
             nativeId = reader.GetString(1);
             currentName = reader.GetString(2);
-            isSelf = reader.GetInt64(3) != 0;
         }
 
         var aliases = LoadAliases(connection, senderId);
-        var conversations = LoadConversations(connection, senderId, out var nameInConversation);
+        var conversations = LoadConversations(connection, senderId);
 
         var displayNames = SenderDisplayName.Resolve(
             connection,
@@ -56,13 +54,8 @@ public sealed class SenderRepository
             nativeId,
             qqNumber,
             profileDisplayName,
-            isSelf,
             aliases,
-            conversations.Select(c => c with
-            {
-                NameInConversation = nameInConversation.TryGetValue(c.ConversationId, out var n) ? n : currentName,
-            })
-                .ToList());
+            conversations);
     }
 
     private static IReadOnlyList<AliasInfo> LoadAliases(SqliteConnection connection, long senderId)
@@ -70,7 +63,7 @@ public sealed class SenderRepository
         var result = new List<AliasInfo>();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT alias, MIN(first_seen_at), MAX(last_seen_at), COUNT(DISTINCT conversation_id)
+            SELECT alias, MAX(last_seen_at)
             FROM sender_aliases WHERE sender_id = @id
             GROUP BY alias ORDER BY MAX(last_seen_at) DESC, alias
             """;
@@ -80,9 +73,7 @@ public sealed class SenderRepository
         {
             result.Add(new AliasInfo(
                 reader.GetString(0),
-                null,
-                reader.IsDBNull(1) ? null : reader.GetInt64(1),
-                reader.IsDBNull(2) ? null : reader.GetInt64(2)));
+                reader.IsDBNull(1) ? null : reader.GetInt64(1)));
         }
 
         return result;
@@ -90,14 +81,12 @@ public sealed class SenderRepository
 
     private static List<SenderConversationInfo> LoadConversations(
         SqliteConnection connection,
-        long senderId,
-        out Dictionary<long, string> nameInConversation)
+        long senderId)
     {
         var result = new List<SenderConversationInfo>();
-        nameInConversation = new Dictionary<long, string>();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT c.id, c.title, MIN(m.timestamp_ms), MAX(m.timestamp_ms), COUNT(*)
+            SELECT c.id, c.title, COUNT(*)
             FROM messages m JOIN conversations c ON c.id = m.conversation_id
             WHERE m.sender_id = @id
             GROUP BY c.id ORDER BY MAX(m.timestamp_ms) DESC, c.id DESC
@@ -109,22 +98,7 @@ public sealed class SenderRepository
             result.Add(new SenderConversationInfo(
                 reader.GetInt64(0),
                 reader.GetString(1),
-                string.Empty,
-                reader.GetInt64(4),
-                reader.IsDBNull(2) ? null : reader.GetInt64(2),
-                reader.IsDBNull(3) ? null : reader.GetInt64(3)));
-        }
-
-        var resolved = SenderDisplayName.Resolve(
-            connection,
-            result.Select(row => (SenderId: senderId, ConversationId: (long?)row.ConversationId)));
-
-        foreach (var row in result)
-        {
-            if (resolved.TryGetValue((senderId, row.ConversationId), out var name))
-            {
-                nameInConversation[row.ConversationId] = name;
-            }
+                reader.GetInt64(2)));
         }
 
         return result;

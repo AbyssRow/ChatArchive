@@ -44,14 +44,10 @@ public sealed class ConversationRepository
         using var connection = _db.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT c.id, c.platform, c.account_id, c.native_id, c.kind, c.title,
-                   c.first_message_at, c.last_message_at, c.message_count,
+            SELECT c.id, c.platform, c.kind, c.title, c.last_message_at,
                    (SELECT content FROM messages lm
                     WHERE lm.conversation_id = c.id
-                    ORDER BY lm.timestamp_ms DESC, lm.id DESC LIMIT 1) AS last_message,
-                   (SELECT COUNT(*) FROM attachments a
-                    JOIN messages am ON am.id = a.message_id
-                    WHERE am.conversation_id = c.id AND a.is_available = 0) AS missing_media
+                    ORDER BY lm.timestamp_ms DESC, lm.id DESC LIMIT 1) AS last_message
             FROM conversations c
             """ + (where.Count > 0 ? " WHERE " + string.Join(" AND ", where) : "")
             + " ORDER BY c.last_message_at DESC, c.id DESC LIMIT @limit";
@@ -66,70 +62,35 @@ public sealed class ConversationRepository
                 reader.GetString(1),
                 reader.GetString(2),
                 reader.GetString(3),
-                reader.GetString(4),
-                reader.GetString(5),
-                reader.IsDBNull(6) ? null : reader.GetInt64(6),
-                reader.IsDBNull(7) ? null : reader.GetInt64(7),
-                reader.GetInt64(8),
-                reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.GetInt64(10)));
+                reader.IsDBNull(4) ? null : reader.GetInt64(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5)));
         }
 
         return result;
     }
 
-    public ConversationDetail? GetConversation(long conversationId)
+    public ConversationInfo? GetConversation(long conversationId)
     {
         using var connection = _db.OpenConnection();
-        ConversationInfo? info = null;
-        const string detailSql = """
-            SELECT c.id, c.platform, c.account_id, c.native_id, c.kind, c.title,
-                   c.first_message_at, c.last_message_at, c.message_count,
-                   (SELECT COUNT(*) FROM attachments a
-                          JOIN messages m ON m.id = a.message_id
-                          WHERE m.conversation_id = c.id AND a.is_available = 0)
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT c.id, c.platform, c.kind, c.title, c.last_message_at
             FROM conversations c WHERE c.id = @id
             """;
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = detailSql;
-            command.Parameters.AddWithValue("@id", conversationId);
-            using var reader = command.ExecuteReader();
-            if (reader.Read())
-            {
-                info = new ConversationInfo(
-                    reader.GetInt64(0),
-                    reader.GetString(1),
-                    reader.GetString(2),
-                    reader.GetString(3),
-                    reader.GetString(4),
-                    reader.GetString(5),
-                    reader.IsDBNull(6) ? null : reader.GetInt64(6),
-                    reader.IsDBNull(7) ? null : reader.GetInt64(7),
-                    reader.GetInt64(8),
-                    null,
-                    reader.GetInt64(9));
-            }
-        }
-
-        if (info is null)
+        command.Parameters.AddWithValue("@id", conversationId);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
         {
             return null;
         }
 
-        var aliases = new List<string>();
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "SELECT alias FROM conversation_aliases WHERE conversation_id = @id ORDER BY id";
-            command.Parameters.AddWithValue("@id", conversationId);
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                aliases.Add(reader.GetString(0));
-            }
-        }
-
-        return new ConversationDetail(info, aliases);
+        return new ConversationInfo(
+            reader.GetInt64(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetInt64(4),
+            null);
     }
 
     public PageResult<MessageItem> ListMessages(long conversationId, string? cursor = null, int limit = 80)

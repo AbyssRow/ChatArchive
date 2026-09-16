@@ -72,12 +72,9 @@ public class SenderAndStatsTests : IDisposable
         Assert.Equal(2, stats.TotalConversations);
         Assert.Equal(1, stats.GroupConversations);
         Assert.Equal(2, stats.AttachmentCount);
-        Assert.Equal(1, stats.AvailableAttachments);
         Assert.Equal(1, stats.MissingAttachments);
         Assert.Equal(1, stats.MediaFileCount);
         Assert.Equal(2048, stats.MediaTotalBytes);
-        Assert.Equal(1_700_000_000_000, stats.FirstMessageAt);
-        Assert.Equal(1_700_000_200_000, stats.LastMessageAt);
     }
 
     [Fact]

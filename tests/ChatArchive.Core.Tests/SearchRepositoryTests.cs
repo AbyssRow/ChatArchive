@@ -78,7 +78,6 @@ public class SearchRepositoryTests : IDisposable
 
         var hit = Assert.Single(page.Items);
         Assert.Equal(group, hit.ConversationId);
-        Assert.Equal("image", hit.MessageType);
         Assert.Equal(timestamp, hit.TimestampMs);
 
         Assert.Empty(_repository.Search("下雨", new SearchFilter(
