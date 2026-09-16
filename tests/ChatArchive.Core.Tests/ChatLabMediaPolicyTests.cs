@@ -73,7 +73,7 @@ public sealed class ChatLabMediaPolicyTests : IDisposable
         }
 
         Assert.True(adapter.Matches(path));
-        using var export = adapter.Open(path);
+        var export = adapter.Open(path);
         var message = Assert.Single(export.EnumerateMessages());
         if (resolves)
         {

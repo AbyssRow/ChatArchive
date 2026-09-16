@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using static ChatArchive.Core.Importing.ImportText;
 
 namespace ChatArchive.Core.Importing;
 
@@ -11,14 +12,6 @@ public static class QqParser
         "text", "content", "summary", "title", "filename", "senderName",
     };
 
-    public static ParsedConversation ReadConversation(JsonDocument document, string filePath)
-    {
-        var chat = GetTopObject(document, "chatInfo")
-            ?? throw new ImportFormatException(filePath, "缺少 chatInfo");
-
-        return ReadConversation(chat, filePath);
-    }
-
     internal static ParsedConversation ReadConversation(JsonObject chat, string filePath)
     {
         var accountId = Pick(chat, "selfUin", "selfUid", fallback: "qq-default");
@@ -28,30 +21,6 @@ public static class QqParser
             ? "group"
             : "private";
         return new ParsedConversation("qq", accountId, nativeId, kind, title);
-    }
-
-    public static IEnumerable<ParsedMessage> IterateMessages(JsonDocument document, ParsedConversation conversation, string documentPath)
-    {
-        var chat = GetTopObject(document, "chatInfo")
-            ?? throw new ImportFormatException(documentPath, "缺少 chatInfo 节点");
-        var selfUid = ImportText.Clean(GetNode(chat, "selfUid"));
-        var selfUin = ImportText.Clean(GetNode(chat, "selfUin"));
-
-        if (document.RootElement.TryGetProperty("messages", out var messagesElement)
-            && messagesElement.ValueKind == JsonValueKind.Array)
-        {
-            var index = 0;
-            foreach (var item in messagesElement.EnumerateArray())
-            {
-                yield return ParseMessage(
-                    JsonObjectFrom(item),
-                    index,
-                    selfUid,
-                    selfUin,
-                    Path.GetDirectoryName(Path.GetFullPath(documentPath))!);
-                index++;
-            }
-        }
     }
 
     internal static IEnumerable<ParsedMessage> IterateMessages(
@@ -447,12 +416,6 @@ public static class QqParser
         return null;
     }
 
-    private static JsonObject JsonObjectFrom(JsonElement element)
-    {
-        return JsonSerializer.Deserialize<JsonObject>(element.GetRawText())
-            ?? throw new InvalidOperationException("消息不是 JSON 对象");
-    }
-
     internal static bool IsTruthy(JsonNode? node)
     {
         return node switch
@@ -529,29 +492,6 @@ public static class QqParser
         return Pick(obj, new[] { key1, key2, key3 }, fallback);
     }
 
-    private static string FirstNonEmpty(params string[] values)
-    {
-        foreach (var value in values)
-        {
-            if (value.Length > 0)
-            {
-                return value;
-            }
-        }
-
-        return values[^1];
-    }
-
-    private static string? OrNull(string value)
-    {
-        return value.Length > 0 ? value : null;
-    }
-
-    private static JsonNode? NullStr(string? value)
-    {
-        return value is null ? null : JsonValue.Create(value);
-    }
-
     private static JsonNode Str(string value)
     {
         return JsonValue.Create(value)!;
@@ -565,22 +505,6 @@ public static class QqParser
     private static JsonNode? NullDouble(double? value)
     {
         return value.HasValue ? JsonValue.Create(value.Value) : null;
-    }
-
-    private static JsonObject? GetTopObject(JsonDocument document, string key)
-    {
-        if (document.RootElement.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        if (!document.RootElement.TryGetProperty(key, out var element)
-            || element.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        return JsonSerializer.Deserialize<JsonObject>(element.GetRawText());
     }
 }
 

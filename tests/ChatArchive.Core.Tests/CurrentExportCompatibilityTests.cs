@@ -57,7 +57,7 @@ public sealed class CurrentExportCompatibilityTests
         Assert.DoesNotContain("Html", format.GetType().Name, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Generic", format.GetType().Name, StringComparison.OrdinalIgnoreCase);
 
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal(expectedPlatform, export.Conversation.Platform);
         var message = Assert.Single(export.EnumerateMessages());
         Assert.Contains(expectedContent, message.Content, StringComparison.Ordinal);
@@ -179,7 +179,7 @@ public sealed class CurrentExportCompatibilityTests
         Assert.IsType(expectedAdapterType, format);
         Assert.Equal(expectedPlatform, format.Platform);
 
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal(expectedPlatform, export.Conversation.Platform);
         Assert.Single(export.EnumerateMessages());
     }

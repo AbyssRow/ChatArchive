@@ -43,7 +43,7 @@ public sealed class QqTextFormatTests : IDisposable
 
         var format = new QqTextExportFormat();
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal("qq", export.Conversation.Platform);
         Assert.Equal("示例群", export.Conversation.Title);
         Assert.Equal("group", export.Conversation.Kind);
@@ -113,7 +113,7 @@ public sealed class QqTextFormatTests : IDisposable
             总计导出 2 条消息
             """);
 
-        using var export = new QqTextExportFormat().Open(path);
+        var export = new QqTextExportFormat().Open(path);
         var messages = export.EnumerateMessages().ToList();
 
         Assert.Equal(2, messages.Count);
@@ -162,7 +162,7 @@ public sealed class QqTextFormatTests : IDisposable
             内容: body
             """);
 
-        using var export = new QqTextExportFormat().Open(path);
+        var export = new QqTextExportFormat().Open(path);
         Assert.Equal(expected, Assert.Single(export.EnumerateMessages()).MessageType);
     }
 
@@ -178,7 +178,7 @@ public sealed class QqTextFormatTests : IDisposable
             Alice:
             时间: 2023-11-15 06:15:23
             """);
-        using var export = new QqTextExportFormat().Open(path);
+        var export = new QqTextExportFormat().Open(path);
 
         var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
 
@@ -206,7 +206,7 @@ public sealed class QqTextFormatTests : IDisposable
             ===============================================
             """);
 
-        using var export = new QqTextExportFormat().Open(path);
+        var export = new QqTextExportFormat().Open(path);
         var message = Assert.Single(export.EnumerateMessages());
 
         Assert.Equal("第一行\n时间: 这不是下一个消息\n第二行", message.Content);
@@ -233,7 +233,7 @@ public sealed class QqTextFormatTests : IDisposable
             ===============================================
             """);
 
-        using var export = new QqTextExportFormat().Open(path);
+        var export = new QqTextExportFormat().Open(path);
         var message = Assert.Single(export.EnumerateMessages());
 
         Assert.Equal("正文\n资源: 2 个文件\n  - image: one.jpg\n仍是正文", message.Content);
@@ -267,7 +267,7 @@ public sealed class QqTextFormatTests : IDisposable
             Alice:
             内容: text
             """);
-        using var export = new QqTextExportFormat().Open(path);
+        var export = new QqTextExportFormat().Open(path);
 
         var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
 
@@ -289,7 +289,7 @@ public sealed class QqTextFormatTests : IDisposable
             ===============================================
             总计导出 0 条消息
             """);
-        using var export = new QqTextExportFormat().Open(path);
+        var export = new QqTextExportFormat().Open(path);
 
         var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
 

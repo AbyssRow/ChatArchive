@@ -74,8 +74,6 @@ public static class WeFlowCsvParser
 {
     private static readonly string[] CurrentHeaders = ["id", "MsgSvrID", "type_name", "is_sender", "talker", "msg", "src", "CreateTime"];
 
-    public static bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
     public static bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -92,9 +90,6 @@ public static class WeFlowCsvParser
             return false;
         }
     }
-
-    public static ParsedConversation ReadConversation(string filePath) =>
-        ReadConversation(filePath, CancellationToken.None);
 
     public static ParsedConversation ReadConversation(
         string filePath,
@@ -166,8 +161,6 @@ public static class WeFlowMarkdownParser
     private static readonly Regex MessageHeaderRegex = new(@"^##\s+(?<time>\d{4}-\d{1,2}-\d{1,2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\s+(?<sender>.+?)\s*$", RegexOptions.Compiled);
     private static readonly Regex MarkdownLinkRegex = new(@"!?\[(?<label>[^\]]*)\]\((?<path>[^)]+)\)", RegexOptions.Compiled);
 
-    public static bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
     public static bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -209,9 +202,6 @@ public static class WeFlowMarkdownParser
             return false;
         }
     }
-
-    public static ParsedConversation ReadConversation(string filePath) =>
-        ReadConversation(filePath, CancellationToken.None);
 
     public static ParsedConversation ReadConversation(
         string filePath,
@@ -352,8 +342,6 @@ public static class WeFlowTextParser
 {
     private static readonly Regex MessageHeaderRegex = new(@"^(?<time>\d{4}-\d{1,2}-\d{1,2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\s+'(?<sender>[^'\r\n]+)'\s*$", RegexOptions.Compiled);
 
-    public static bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
     public static bool Matches(string filePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -392,9 +380,6 @@ public static class WeFlowTextParser
             return false;
         }
     }
-
-    public static ParsedConversation ReadConversation(string filePath) =>
-        ReadConversation(filePath, CancellationToken.None);
 
     public static ParsedConversation ReadConversation(
         string filePath,

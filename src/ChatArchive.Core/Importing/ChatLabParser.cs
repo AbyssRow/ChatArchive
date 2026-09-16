@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using static ChatArchive.Core.Importing.ImportText;
 
 namespace ChatArchive.Core.Importing;
 
@@ -872,95 +873,9 @@ public static class ChatLabParser
         return name.Length > 0 ? name : nativeId;
     }
 
-    internal static bool AsBool(JsonNode? value)
-    {
-        if (value is JsonValue scalar)
-        {
-            if (scalar.TryGetValue<string>(out var text))
-            {
-                var trimmed = text.Trim().ToLowerInvariant();
-                return trimmed is "1" or "true" or "yes";
-            }
-
-            if (scalar.TryGetValue<bool>(out var b))
-            {
-                return b;
-            }
-
-            if (scalar.TryGetValue<long>(out var l))
-            {
-                return l != 0;
-            }
-
-            if (scalar.TryGetValue<int>(out var i))
-            {
-                return i != 0;
-            }
-        }
-
-        return false;
-    }
-
-    private static void AddUnique(List<string> values, string candidate)
-    {
-        if (candidate.Length > 0 && !values.Contains(candidate))
-        {
-            values.Add(candidate);
-        }
-    }
-
-    private static string TryGetRaw(JsonObject obj, string key)
-    {
-        return ImportText.RawText(obj.TryGetPropertyValue(key, out var value) ? value : null);
-    }
-
-    private static JsonNode? Get(JsonObject obj, string key)
-    {
-        return obj.TryGetPropertyValue(key, out var value) ? value : null;
-    }
-
-    private static string LocalTypeString(JsonNode? node)
-    {
-        if (node is null)
-        {
-            return "None";
-        }
-
-        var raw = node.ToJsonString();
-        return raw is "true" or "false" ? (raw == "true" ? "True" : "False") : raw.Trim('"');
-    }
-
-    private static JsonNode? NullStr(string? value)
-    {
-        return value is null ? null : JsonValue.Create(value);
-    }
-
     private static int? AsNullableInt(JsonNode? node)
     {
         var parsed = ImportText.AsLong(node);
         return parsed.HasValue ? (int?)checked((int)Math.Clamp(parsed.Value, int.MinValue, int.MaxValue)) : null;
-    }
-
-    private static string OrEmpty(string value, string fallback)
-    {
-        return value.Length > 0 ? value : fallback;
-    }
-
-    private static string? OrNull(string value)
-    {
-        return value.Length > 0 ? value : null;
-    }
-
-    private static string FirstNonEmpty(params string[] values)
-    {
-        foreach (var value in values)
-        {
-            if (value.Length > 0)
-            {
-                return value;
-            }
-        }
-
-        return string.Empty;
     }
 }

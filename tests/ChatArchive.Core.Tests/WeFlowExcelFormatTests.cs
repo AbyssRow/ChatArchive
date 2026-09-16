@@ -22,7 +22,7 @@ public sealed class WeFlowExcelFormatTests : IDisposable
         var format = new WeFlowExcelExportFormat();
 
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal("wxid_session", export.Conversation.NativeId);
         Assert.Equal(layout == "group" ? "group" : "private", export.Conversation.Kind);
         var message = Assert.Single(export.EnumerateMessages());
@@ -48,7 +48,7 @@ public sealed class WeFlowExcelFormatTests : IDisposable
     public void WeFlowExcel_GroupMemberNamed我_RemainsIncoming()
     {
         var path = CreateWeFlowWorkbook("group", senderIdentity: "我");
-        using var export = new WeFlowExcelExportFormat().Open(path);
+        var export = new WeFlowExcelExportFormat().Open(path);
 
         var message = Assert.Single(export.EnumerateMessages());
 
@@ -64,7 +64,7 @@ public sealed class WeFlowExcelFormatTests : IDisposable
         var format = new WeFlowExcelExportFormat();
 
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal("wxid_session", export.Conversation.NativeId);
         Assert.Equal("会话标题", export.Conversation.Title);
         Assert.Equal("wxid_sender", Assert.Single(export.EnumerateMessages()).SenderNativeId);

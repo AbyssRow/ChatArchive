@@ -33,7 +33,7 @@ public sealed class QqExcelFormatTests : IDisposable
         var format = new QqExcelExportFormat();
 
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal("qq", export.Conversation.Platform);
         Assert.Equal(ImportText.StableFileNativeId(path), export.Conversation.NativeId);
         Assert.Equal(Path.GetFileNameWithoutExtension(path), export.Conversation.Title);
@@ -61,7 +61,7 @@ public sealed class QqExcelFormatTests : IDisposable
         var format = new QqExcelExportFormat();
 
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         var messages = export.EnumerateMessages().ToList();
 
         Assert.Equal(2, messages.Count);
@@ -90,7 +90,7 @@ public sealed class QqExcelFormatTests : IDisposable
             messages,
             [new("2023-11-15 06:15:23", "Alice", "10002", "image", "one.jpg", 42, "media/one.jpg")]);
 
-        using var export = new QqExcelExportFormat().Open(path);
+        var export = new QqExcelExportFormat().Open(path);
         var parsed = export.EnumerateMessages().ToList();
 
         Assert.Equal(2, parsed.Count);
@@ -109,7 +109,7 @@ public sealed class QqExcelFormatTests : IDisposable
             [new("2023-11-15 06:15:23", "Alice", "10002", "图片", "first", false, "", 1)],
             [new("2023-11-15 06:15:23", "Alice", "10002", "image", "remote.jpg", 99, url)]);
 
-        using var export = new QqExcelExportFormat().Open(path);
+        var export = new QqExcelExportFormat().Open(path);
         var attachment = Assert.Single(Assert.Single(export.EnumerateMessages()).Attachments);
 
         Assert.Null(attachment.DeclaredPath);
@@ -133,7 +133,7 @@ public sealed class QqExcelFormatTests : IDisposable
             [new("2023-11-15 06:15:23", "Alice", "10002", "文件", "first", false, "", 1)],
             [new("2023-11-15 06:15:23", "Alice", "10002", "file", "original.bin", 123, url)]);
 
-        using var export = new QqExcelExportFormat().Open(path);
+        var export = new QqExcelExportFormat().Open(path);
         var attachment = Assert.Single(Assert.Single(export.EnumerateMessages()).Attachments);
 
         Assert.Null(attachment.DeclaredPath);
@@ -156,7 +156,7 @@ public sealed class QqExcelFormatTests : IDisposable
             [new("2023-11-15 06:15:23", "Alice", "10002", "图片", "first", false, "", 1)],
             [new("2023-11-15 06:15:23", "Alice", "10002", "image", "one.jpg", 42, "../images/one.jpg")]);
 
-        using var export = new QqExcelExportFormat().Open(path);
+        var export = new QqExcelExportFormat().Open(path);
         var attachment = Assert.Single(Assert.Single(export.EnumerateMessages()).Attachments);
 
         Assert.Null(attachment.DeclaredPath);
@@ -189,7 +189,7 @@ public sealed class QqExcelFormatTests : IDisposable
             [new("2023-11-15 06:15:23", "Alice", "10002", "图片", "first", false, "", 1)],
             [new("2023-11-15 06:15:23", "Alice", "10002", "image", "one.jpg", 42, "media/one.jpg")]);
 
-        using var export = new QqExcelExportFormat().Open(path);
+        var export = new QqExcelExportFormat().Open(path);
         var attachment = Assert.Single(Assert.Single(export.EnumerateMessages()).Attachments);
 
         Assert.Equal("media/one.jpg", attachment.DeclaredPath);
@@ -205,7 +205,7 @@ public sealed class QqExcelFormatTests : IDisposable
             includeTitle: false,
             [new("2023-11-15 06:15:23", "Alice", "", "文本", "hello", false, "", 0)]);
 
-        using var export = new QqExcelExportFormat().Open(path);
+        var export = new QqExcelExportFormat().Open(path);
         var message = Assert.Single(export.EnumerateMessages());
 
         Assert.StartsWith("synthetic:", message.SenderNativeId, StringComparison.Ordinal);
@@ -228,7 +228,7 @@ public sealed class QqExcelFormatTests : IDisposable
             0)).ToArray();
         var path = WriteWorkbook("types.xlsx", includeTitle: false, messages);
 
-        using var export = new QqExcelExportFormat().Open(path);
+        var export = new QqExcelExportFormat().Open(path);
         var parsed = export.EnumerateMessages().ToList();
 
         Assert.Equal(expected, parsed.Select(message => message.MessageType));
@@ -285,7 +285,7 @@ public sealed class QqExcelFormatTests : IDisposable
         cancellation.Cancel();
         Assert.Throws<OperationCanceledException>(() => new QqExcelExportFormat().Open(path, cancellation.Token));
 
-        using (var export = new QqExcelExportFormat().Open(path))
+        var export = new QqExcelExportFormat().Open(path);
         using (var messages = export.EnumerateMessages().GetEnumerator())
         {
             Assert.True(messages.MoveNext());

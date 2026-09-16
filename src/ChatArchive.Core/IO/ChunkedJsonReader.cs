@@ -28,6 +28,28 @@ internal static class ChunkedJsonReader
         return result;
     }
 
+    public static JsonObject? TryReadObjectProperty(
+        string path,
+        string propertyName,
+        CancellationToken cancellationToken = default,
+        int bufferSize = 16 * 1024)
+    {
+        using var source = OpenSource(path, cancellationToken, bufferSize);
+        if (!TryFindRootProperty(source, path, propertyName, out var token))
+        {
+            return null;
+        }
+
+        if (token.Type != JsonTokenType.StartObject)
+        {
+            throw InvalidValue(path, propertyName, "对象");
+        }
+
+        var result = ReadObject(source, path);
+        FinishRootObject(source, path);
+        return result;
+    }
+
     public static IEnumerable<JsonObject> EnumerateObjectArray(
         string path,
         string propertyName,
@@ -133,6 +155,20 @@ internal static class ChunkedJsonReader
 
     private static Token FindRootProperty(TokenSource source, string path, string propertyName)
     {
+        if (!TryFindRootProperty(source, path, propertyName, out var value))
+        {
+            throw new ImportFormatException(path, $"缺少 {propertyName}");
+        }
+
+        return value;
+    }
+
+    private static bool TryFindRootProperty(
+        TokenSource source,
+        string path,
+        string propertyName,
+        out Token value)
+    {
         var token = ReadRequired(source, path);
         if (token.Type != JsonTokenType.StartObject)
         {
@@ -144,7 +180,8 @@ internal static class ChunkedJsonReader
             token = ReadRequired(source, path);
             if (token.Type == JsonTokenType.EndObject)
             {
-                throw new ImportFormatException(path, $"缺少 {propertyName}");
+                value = default;
+                return false;
             }
 
             if (token.Type != JsonTokenType.PropertyName)
@@ -152,10 +189,10 @@ internal static class ChunkedJsonReader
                 throw new ImportFormatException(path, "JSON 对象属性无效");
             }
 
-            var value = ReadRequired(source, path);
+            value = ReadRequired(source, path);
             if (string.Equals(token.Text, propertyName, StringComparison.Ordinal))
             {
-                return value;
+                return true;
             }
 
             SkipValue(source, path, value);

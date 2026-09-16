@@ -75,8 +75,8 @@ internal static class CipherTalkExcelParser
                     $"工作表 {profile.Sheet.Name} 第 {row.RowIndex} 行时间无效");
             }
 
-            var senderName = FirstNonEmpty(values["发送者"], "unknown");
-            var senderNativeId = FirstNonEmpty(
+            var senderName = ImportText.FirstNonEmpty(values["发送者"], "unknown");
+            var senderNativeId = ImportText.FirstNonEmpty(
                 values["微信ID"],
                 FlatMessageFactory.SyntheticSenderNativeId(conversation.NativeId, senderName));
             var messageType = MapType(values["原始类型代码"], values["消息类型"]);
@@ -97,7 +97,7 @@ internal static class CipherTalkExcelParser
             messageCount++;
             yield return FlatMessageFactory.Create(new FlatMessageData(
                 NativeId: null,
-                LocalId: NullIfEmpty(values["序号"]),
+                LocalId: ImportText.OrNull(values["序号"]),
                 TimestampMs: timestampMs,
                 SenderNativeId: senderNativeId,
                 SenderName: senderName,
@@ -212,11 +212,6 @@ internal static class CipherTalkExcelParser
             _ => "other",
         };
     }
-
-    private static string FirstNonEmpty(params string[] values) =>
-        values.FirstOrDefault(value => value.Length > 0) ?? string.Empty;
-
-    private static string? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 
     private sealed record Profile(
         OpenXmlSheet Sheet,

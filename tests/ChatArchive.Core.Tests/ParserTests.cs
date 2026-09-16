@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ChatArchive.Core.Importing;
+using ChatArchive.Core.IO;
 using Xunit;
 
 namespace ChatArchive.Core.Tests;
@@ -108,15 +109,19 @@ public class ParserTests : IDisposable
         var path = Path.Combine(_dir, "qq.json");
         File.WriteAllText(path, QqFixture);
 
-        using var document = ImportText.ParseDocument(path);
-        var conversation = QqParser.ReadConversation(document, path);
+        var conversation = QqParser.ReadConversation(
+            ChunkedJsonReader.ReadObjectProperty(path, "chatInfo"),
+            path);
         Assert.Equal("qq", conversation.Platform);
         Assert.Equal("10001", conversation.AccountId);
         Assert.Equal("uPEER", conversation.NativeId);
         Assert.Equal("private", conversation.Kind);
         Assert.Equal("老张", conversation.Title);
 
-        var messages = QqParser.IterateMessages(document, conversation, path).ToList();
+        var messages = QqParser.IterateMessages(
+            ChunkedJsonReader.EnumerateObjectArray(path, "messages"),
+            conversation,
+            path).ToList();
         Assert.Equal(2, messages.Count);
 
         var first = messages[0];
@@ -167,15 +172,24 @@ public class ParserTests : IDisposable
         var path = Path.Combine(_dir, "weflow.json");
         File.WriteAllText(path, WeFlowFixture);
 
-        using var document = ImportText.ParseDocument(path);
-        var (conversation, selfSender) = WeFlowParser.ReadConversation(document, path);
+        var conversation = WeFlowParser.ReadConversation(
+            ChunkedJsonReader.ReadObjectProperty(path, "session"),
+            path);
+        var selfSender = WeFlowParser.InferSelfSender(
+            ChunkedJsonReader.EnumerateObjectArray(path, "messages"),
+            conversation,
+            CancellationToken.None);
         Assert.Equal("wechat-default", conversation.AccountId);
         Assert.Equal("wxid_zhang", conversation.NativeId);
         Assert.Equal("private", conversation.Kind);
         Assert.Equal("张三", conversation.Title);
         Assert.Equal("wxid_me", selfSender);
 
-        var messages = WeFlowParser.IterateMessages(document, conversation, selfSender, path).ToList();
+        var messages = WeFlowParser.IterateMessages(
+            ChunkedJsonReader.EnumerateObjectArray(path, "messages"),
+            conversation,
+            selfSender,
+            path).ToList();
         Assert.Equal(3, messages.Count);
 
         var sent = messages[0];
@@ -216,8 +230,9 @@ public class ParserTests : IDisposable
         var path = Path.Combine(sub, "dump.json");
         File.WriteAllText(path, WeFlowFixture.Replace("\"remark\": \"张三\"", "\"remark\": \"\""));
 
-        using var document = ImportText.ParseDocument(path);
-        var (conversation, _) = WeFlowParser.ReadConversation(document, path);
+        var conversation = WeFlowParser.ReadConversation(
+            ChunkedJsonReader.ReadObjectProperty(path, "session"),
+            path);
         Assert.Equal("开发组", conversation.Title);
     }
 
@@ -345,7 +360,7 @@ public class ParserTests : IDisposable
 
         var format = formats.Single(f => f.Matches(qqPath));
         Assert.Equal("qq", format.Platform);
-        using var exportFile = format.Open(qqPath);
+        var exportFile = format.Open(qqPath);
         Assert.Equal("老张", exportFile.Conversation.Title);
         Assert.Single(exportFile.EnumerateMessages().Take(1));
     }
@@ -373,7 +388,7 @@ public class ParserTests : IDisposable
         var format = new QqExportFormat();
         Assert.True(format.Matches(path));
 
-        using var exportFile = format.Open(path);
+        var exportFile = format.Open(path);
         Assert.Equal("qq", exportFile.Conversation.Platform);
         Assert.Equal("uPEER", exportFile.Conversation.NativeId);
         Assert.Equal("group", exportFile.Conversation.Kind);
@@ -395,7 +410,7 @@ public class ParserTests : IDisposable
              "messages":[]}
             """);
 
-        using var exportFile = new QqExportFormat().Open(path);
+        var exportFile = new QqExportFormat().Open(path);
         Assert.Equal("p", exportFile.Conversation.NativeId);
     }
 
@@ -423,7 +438,7 @@ public class ParserTests : IDisposable
         var format = new QqChunkedExportFormat();
         Assert.True(format.Matches(manifestPath));
 
-        using var exportFile = format.Open(manifestPath);
+        var exportFile = format.Open(manifestPath);
         Assert.Equal("qq", exportFile.Conversation.Platform);
         Assert.Equal("u_group", exportFile.Conversation.NativeId);
         Assert.Equal("group", exportFile.Conversation.Kind);
@@ -445,18 +460,6 @@ public class ParserTests : IDisposable
         Assert.Equal("image", msg2.MediaType);
         var attachment = Assert.Single(msg2.Attachments);
         Assert.Equal("resources/images/img.jpg", attachment.DeclaredPath);
-    }
-
-    [Fact]
-    public void ParseDocument_PropagatesCancellationBeforeWholeDocumentRead()
-    {
-        var path = Path.Combine(_dir, "cancel.json");
-        File.WriteAllText(path, "{}");
-        using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
-
-        Assert.Throws<OperationCanceledException>(() =>
-            ImportText.ParseDocument(path, cancellation.Token));
     }
 
     [Fact]
@@ -490,7 +493,7 @@ public class ParserTests : IDisposable
             Path.Combine(chunksDir, "old.jsonl"),
             """{"id":"old","timestamp":1700000002,"sender":{"uid":"u_peer","name":"群友"},"content":{"type":"text","text":"old"}}""" + "\n");
 
-        using var exportFile = new QqChunkedExportFormat().Open(manifestPath);
+        var exportFile = new QqChunkedExportFormat().Open(manifestPath);
 
         Assert.Equal(
             new[] { "b", "a" },
@@ -501,7 +504,7 @@ public class ParserTests : IDisposable
     public void QqChunkedExportFormat_Enumeration_WhenDeclaredChunkDeletedAfterOpen_ThrowsManifestScopedError()
     {
         var (manifest, chunk) = WriteStrictQqChunkedExport("chunks/a.jsonl", oneValidMessage: true);
-        using var export = new QqChunkedExportFormat().Open(manifest);
+        var export = new QqChunkedExportFormat().Open(manifest);
         File.Delete(chunk);
 
         var error = Assert.Throws<ImportFormatException>(
@@ -603,7 +606,7 @@ public class ParserTests : IDisposable
         var format = new WeFlowExportFormat();
         Assert.True(format.Matches(path));
 
-        using var exportFile = format.Open(path);
+        var exportFile = format.Open(path);
         Assert.Equal("wechat", format.Platform);
         Assert.Equal("group_123@chatroom", exportFile.Conversation.NativeId);
         Assert.Equal("group", exportFile.Conversation.Kind);
@@ -652,7 +655,7 @@ public class ParserTests : IDisposable
              "messages":[]}
             """);
 
-        using var exportFile = new WeFlowExportFormat().Open(path);
+        var exportFile = new WeFlowExportFormat().Open(path);
         Assert.Equal("p", exportFile.Conversation.NativeId);
     }
 
@@ -679,7 +682,7 @@ public class ParserTests : IDisposable
              "messages":[]}
             """);
 
-        using var exportFile = new WeFlowExportFormat().Open(path);
+        var exportFile = new WeFlowExportFormat().Open(path);
         Assert.Equal("p", exportFile.Conversation.NativeId);
     }
 
@@ -689,12 +692,17 @@ public class ParserTests : IDisposable
         var path = Path.Combine(_dir, "qq-hash-compatibility.json");
         File.WriteAllText(path, QqFixture);
 
-        using var document = ImportText.ParseDocument(path);
-        var conversation = QqParser.ReadConversation(document, path);
-        var expected = QqParser.IterateMessages(document, conversation, path)
+        var chat = ChunkedJsonReader.ReadObjectProperty(path, "chatInfo");
+        var conversation = QqParser.ReadConversation(chat, path);
+        var expected = QqParser.IterateMessages(
+            ChunkedJsonReader.EnumerateObjectArray(path, "messages"),
+            conversation,
+            path,
+            ImportText.Clean(chat["selfUid"]),
+            ImportText.Clean(chat["selfUin"]))
             .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
             .ToList();
-        using var exportFile = new QqExportFormat().Open(path);
+        var exportFile = new QqExportFormat().Open(path);
         var actual = exportFile.EnumerateMessages()
             .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
             .ToList();
@@ -708,17 +716,64 @@ public class ParserTests : IDisposable
         var path = Path.Combine(_dir, "weflow-hash-compatibility.json");
         File.WriteAllText(path, WeFlowFixture);
 
-        using var document = ImportText.ParseDocument(path);
-        var (conversation, selfSender) = WeFlowParser.ReadConversation(document, path);
-        var expected = WeFlowParser.IterateMessages(document, conversation, selfSender, path)
+        Dictionary<int, JsonObject>? senders = null;
+        if (ChunkedJsonReader.ContainsRootProperties(path, ["senders"]))
+        {
+            senders = new Dictionary<int, JsonObject>();
+            foreach (var senderObj in ChunkedJsonReader.EnumerateObjectArray(path, "senders"))
+            {
+                var id = ImportText.AsLong(senderObj["senderID"]) ?? ImportText.AsLong(senderObj["senderId"]);
+                if (id.HasValue)
+                {
+                    senders[(int)id.Value] = senderObj;
+                }
+            }
+        }
+
+        var conversation = WeFlowParser.ReadConversation(
+            ChunkedJsonReader.ReadObjectProperty(path, "session"),
+            path);
+        var selfSender = WeFlowParser.InferSelfSender(
+            ChunkedJsonReader.EnumerateObjectArray(path, "messages"),
+            conversation,
+            CancellationToken.None,
+            senders);
+        var expected = WeFlowParser.IterateMessages(
+            ChunkedJsonReader.EnumerateObjectArray(path, "messages"),
+            conversation,
+            selfSender,
+            path,
+            senders)
             .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
             .ToList();
-        using var exportFile = new WeFlowExportFormat().Open(path);
+        var exportFile = new WeFlowExportFormat().Open(path);
         var actual = exportFile.EnumerateMessages()
             .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
             .ToList();
 
         Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void QqExportFormat_MarksOutgoingUsingSelfUidWhenUinDiffers()
+    {
+        var path = Path.Combine(_dir, "qq-self-uid.json");
+        File.WriteAllText(path, """
+            {
+              "metadata": {"name": "QQChatExporter"},
+              "chatInfo": {"selfUin": "10001", "selfUid": "uSELF", "peerUid": "uPEER", "name": "老张", "type": "private"},
+              "messages": [
+                {
+                  "id": "m1", "timestamp": 1700000000000, "type": "text",
+                  "sender": {"uid": "uSELF", "uin": "99999", "nickname": "我"},
+                  "content": {"text": "hi"}
+                }
+              ]
+            }
+            """);
+
+        var message = Assert.Single(new QqExportFormat().Open(path).EnumerateMessages());
+        Assert.Equal("outgoing", message.Direction);
     }
 
     [Fact]
@@ -825,7 +880,7 @@ public class ParserTests : IDisposable
         var format = new CipherTalkDetailedJsonFormat();
         Assert.True(format.Matches(path));
 
-        using var exportFile = format.Open(path);
+        var exportFile = format.Open(path);
         Assert.Equal("wechat", exportFile.Conversation.Platform);
         Assert.Equal("wxid_friend", exportFile.Conversation.NativeId);
         Assert.Equal("private", exportFile.Conversation.Kind);
@@ -927,7 +982,7 @@ public class ParserTests : IDisposable
         var format = new CipherTalkDetailedJsonFormat();
         Assert.True(format.Matches(path));
 
-        using var exportFile = format.Open(path);
+        var exportFile = format.Open(path);
         Assert.Equal("wechat", exportFile.Conversation.Platform);
         Assert.Equal("wxid_self", exportFile.Conversation.AccountId);
         Assert.Equal("12345678@chatroom", exportFile.Conversation.NativeId);
@@ -965,13 +1020,29 @@ public class ParserTests : IDisposable
         var path = Path.Combine(_dir, "ciphertalk_stream.json");
         File.WriteAllText(path, CipherTalkDetailedJsonFixture);
 
-        using var document = ImportText.ParseDocument(path);
-        var (conversation, selfSender) = CipherTalkParser.ReadConversation(document, path);
-        var expected = CipherTalkParser.IterateMessages(document, conversation, selfSender, path)
+        var session = ChunkedJsonReader.ReadObjectProperty(path, "session");
+        var conversation = CipherTalkParser.ReadConversation(session, path);
+        var ownerId = ImportText.Clean(session["ownerId"]);
+        if (string.IsNullOrEmpty(ownerId))
+        {
+            ownerId = ImportText.Clean(session["ownerID"]);
+        }
+
+        var selfSender = !string.IsNullOrEmpty(ownerId)
+            ? ownerId
+            : CipherTalkParser.InferSelfSender(
+                ChunkedJsonReader.EnumerateObjectArray(path, "messages"),
+                conversation,
+                CancellationToken.None);
+        var expected = CipherTalkParser.IterateMessages(
+            ChunkedJsonReader.EnumerateObjectArray(path, "messages"),
+            conversation,
+            selfSender,
+            path)
             .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
             .ToList();
 
-        using var exportFile = new CipherTalkDetailedJsonFormat().Open(path);
+        var exportFile = new CipherTalkDetailedJsonFormat().Open(path);
         var actual = exportFile.EnumerateMessages()
             .Select(message => (message.PayloadHash, message.SemanticHash, message.SourceLocator))
             .ToList();
@@ -1016,7 +1087,7 @@ public class ParserTests : IDisposable
         var formatJsonl = new ChatLabJsonlExportFormat();
         Assert.True(formatJsonl.Matches(pathJsonl));
 
-        using (var exportFileJsonl = formatJsonl.Open(pathJsonl))
+        var exportFileJsonl = formatJsonl.Open(pathJsonl);
         {
             Assert.Equal("wechat", exportFileJsonl.Conversation.Platform);
             Assert.Equal("open@chatroom", exportFileJsonl.Conversation.NativeId);
@@ -1056,7 +1127,7 @@ public class ParserTests : IDisposable
         var formatJson = new ChatLabJsonExportFormat();
         Assert.True(formatJson.Matches(pathJson));
 
-        using (var exportFileJson = formatJson.Open(pathJson))
+        var exportFileJson = formatJson.Open(pathJson);
         {
             Assert.Equal("wechat", exportFileJson.Conversation.Platform);
             Assert.Equal("wxid_bob", exportFileJson.Conversation.NativeId);
@@ -1112,7 +1183,7 @@ public class ParserTests : IDisposable
         File.WriteAllText(path, jsonContent);
 
         var format = new ChatLabJsonExportFormat();
-        using var exportFile = format.Open(path);
+        var exportFile = format.Open(path);
         var messages = exportFile.EnumerateMessages().ToList();
         Assert.Equal(14, messages.Count);
 
@@ -1205,7 +1276,7 @@ public class ParserTests : IDisposable
 
         var format = new WeFlowSqlExportFormat();
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal("wechat", export.Conversation.Platform);
         Assert.Equal("wechat-default", export.Conversation.AccountId);
         Assert.Equal("group@chatroom", export.Conversation.NativeId);
@@ -1253,7 +1324,7 @@ public class ParserTests : IDisposable
 
         var format = new CipherTalkSqlExportFormat();
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal("wechat", export.Conversation.Platform);
         Assert.Equal("wxid_self", export.Conversation.AccountId);
         Assert.Equal("group@chatroom", export.Conversation.NativeId);
@@ -1277,7 +1348,7 @@ public class ParserTests : IDisposable
             VALUES ('wxid_friend', '1', '2', 0, 'wxid_friend', FALSE, 1, NULL, '  It''s; (x,y)  ', NULL);
             """);
 
-        using var export = new WeFlowSqlExportFormat().Open(path);
+        var export = new WeFlowSqlExportFormat().Open(path);
         var message = Assert.Single(export.EnumerateMessages());
 
         Assert.Equal("  It's; (x,y)  ", message.Content);
@@ -1297,7 +1368,7 @@ public class ParserTests : IDisposable
         var format = new WeFlowSqlExportFormat();
 
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal("hello", Assert.Single(export.EnumerateMessages()).Content);
     }
 
@@ -1427,6 +1498,18 @@ public class ParserTests : IDisposable
         Assert.False(new WeFlowSqlExportFormat().Matches(nearWeFlow));
         Assert.False(new CipherTalkSqlExportFormat().Matches(nearWeFlow));
 
+        var trailingJunk = Path.Combine(_dir, "weflow_trailing_junk.sql");
+        File.WriteAllText(trailingJunk, """
+            INSERT INTO weflow_messages
+              (session_id, local_id, message_id, create_time, sender, is_send, local_type, media_type, content, media_path)
+            VALUES ('wxid_friend', '1', '2', 0, 'wxid_friend', FALSE, 1, NULL, 'hello', NULL);
+            SELECT 1;
+            """);
+        var trailingFormat = new WeFlowSqlExportFormat();
+        Assert.False(trailingFormat.Matches(trailingJunk));
+        Assert.Throws<ImportFormatException>(
+            () => trailingFormat.Open(trailingJunk).EnumerateMessages().ToList());
+
         var discovered = ImportDiscovery.Discover(new[] { _dir });
         Assert.DoesNotContain(discovered, d => d.FilePath == Path.GetFullPath(generic));
     }
@@ -1532,27 +1615,11 @@ public class ParserTests : IDisposable
 
         var format = new WeFlowSqlExportFormat();
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         var error = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
         Assert.Contains(path, error.Message);
         Assert.Contains("weflow_messages", error.Message);
         Assert.Contains("1", error.Message);
-    }
-
-    [Fact]
-    public void QqParser_IterateMessages_ThrowsImportFormatException_WhenMissingChatInfo()
-    {
-        var json = """
-            {
-              "messages": [
-                {"id": "m1", "timestamp": 1700000000000, "type": "text", "content": {"text": "hello"}}
-              ]
-            }
-            """;
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
-        var conv = new ParsedConversation("qq", "self", "peer", "private", "Peer");
-        var ex = Assert.Throws<ImportFormatException>(() => QqParser.IterateMessages(doc, conv, "invalid_qq.json").ToList());
-        Assert.Contains("缺少 chatInfo 节点", ex.Message);
     }
 
     [Fact]
@@ -1610,7 +1677,7 @@ public class ParserTests : IDisposable
         File.WriteAllText(path, json);
 
         var format = new CipherTalkDetailedJsonFormat();
-        using var exportFile = format.Open(path);
+        var exportFile = format.Open(path);
         var messages = exportFile.EnumerateMessages().ToList();
         Assert.Single(messages);
         Assert.Equal("text", messages[0].MessageType);
@@ -1661,7 +1728,7 @@ public class ParserTests : IDisposable
         File.WriteAllText(path, json);
 
         var format = new ChatLabJsonExportFormat();
-        using var exportFile = format.Open(path);
+        var exportFile = format.Open(path);
         var messages = exportFile.EnumerateMessages().ToList();
         Assert.Equal(2, messages.Count);
 
@@ -1702,8 +1769,8 @@ public class ParserTests : IDisposable
         File.WriteAllText(jsonPath, json);
         File.WriteAllLines(jsonlPath, jsonlLines);
 
-        using var jsonFile = new ChatLabJsonExportFormat().Open(jsonPath);
-        using var jsonlFile = new ChatLabJsonlExportFormat().Open(jsonlPath);
+        var jsonFile = new ChatLabJsonExportFormat().Open(jsonPath);
+        var jsonlFile = new ChatLabJsonlExportFormat().Open(jsonlPath);
         var jsonMessages = jsonFile.EnumerateMessages().ToList();
         var jsonlMessages = jsonlFile.EnumerateMessages().ToList();
         Assert.Equal(3, jsonMessages.Count);
@@ -1748,7 +1815,7 @@ public class ParserTests : IDisposable
 
         var format = new WeFlowMarkdownExportFormat();
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         var message = Assert.Single(export.EnumerateMessages());
         Assert.Contains("[docs](https://example.com/a)", message.Content);
         Assert.Empty(message.Attachments);
@@ -1783,7 +1850,7 @@ public class ParserTests : IDisposable
 
         var format = new QqChunkedExportFormat();
         Assert.True(format.Matches(manifestPath));
-        using var exportFile = format.Open(manifestPath);
+        var exportFile = format.Open(manifestPath);
         var messages = exportFile.EnumerateMessages().ToList();
         Assert.Single(messages);
         var msg = messages[0];
@@ -1819,7 +1886,7 @@ public class ParserTests : IDisposable
 
         var format = new ChatLabJsonExportFormat();
         Assert.True(format.Matches(path));
-        using var exportFile = format.Open(path);
+        var exportFile = format.Open(path);
         Assert.Equal("wxid_owner_123", exportFile.Conversation.NativeId);
         Assert.Equal("测试会话", exportFile.Conversation.Title);
     }
@@ -1852,7 +1919,7 @@ public class ParserTests : IDisposable
 
         var format = new ChatLabJsonExportFormat();
         Assert.True(format.Matches(path));
-        using var exportFile = format.Open(path);
+        var exportFile = format.Open(path);
         Assert.Equal("my_custom_chat", exportFile.Conversation.NativeId);
     }
 
@@ -1956,7 +2023,7 @@ public class ParserTests : IDisposable
     {
         public string Platform => "test";
 
-        public bool Matches(string filePath) => false;
+        public bool Matches(string filePath, CancellationToken cancellationToken) => false;
 
         public ExportFile Open(string filePath, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

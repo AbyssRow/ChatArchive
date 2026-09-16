@@ -10,23 +10,14 @@ public interface IChatExportFormat
     string Platform { get; }
 
     /// <summary>判断一个文件是否属于本格式（轻量嗅探，可读文件头）。</summary>
-    bool Matches(string filePath);
-
-    /// <summary>支持取消的格式嗅探；旧实现由默认方法兼容。</summary>
-    bool Matches(string filePath, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var matches = Matches(filePath);
-        cancellationToken.ThrowIfCancellationRequested();
-        return matches;
-    }
+    bool Matches(string filePath, CancellationToken cancellationToken = default);
 
     /// <summary>打开文件：解析文档、读取会话信息，并提供消息枚举。</summary>
     ExportFile Open(string filePath, CancellationToken cancellationToken = default);
 }
 
 /// <summary>单个已打开的导出文件。</summary>
-public sealed class ExportFile : IDisposable
+public sealed class ExportFile
 {
     private readonly Func<CancellationToken, IEnumerable<ParsedMessage>> _messagesFactory;
 
@@ -44,10 +35,5 @@ public sealed class ExportFile : IDisposable
     public IEnumerable<ParsedMessage> EnumerateMessages(CancellationToken cancellationToken = default)
     {
         return _messagesFactory(cancellationToken);
-    }
-
-    public void Dispose()
-    {
-        // ExportFile no longer owns a whole-file JsonDocument. Kept for API compatibility.
     }
 }

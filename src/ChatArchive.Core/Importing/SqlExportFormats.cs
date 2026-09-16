@@ -15,9 +15,7 @@ public sealed class WeFlowSqlExportFormat : IChatExportFormat
 
     public string Platform => "wechat";
 
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
-    public bool Matches(string filePath, CancellationToken cancellationToken)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!SqlExportSupport.IsSql(filePath))
@@ -35,8 +33,10 @@ public sealed class WeFlowSqlExportFormat : IChatExportFormat
                 {
                     return false;
                 }
+
                 found = true;
             }
+
             return found;
         }
         catch (Exception ex) when (SqlExportSupport.IsMatchFailure(ex))
@@ -177,9 +177,7 @@ public sealed class CipherTalkSqlExportFormat : IChatExportFormat
 
     public string Platform => "wechat";
 
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
-    public bool Matches(string filePath, CancellationToken cancellationToken)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!SqlExportSupport.IsSql(filePath))

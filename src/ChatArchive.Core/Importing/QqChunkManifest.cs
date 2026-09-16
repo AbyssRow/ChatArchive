@@ -44,17 +44,36 @@ internal static class QqChunkManifest
             var fullManifest = ValidateManifestFile(manifestPath);
             var exportRoot = Path.GetDirectoryName(fullManifest)!;
 
-            using var document = ImportText.ParseDocument(fullManifest, cancellationToken);
+            using var stream = new FileStream(
+                fullManifest,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                FileOptions.SequentialScan);
             cancellationToken.ThrowIfCancellationRequested();
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
+            JsonDocument document;
+            try
             {
-                throw InvalidManifest(manifestPath, "JSON 根节点必须是对象");
+                document = JsonDocument.Parse(stream);
             }
+            catch (JsonException ex)
+            {
+                throw InvalidManifest(manifestPath, $"JSON 解析失败（{ex.Message}）", innerException: ex);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            using (document)
+            {
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    throw InvalidManifest(manifestPath, "JSON 根节点必须是对象");
+                }
 
-            return root.TryGetProperty("chunked", out var chunked)
-                ? ResolveAuthoritativeChunks(manifestPath, exportRoot, chunked, cancellationToken)
-                : ResolveLegacyChunks(manifestPath, exportRoot, cancellationToken);
+                return root.TryGetProperty("chunked", out var chunked)
+                    ? ResolveAuthoritativeChunks(manifestPath, exportRoot, chunked, cancellationToken)
+                    : ResolveLegacyChunks(manifestPath, exportRoot, cancellationToken);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -171,7 +190,7 @@ internal static class QqChunkManifest
                         cancellationToken.ThrowIfCancellationRequested();
                         return fileName;
                     },
-                    new CancellationAwareNaturalStringComparer(cancellationToken))
+                    NaturalStringComparer.Instance)
                 .ToList();
             cancellationToken.ThrowIfCancellationRequested();
             return sorted;
@@ -440,18 +459,6 @@ internal static class QqChunkManifest
             }
 
             return x.Length.CompareTo(y.Length);
-        }
-    }
-
-    private sealed class CancellationAwareNaturalStringComparer(
-        CancellationToken cancellationToken) : IComparer<string?>
-    {
-        public int Compare(string? x, string? y)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var result = NaturalStringComparer.Instance.Compare(x, y);
-            cancellationToken.ThrowIfCancellationRequested();
-            return result;
         }
     }
 }

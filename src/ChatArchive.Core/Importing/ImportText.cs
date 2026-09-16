@@ -649,44 +649,79 @@ public static class ImportText
         return extension.Length > 0 && MimeByExtension.TryGetValue(extension, out var mime) ? mime : null;
     }
 
-    public static JsonDocument ParseDocument(string filePath) =>
-        ParseDocument(filePath, CancellationToken.None);
-
-    public static JsonDocument ParseDocument(
-        string filePath,
-        CancellationToken cancellationToken)
+    public static string FirstNonEmpty(params string[] values)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        try
+        foreach (var value in values)
         {
-            using var stream = new FileStream(
-                filePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                bufferSize: 64 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            var document = JsonDocument.ParseAsync(
-                    stream,
-                    cancellationToken: cancellationToken)
-                .GetAwaiter()
-                .GetResult();
-            cancellationToken.ThrowIfCancellationRequested();
-            return document;
+            if (value.Length > 0)
+            {
+                return value;
+            }
         }
-        catch (OperationCanceledException)
+
+        return string.Empty;
+    }
+
+    public static string? OrNull(string value) => value.Length > 0 ? value : null;
+
+    public static string OrEmpty(string value, string fallback) =>
+        value.Length > 0 ? value : fallback;
+
+    public static JsonNode? Get(JsonObject obj, string key) =>
+        obj.TryGetPropertyValue(key, out var value) ? value : null;
+
+    public static string TryGetRaw(JsonObject obj, string key) =>
+        RawText(Get(obj, key));
+
+    public static bool AsBool(JsonNode? value)
+    {
+        if (value is JsonValue scalar)
         {
-            throw;
+            if (scalar.TryGetValue<string>(out var text))
+            {
+                return text.Trim().ToLowerInvariant() is "1" or "true" or "yes";
+            }
+
+            if (scalar.TryGetValue<bool>(out var b))
+            {
+                return b;
+            }
+
+            if (scalar.TryGetValue<long>(out var l))
+            {
+                return l != 0;
+            }
+
+            if (scalar.TryGetValue<int>(out var i))
+            {
+                return i != 0;
+            }
         }
-        catch (JsonException ex)
+
+        return false;
+    }
+
+    public static void AddUnique(List<string> values, string candidate)
+    {
+        if (candidate.Length > 0 && !values.Contains(candidate))
         {
-            throw new ImportFormatException(filePath, $"JSON 解析失败（{ex.Message}）", ex);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            throw new ImportFormatException(filePath, $"读取失败（{ex.Message}）", ex);
+            values.Add(candidate);
         }
     }
+
+    public static string LocalTypeString(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return "None";
+        }
+
+        var raw = node.ToJsonString();
+        return raw is "true" or "false" ? (raw == "true" ? "True" : "False") : raw.Trim('"');
+    }
+
+    public static JsonNode? NullStr(string? value) =>
+        value is null ? null : JsonValue.Create(value);
 }
 
 

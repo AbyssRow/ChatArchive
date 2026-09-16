@@ -26,7 +26,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
 
         var format = new WeFlowCsvExportFormat();
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal("wechat", export.Conversation.Platform);
         Assert.Equal(ImportText.StableFileNativeId(path), export.Conversation.NativeId);
         Assert.Equal("项目群", export.Conversation.Title);
@@ -55,9 +55,9 @@ public sealed class WeFlowTextFormatTests : IDisposable
         var secondPath = WriteCurrentCsv("second.csv", "1,9001,text,0,Alice,hello,,2023-11-15T06:15:23.000Z\r\n");
         var format = new WeFlowCsvExportFormat();
 
-        using var firstExport = format.Open(firstPath);
-        using var sameConversationExport = format.Open(firstPath);
-        using var secondExport = format.Open(secondPath);
+        var firstExport = format.Open(firstPath);
+        var sameConversationExport = format.Open(firstPath);
+        var secondExport = format.Open(secondPath);
         var first = Assert.Single(firstExport.EnumerateMessages());
         var repeated = Assert.Single(sameConversationExport.EnumerateMessages());
         var second = Assert.Single(secondExport.EnumerateMessages());
@@ -94,7 +94,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
     public void WeFlowCsv_RejectsRowsWithoutExactlyEightCells(string row)
     {
         var path = WriteCurrentCsv("malformed.csv", row);
-        using var export = new WeFlowCsvExportFormat().Open(path);
+        var export = new WeFlowCsvExportFormat().Open(path);
 
         var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
         Assert.Contains(path, exception.Message);
@@ -107,7 +107,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
     public void WeFlowCsv_RejectsMissingOrUnparseableCreateTime(string createTime)
     {
         var path = WriteCurrentCsv("invalid-time.csv", $"1,9001,text,0,Alice,hello,,{createTime}\r\n");
-        using var export = new WeFlowCsvExportFormat().Open(path);
+        var export = new WeFlowCsvExportFormat().Open(path);
 
         var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
         Assert.Contains(path, exception.Message);
@@ -119,7 +119,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
     public void WeFlowCsv_ImportsIsoEpochCreateTime()
     {
         var path = WriteCurrentCsv("epoch.csv", "1,9001,text,0,Alice,hello,,1970-01-01T00:00:00.000Z\r\n");
-        using var export = new WeFlowCsvExportFormat().Open(path);
+        var export = new WeFlowCsvExportFormat().Open(path);
 
         Assert.Equal(0, Assert.Single(export.EnumerateMessages()).TimestampMs);
     }
@@ -153,7 +153,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
 
         var format = new WeFlowMarkdownExportFormat();
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal("group@chatroom", export.Conversation.NativeId);
         Assert.Equal("group", export.Conversation.Kind);
         var message = Assert.Single(export.EnumerateMessages());
@@ -180,7 +180,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
             "## 2023-11-15 06:16:23 Bob\n\n" +
             "末尾正文\n\n");
 
-        using var export = new WeFlowMarkdownExportFormat().Open(path);
+        var export = new WeFlowMarkdownExportFormat().Open(path);
         var messages = export.EnumerateMessages().ToList();
 
         Assert.Equal("\n第一行\n\n第二行", messages[0].Content);
@@ -201,7 +201,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
 
         var format = new WeFlowTextExportFormat();
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         var messages = export.EnumerateMessages().ToList();
         Assert.Equal(2, messages.Count);
         Assert.Equal("Alice", messages[0].SenderName);
@@ -219,7 +219,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
             "仍是正文\n\n" +
             "2023-11-15 06:17:23 'Carol'\n" +
             "第二条\n\n");
-        using var export = new WeFlowTextExportFormat().Open(path);
+        var export = new WeFlowTextExportFormat().Open(path);
 
         var messages = export.EnumerateMessages().ToList();
 
@@ -239,7 +239,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
         var format = new WeFlowTextExportFormat();
 
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         var message = Assert.Single(export.EnumerateMessages());
 
         Assert.Equal("Alice", message.SenderName);
@@ -256,7 +256,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
         var format = new WeFlowTextExportFormat();
 
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         var message = Assert.Single(export.EnumerateMessages());
 
         Assert.Equal(HeaderLikeBody, message.Content);
@@ -269,7 +269,7 @@ public sealed class WeFlowTextFormatTests : IDisposable
             "2023-11-15 06:15:23 'Alice'\n" +
             "有效正文\n\n" +
             "2023-11-15 06:16:23 'Bob'\n");
-        using var export = new WeFlowTextExportFormat().Open(path);
+        var export = new WeFlowTextExportFormat().Open(path);
 
         var exception = Assert.Throws<ImportFormatException>(() => export.EnumerateMessages().ToList());
 

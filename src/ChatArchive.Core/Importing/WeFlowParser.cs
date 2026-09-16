@@ -1,7 +1,7 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using static ChatArchive.Core.Importing.ImportText;
 
 namespace ChatArchive.Core.Importing;
 
@@ -58,52 +58,6 @@ public static class WeFlowParser
             ("[转账]", "transfer"),
             ("[位置]", "location"),
         };
-    }
-
-    public static (ParsedConversation Conversation, string? SelfSender) ReadConversation(
-        JsonDocument document, string filePath, IReadOnlyDictionary<int, JsonObject>? senders = null)
-    {
-        if (document.RootElement.ValueKind != JsonValueKind.Object
-            || !document.RootElement.TryGetProperty("session", out var sessionElement)
-            || sessionElement.ValueKind != JsonValueKind.Object
-            || JsonSerializer.Deserialize<JsonObject>(sessionElement.GetRawText()) is not { } parsedSession)
-        {
-            throw new ImportFormatException(filePath, "WeFlow session 无效");
-        }
-
-        var conversation = ReadConversation(parsedSession, filePath);
-        senders ??= ExtractSenders(document);
-        var selfSender = InferSelfSender(
-            MessagesOf(document).Select(ElementToObject),
-            conversation,
-            CancellationToken.None,
-            senders);
-        return (conversation, selfSender);
-    }
-
-    internal static IReadOnlyDictionary<int, JsonObject>? ExtractSenders(JsonDocument document)
-    {
-        if (document.RootElement.ValueKind == JsonValueKind.Object
-            && document.RootElement.TryGetProperty("senders", out var sendersElement)
-            && sendersElement.ValueKind == JsonValueKind.Array)
-        {
-            var dict = new Dictionary<int, JsonObject>();
-            foreach (var item in sendersElement.EnumerateArray())
-            {
-                if (item.ValueKind == JsonValueKind.Object && JsonSerializer.Deserialize<JsonObject>(item.GetRawText()) is { } sObj)
-                {
-                    var id = ImportText.AsLong(sObj["senderID"]) ?? ImportText.AsLong(sObj["senderId"]);
-                    if (id.HasValue)
-                    {
-                        dict[(int)id.Value] = sObj;
-                    }
-                }
-            }
-
-            return dict;
-        }
-
-        return null;
     }
 
     internal static ParsedConversation ReadConversation(JsonObject session, string filePath)
@@ -190,22 +144,6 @@ public static class WeFlowParser
         }
 
         return selfSender;
-    }
-
-    public static IEnumerable<ParsedMessage> IterateMessages(
-        JsonDocument document,
-        ParsedConversation conversation,
-        string? selfSender,
-        string filePath,
-        IReadOnlyDictionary<int, JsonObject>? senders = null)
-    {
-        senders ??= ExtractSenders(document);
-        var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
-        var index = 0;
-        foreach (var rawElement in MessagesOf(document))
-        {
-            yield return ParseMessage(ElementToObject(rawElement), index++, conversation, selfSender, exportRoot, senders);
-        }
     }
 
     internal static IEnumerable<ParsedMessage> IterateMessages(
@@ -712,38 +650,6 @@ public static class WeFlowParser
         return name.Length > 0 ? name : nativeId;
     }
 
-    internal static bool AsBool(JsonNode? value)
-    {
-        if (value is JsonValue scalar)
-        {
-            if (scalar.TryGetValue<string>(out var text))
-            {
-                var trimmed = text.Trim().ToLowerInvariant();
-                return trimmed is "1" or "true" or "yes";
-            }
-
-            if (scalar.TryGetValue<bool>(out var b))
-            {
-                return b;
-            }
-
-            if (scalar.TryGetValue<long>(out var l))
-            {
-                return l != 0;
-            }
-        }
-
-        return false;
-    }
-
-    private static void AddUnique(List<string> values, string candidate)
-    {
-        if (candidate.Length > 0 && !values.Contains(candidate))
-        {
-            values.Add(candidate);
-        }
-    }
-
     private static string XmlText(XElement parent, string name)
     {
         return ImportText.Clean(parent.Element(name)?.Value);
@@ -752,87 +658,6 @@ public static class WeFlowParser
     private static string Attr(XElement element, string name)
     {
         return ImportText.Clean(element.Attribute(name)?.Value);
-    }
-
-    private static IEnumerable<JsonElement> MessagesOf(JsonDocument document)
-    {
-        if (document.RootElement.ValueKind == JsonValueKind.Object
-            && document.RootElement.TryGetProperty("messages", out var messages)
-            && messages.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in messages.EnumerateArray())
-            {
-                yield return item;
-            }
-        }
-    }
-
-    private static JsonObject ElementToObject(JsonElement element)
-    {
-        return JsonSerializer.Deserialize<JsonObject>(element.GetRawText())
-            ?? throw new InvalidOperationException("消息不是 JSON 对象");
-    }
-
-    private static string TryGetRaw(JsonObject obj, string key)
-    {
-        return ImportText.RawText(obj.TryGetPropertyValue(key, out var value) ? value : null);
-    }
-
-    private static JsonNode? Get(JsonObject obj, string key)
-    {
-        return obj.TryGetPropertyValue(key, out var value) ? value : null;
-    }
-
-    private static string LocalTypeString(JsonNode? node)
-    {
-        if (node is null)
-        {
-            return "None";
-        }
-
-        var raw = node.ToJsonString();
-        return raw is "true" or "false" ? raw == "true" ? "True" : "False" : raw.Trim('"');
-    }
-
-    private static JsonNode? NullStr(string? value)
-    {
-        return value is null ? null : JsonValue.Create(value);
-    }
-
-    private static string ElementString(JsonElement element, string key)
-    {
-        if (element.ValueKind == JsonValueKind.Object
-            && element.TryGetProperty(key, out var property))
-        {
-            return property.ValueKind == JsonValueKind.String
-                ? property.GetString() ?? string.Empty
-                : property.ToString();
-        }
-
-        return string.Empty;
-    }
-
-    private static string OrEmpty(string value, string fallback)
-    {
-        return value.Length > 0 ? value : fallback;
-    }
-
-    private static string? OrNull(string value)
-    {
-        return value.Length > 0 ? value : null;
-    }
-
-    private static string FirstNonEmpty(params string[] values)
-    {
-        foreach (var value in values)
-        {
-            if (value.Length > 0)
-            {
-                return value;
-            }
-        }
-
-        return string.Empty;
     }
 }
 

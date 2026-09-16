@@ -520,7 +520,7 @@ public sealed class QqChunkManifestTests : IDisposable
         string? nativeId = null;
         var openError = Record.Exception(() =>
         {
-            using var export = new QqChunkedExportFormat().Open(manifest);
+            var export = new QqChunkedExportFormat().Open(manifest);
             nativeId = Assert.Single(export.EnumerateMessages()).NativeId;
         });
         string? digest = null;
@@ -635,7 +635,7 @@ public sealed class QqChunkManifestTests : IDisposable
         Assert.Equal(new[] { chunk }, resolved);
         Assert.DoesNotContain(chatLab, resolved);
 
-        using var export = new QqChunkedExportFormat().Open(manifest);
+        var export = new QqChunkedExportFormat().Open(manifest);
         var message = Assert.Single(export.EnumerateMessages());
         Assert.Equal("q1", message.NativeId);
         Assert.Equal("qq-chunk", message.Content);
@@ -670,7 +670,7 @@ public sealed class QqChunkManifestTests : IDisposable
         Assert.Equal(new[] { padded, rootChunk }, resolved);
         Assert.DoesNotContain(chatLab, resolved);
 
-        using var export = new QqChunkedExportFormat().Open(manifest);
+        var export = new QqChunkedExportFormat().Open(manifest);
         var messages = export.EnumerateMessages().ToList();
         Assert.Equal(new[] { "q2", "q1" }, messages.Select(message => message.NativeId));
         Assert.Equal(new[] { "padded-chunk", "root-chunk" }, messages.Select(message => message.Content));

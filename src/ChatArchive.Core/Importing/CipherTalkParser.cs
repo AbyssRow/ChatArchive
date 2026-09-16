@@ -1,6 +1,6 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using static ChatArchive.Core.Importing.ImportText;
 
 namespace ChatArchive.Core.Importing;
 
@@ -73,28 +73,6 @@ public static class CipherTalkParser
         "appMsgSourceName", "locationLabel", "locationPoiname",
         "musicTitle", "finderTitle", "title", "description", "summary",
     };
-
-    public static (ParsedConversation Conversation, string? SelfSender) ReadConversation(
-        JsonDocument document, string filePath)
-    {
-        if (document.RootElement.ValueKind != JsonValueKind.Object
-            || !document.RootElement.TryGetProperty("session", out var sessionElement)
-            || sessionElement.ValueKind != JsonValueKind.Object
-            || JsonSerializer.Deserialize<JsonObject>(sessionElement.GetRawText()) is not { } parsedSession)
-        {
-            throw new ImportFormatException(filePath, "CipherTalk session 无效");
-        }
-
-        var conversation = ReadConversation(parsedSession, filePath);
-        var selfSender = !string.IsNullOrEmpty(conversation.AccountId) && conversation.AccountId != "wechat-default"
-            ? conversation.AccountId
-            : InferSelfSender(
-                MessagesOf(document).Select(ElementToObject),
-                conversation,
-                CancellationToken.None);
-
-        return (conversation, selfSender);
-    }
 
     internal static ParsedConversation ReadConversation(JsonObject session, string filePath)
     {
@@ -189,20 +167,6 @@ public static class CipherTalkParser
         }
 
         return selfSender;
-    }
-
-    public static IEnumerable<ParsedMessage> IterateMessages(
-        JsonDocument document,
-        ParsedConversation conversation,
-        string? selfSender,
-        string filePath)
-    {
-        var exportRoot = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
-        var index = 0;
-        foreach (var rawElement in MessagesOf(document))
-        {
-            yield return ParseMessage(ElementToObject(rawElement), index++, conversation, selfSender, exportRoot);
-        }
     }
 
     internal static IEnumerable<ParsedMessage> IterateMessages(
@@ -604,114 +568,9 @@ public static class CipherTalkParser
         return name.Length > 0 ? name : nativeId;
     }
 
-    internal static bool AsBool(JsonNode? value)
-    {
-        if (value is JsonValue scalar)
-        {
-            if (scalar.TryGetValue<string>(out var text))
-            {
-                var trimmed = text.Trim().ToLowerInvariant();
-                return trimmed is "1" or "true" or "yes";
-            }
-
-            if (scalar.TryGetValue<bool>(out var b))
-            {
-                return b;
-            }
-
-            if (scalar.TryGetValue<long>(out var l))
-            {
-                return l != 0;
-            }
-
-            if (scalar.TryGetValue<int>(out var i))
-            {
-                return i != 0;
-            }
-        }
-
-        return false;
-    }
-
-    private static void AddUnique(List<string> values, string candidate)
-    {
-        if (candidate.Length > 0 && !values.Contains(candidate))
-        {
-            values.Add(candidate);
-        }
-    }
-
-    private static IEnumerable<JsonElement> MessagesOf(JsonDocument document)
-    {
-        if (document.RootElement.ValueKind == JsonValueKind.Object
-            && document.RootElement.TryGetProperty("messages", out var messages)
-            && messages.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in messages.EnumerateArray())
-            {
-                yield return item;
-            }
-        }
-    }
-
-    private static JsonObject ElementToObject(JsonElement element)
-    {
-        return JsonSerializer.Deserialize<JsonObject>(element.GetRawText())
-            ?? throw new InvalidOperationException("消息不是 JSON 对象");
-    }
-
-    private static string TryGetRaw(JsonObject obj, string key)
-    {
-        return ImportText.RawText(obj.TryGetPropertyValue(key, out var value) ? value : null);
-    }
-
-    private static JsonNode? Get(JsonObject obj, string key)
-    {
-        return obj.TryGetPropertyValue(key, out var value) ? value : null;
-    }
-
-    private static string LocalTypeString(JsonNode? node)
-    {
-        if (node is null)
-        {
-            return "None";
-        }
-
-        var raw = node.ToJsonString();
-        return raw is "true" or "false" ? (raw == "true" ? "True" : "False") : raw.Trim('"');
-    }
-
-    private static JsonNode? NullStr(string? value)
-    {
-        return value is null ? null : JsonValue.Create(value);
-    }
-
     private static int? AsNullableInt(JsonNode? node)
     {
         var parsed = ImportText.AsLong(node);
         return parsed.HasValue ? (int?)checked((int)Math.Clamp(parsed.Value, int.MinValue, int.MaxValue)) : null;
-    }
-
-    private static string OrEmpty(string value, string fallback)
-    {
-        return value.Length > 0 ? value : fallback;
-    }
-
-    private static string? OrNull(string value)
-    {
-        return value.Length > 0 ? value : null;
-    }
-
-    private static string FirstNonEmpty(params string[] values)
-    {
-        foreach (var value in values)
-        {
-            if (value.Length > 0)
-            {
-                return value;
-            }
-        }
-
-        return string.Empty;
     }
 }

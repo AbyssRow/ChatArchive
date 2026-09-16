@@ -77,8 +77,8 @@ internal static class QqExcelParser
 
             var message = ReadMessageRow(row, profile.MessageHeaders, filePath);
             var key = JoinKey(message.Time, message.Uin, message.Sender);
-            var senderName = FirstNonEmpty(message.Sender, "unknown");
-            var senderNativeId = FirstNonEmpty(
+            var senderName = ImportText.FirstNonEmpty(message.Sender, "unknown");
+            var senderNativeId = ImportText.FirstNonEmpty(
                 message.Uin,
                 FlatMessageFactory.SyntheticSenderNativeId(conversation.NativeId, senderName));
             var messageType = MapMessageType(message.Type);
@@ -91,7 +91,7 @@ internal static class QqExcelParser
             messageCount++;
             yield return FlatMessageFactory.Create(new FlatMessageData(
                 NativeId: null,
-                LocalId: NullIfEmpty(message.Number),
+                LocalId: ImportText.OrNull(message.Number),
                 TimestampMs: message.TimestampMs,
                 SenderNativeId: senderNativeId,
                 SenderName: senderName,
@@ -184,7 +184,7 @@ internal static class QqExcelParser
             var location = ClassifyResourceLocation(exportRoot, url);
             var localPath = location.LocalPath;
             var size = ParseSize(values["大小(字节)"], filePath, row.RowIndex);
-            var filename = NullIfEmpty(values["文件名"])
+            var filename = ImportText.OrNull(values["文件名"])
                 ?? (localPath is null ? null : Path.GetFileName(localPath));
             var metadata = new JsonObject
             {
@@ -424,11 +424,6 @@ internal static class QqExcelParser
 
         return raw;
     }
-
-    private static string FirstNonEmpty(params string[] values) =>
-        values.FirstOrDefault(value => value.Length > 0) ?? string.Empty;
-
-    private static string? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 
     private sealed record Profile(
         OpenXmlSheet MessageSheet,

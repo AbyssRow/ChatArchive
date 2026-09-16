@@ -32,15 +32,15 @@ internal static class WeFlowExcelParser
     {
         using var workbook = OpenXmlWorkbookReader.Open(filePath, cancellationToken);
         var profile = ReadProfile(workbook, filePath, cancellationToken);
-        var nativeId = MetadataValue(profile.Metadata, "微信ID");
+        var nativeId = OpenXmlRowSupport.Value(profile.Metadata, "微信ID");
         if (nativeId.Length == 0)
         {
             nativeId = ImportText.StableFileNativeId(filePath);
         }
 
-        var title = FirstNonEmpty(
-            MetadataValue(profile.Metadata, "备注"),
-            MetadataValue(profile.Metadata, "昵称"),
+        var title = ImportText.FirstNonEmpty(
+            OpenXmlRowSupport.Value(profile.Metadata, "备注"),
+            OpenXmlRowSupport.Value(profile.Metadata, "昵称"),
             Path.GetFileNameWithoutExtension(filePath));
         var kind = profile.Layout == ExcelLayout.Group || nativeId.EndsWith("@chatroom", StringComparison.OrdinalIgnoreCase)
             ? "group"
@@ -65,31 +65,28 @@ internal static class WeFlowExcelParser
                 continue;
             }
 
-            if (IsBlank(row))
+            if (OpenXmlRowSupport.IsBlank(row))
             {
                 continue;
             }
 
-            var values = profile.Headers.ToDictionary(
-                pair => pair.Key,
-                pair => Value(row, pair.Value),
-                StringComparer.Ordinal);
+            var values = OpenXmlRowSupport.ReadValues(row, profile.Headers);
             var timestampText = values["时间"];
             if (!ImportText.TryParseFlexibleTimestamp(timestampText, out var timestampMs))
             {
                 throw new ImportFormatException(filePath, $"聊天记录第 {row.RowIndex} 行时间无效：{timestampText}");
             }
 
-            var senderIdentity = FirstNonEmpty(
+            var senderIdentity = ImportText.FirstNonEmpty(
                 values["发送者身份"],
-                Value(values, "发送者昵称"),
-                Value(values, "群昵称"));
-            var senderName = FirstNonEmpty(
-                Value(values, "发送者昵称"),
-                Value(values, "群昵称"),
+                OpenXmlRowSupport.Value(values, "发送者昵称"),
+                OpenXmlRowSupport.Value(values, "群昵称"));
+            var senderName = ImportText.FirstNonEmpty(
+                OpenXmlRowSupport.Value(values, "发送者昵称"),
+                OpenXmlRowSupport.Value(values, "群昵称"),
                 senderIdentity,
                 "unknown");
-            var senderWechatId = Value(values, "发送者微信ID");
+            var senderWechatId = OpenXmlRowSupport.Value(values, "发送者微信ID");
             var senderNativeId = senderWechatId.Length > 0
                 ? senderWechatId
                 : FlatMessageFactory.SyntheticSenderNativeId(conversation.NativeId, senderIdentity);
@@ -126,7 +123,7 @@ internal static class WeFlowExcelParser
             messageCount++;
             yield return FlatMessageFactory.Create(new FlatMessageData(
                 NativeId: null,
-                LocalId: NullIfEmpty(values["序号"]),
+                LocalId: ImportText.OrNull(values["序号"]),
                 TimestampMs: timestampMs,
                 SenderNativeId: senderNativeId,
                 SenderName: senderName,
@@ -187,8 +184,8 @@ internal static class WeFlowExcelParser
             AddMetadata(row, metadata);
             if (TryGetLayout(row, out var layout, out var headers))
             {
-                if (!string.Equals(MetadataValue(metadata, "会话信息"), "会话信息", StringComparison.Ordinal)
-                    || !string.Equals(MetadataValue(metadata, "导出工具"), "WeFlow", StringComparison.Ordinal)
+                if (!string.Equals(OpenXmlRowSupport.Value(metadata, "会话信息"), "会话信息", StringComparison.Ordinal)
+                    || !string.Equals(OpenXmlRowSupport.Value(metadata, "导出工具"), "WeFlow", StringComparison.Ordinal)
                     || !metadata.ContainsKey("微信ID"))
                 {
                     return false;
@@ -227,15 +224,13 @@ internal static class WeFlowExcelParser
             (ExcelLayout.Group, GroupHeaders),
         })
         {
-            if (!HasExactHeaders(row, candidate.Item2))
+            if (!OpenXmlRowSupport.HasExactHeaders(row, candidate.Item2))
             {
                 continue;
             }
 
             layout = candidate.Item1;
-            headers = candidate.Item2
-                .Select((name, index) => new KeyValuePair<string, int>(name, index + 1))
-                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+            headers = OpenXmlRowSupport.HeaderMap(candidate.Item2);
             return true;
         }
 
@@ -244,39 +239,8 @@ internal static class WeFlowExcelParser
         return false;
     }
 
-    private static bool HasExactHeaders(OpenXmlRow row, IReadOnlyList<string> expected)
-    {
-        if (row.Cells.Values.Any(cell => cell.ColumnIndex > expected.Count && ImportText.Clean(cell.Value).Length > 0))
-        {
-            return false;
-        }
-
-        for (var index = 0; index < expected.Count; index++)
-        {
-            if (!row.Cells.TryGetValue(index + 1, out var cell)
-                || !string.Equals(ImportText.Clean(cell.Value), expected[index], StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool IsBlank(OpenXmlRow row) => row.Cells.Values.All(cell => ImportText.Clean(cell.Value).Length == 0);
-
     private static string Value(OpenXmlRow row, int columnIndex) =>
         row.Cells.TryGetValue(columnIndex, out var cell) ? ImportText.Clean(cell.Value) : string.Empty;
-
-    private static string Value(IReadOnlyDictionary<string, string> values, string key) =>
-        values.TryGetValue(key, out var value) ? value : string.Empty;
-
-    private static string MetadataValue(IReadOnlyDictionary<string, string> metadata, string key) =>
-        metadata.TryGetValue(key, out var value) ? value : string.Empty;
-
-    private static string FirstNonEmpty(params string[] values) => values.FirstOrDefault(value => value.Length > 0) ?? string.Empty;
-
-    private static string? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 
     private static string AttachmentKind(string messageType) => messageType is "image" or "audio" or "video" or "emoji" or "file"
         ? messageType

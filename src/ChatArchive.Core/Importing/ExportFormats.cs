@@ -3,16 +3,77 @@ using ChatArchive.Core.IO;
 
 namespace ChatArchive.Core.Importing;
 
+file static class ExportFormatText
+{
+    public static string Display(string value) =>
+        value.Length == 0 ? "（缺失）" : $"“{value}”";
+}
+
+file static class QqExporter
+{
+    public const string Name = "QQChatExporter";
+
+    public static JsonObject? TryReadMetadata(string path, CancellationToken cancellationToken) =>
+        ChunkedJsonReader.TryReadObjectProperty(path, "metadata", cancellationToken)
+        ?? ChunkedJsonReader.TryReadObjectProperty(path, "exporter", cancellationToken);
+}
+
+file static class ChatLabHeader
+{
+    public const string SupportedVersion = "0.0.2";
+
+    public static bool VersionMatches(JsonObject chatlab) =>
+        string.Equals(ImportText.Clean(chatlab["version"]), SupportedVersion, StringComparison.Ordinal);
+
+    public static void EnsureVersion(JsonObject chatlab, string filePath)
+    {
+        if (!VersionMatches(chatlab))
+        {
+            throw new ImportFormatException(
+                filePath,
+                $"不支持的 ChatLab 导出版本 {ExportFormatText.Display(ImportText.Clean(chatlab["version"]))}；支持版本 {SupportedVersion}");
+        }
+    }
+
+    public static MediaResolutionPolicy MediaPolicy(JsonObject chatlab) =>
+        string.Equals(ImportText.Clean(chatlab["generator"]), "WeFlow", StringComparison.Ordinal)
+            ? MediaResolutionPolicy.WeFlowLayoutA
+            : MediaResolutionPolicy.Strict;
+
+    public static string OwnerId(JsonObject meta) =>
+        ImportText.Clean(ImportText.FirstNonEmpty(
+            ImportText.Clean(meta["ownerId"]),
+            ImportText.Clean(meta["ownerID"]),
+            ImportText.Clean(meta["selfWxid"]),
+            ImportText.Clean(meta["selfId"]),
+            ImportText.Clean(meta["accountId"])));
+}
+
+public class ParserExportFormat(
+    string platform,
+    Func<string, CancellationToken, bool> matches,
+    Func<string, CancellationToken, ParsedConversation> readConversation,
+    Func<string, ParsedConversation, CancellationToken, IEnumerable<ParsedMessage>> iterateMessages)
+    : IChatExportFormat
+{
+    public string Platform => platform;
+
+    public bool Matches(string filePath, CancellationToken cancellationToken = default) =>
+        matches(filePath, cancellationToken);
+
+    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
+    {
+        var conversation = readConversation(filePath, cancellationToken);
+        return new ExportFile(conversation, token => iterateMessages(filePath, conversation, token));
+    }
+}
+
 /// <summary>QQ Chat Exporter 格式适配器。</summary>
 public sealed class QqExportFormat : IChatExportFormat
 {
-    private const string ExporterName = "QQChatExporter";
-
     public string Platform => "qq";
 
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
-    public bool Matches(string filePath, CancellationToken cancellationToken)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase)
@@ -21,63 +82,30 @@ public sealed class QqExportFormat : IChatExportFormat
             return false;
         }
 
-        if (!ChunkedJsonReader.ContainsRootProperties(
-                filePath,
-                new[] { "chatInfo" },
-                cancellationToken))
+        if (!ChunkedJsonReader.ContainsRootProperties(filePath, ["chatInfo"], cancellationToken))
         {
             return false;
         }
 
-        JsonObject? metadata = null;
-        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }, cancellationToken))
-        {
-            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "metadata", cancellationToken);
-        }
-        else if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "exporter" }, cancellationToken))
-        {
-            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "exporter", cancellationToken);
-        }
-
-        if (metadata == null)
-        {
-            return false;
-        }
-
-        return string.Equals(
-            ImportText.Clean(metadata["name"]),
-            ExporterName,
-            StringComparison.OrdinalIgnoreCase);
+        var metadata = QqExporter.TryReadMetadata(filePath, cancellationToken);
+        return metadata is not null
+            && string.Equals(
+                ImportText.Clean(metadata["name"]),
+                QqExporter.Name,
+                StringComparison.OrdinalIgnoreCase);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        JsonObject? metadata = null;
-        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }, cancellationToken))
-        {
-            metadata = ChunkedJsonReader.ReadObjectProperty(
-                filePath,
-                "metadata",
-                cancellationToken);
-        }
-        else if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "exporter" }, cancellationToken))
-        {
-            metadata = ChunkedJsonReader.ReadObjectProperty(
-                filePath,
-                "exporter",
-                cancellationToken);
-        }
-        else
-        {
-            throw new ImportFormatException(filePath, "缺少 metadata 或 exporter 对象");
-        }
+        var metadata = QqExporter.TryReadMetadata(filePath, cancellationToken)
+            ?? throw new ImportFormatException(filePath, "缺少 metadata 或 exporter 对象");
 
         var exporterName = ImportText.Clean(metadata["name"]);
-        if (!string.Equals(exporterName, ExporterName, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(exporterName, QqExporter.Name, StringComparison.OrdinalIgnoreCase))
         {
             throw new ImportFormatException(
                 filePath,
-                $"QQ 导出器标识无效：应为 {ExporterName}，实际为 {Display(exporterName)}");
+                $"QQ 导出器标识无效：应为 {QqExporter.Name}，实际为 {ExportFormatText.Display(exporterName)}");
         }
 
         var chat = ChunkedJsonReader.ReadObjectProperty(filePath, "chatInfo", cancellationToken);
@@ -93,20 +121,14 @@ public sealed class QqExportFormat : IChatExportFormat
                 selfUid,
                 selfUin));
     }
-
-    private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
 }
 
 /// <summary>QQ Chat Exporter 分块 JSONL (manifest.json + chunks/*.jsonl) 格式适配器。</summary>
 public sealed class QqChunkedExportFormat : IChatExportFormat
 {
-    private const string ExporterName = "QQChatExporter";
-
     public string Platform => "qq";
 
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
-    public bool Matches(string filePath, CancellationToken cancellationToken)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetFileName(filePath), "manifest.json", StringComparison.OrdinalIgnoreCase))
@@ -117,31 +139,14 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
         var safeManifest = QqChunkManifest.ValidateManifestFile(filePath);
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (!ChunkedJsonReader.ContainsRootProperties(
-                safeManifest,
-                new[] { "chatInfo" },
-                cancellationToken))
+        if (!ChunkedJsonReader.ContainsRootProperties(safeManifest, ["chatInfo"], cancellationToken))
         {
             return false;
         }
 
-        JsonObject? metadata = null;
-        if (ChunkedJsonReader.ContainsRootProperties(safeManifest, new[] { "metadata" }, cancellationToken))
-        {
-            metadata = ChunkedJsonReader.ReadObjectProperty(safeManifest, "metadata", cancellationToken);
-        }
-        else if (ChunkedJsonReader.ContainsRootProperties(safeManifest, new[] { "exporter" }, cancellationToken))
-        {
-            metadata = ChunkedJsonReader.ReadObjectProperty(safeManifest, "exporter", cancellationToken);
-        }
-
-        if (metadata == null)
-        {
-            return false;
-        }
-
-        var name = ImportText.Clean(metadata["name"]);
-        if (!name.Contains(ExporterName, StringComparison.OrdinalIgnoreCase))
+        var metadata = QqExporter.TryReadMetadata(safeManifest, cancellationToken);
+        if (metadata is null
+            || !ImportText.Clean(metadata["name"]).Contains(QqExporter.Name, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -153,27 +158,15 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
         var chunkFiles = QqChunkManifest.ResolveChunkFiles(filePath, cancellationToken);
-
-        JsonObject? metadata = null;
-        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "metadata" }, cancellationToken))
-        {
-            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "metadata", cancellationToken);
-        }
-        else if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "exporter" }, cancellationToken))
-        {
-            metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "exporter", cancellationToken);
-        }
-        else
-        {
-            throw new ImportFormatException(filePath, "缺少 metadata 或 exporter 对象");
-        }
+        var metadata = QqExporter.TryReadMetadata(filePath, cancellationToken)
+            ?? throw new ImportFormatException(filePath, "缺少 metadata 或 exporter 对象");
 
         var exporterName = ImportText.Clean(metadata["name"]);
-        if (!exporterName.Contains(ExporterName, StringComparison.OrdinalIgnoreCase))
+        if (!exporterName.Contains(QqExporter.Name, StringComparison.OrdinalIgnoreCase))
         {
             throw new ImportFormatException(
                 filePath,
-                $"QQ 导出器标识无效：应包含 {ExporterName}，实际为 {Display(exporterName)}");
+                $"QQ 导出器标识无效：应包含 {QqExporter.Name}，实际为 {ExportFormatText.Display(exporterName)}");
         }
 
         var chat = ChunkedJsonReader.ReadObjectProperty(filePath, "chatInfo", cancellationToken);
@@ -181,7 +174,6 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
         var selfUid = ImportText.Clean(chat["selfUid"]);
         var selfUin = ImportText.Clean(chat["selfUin"]);
         var selfSender = !string.IsNullOrEmpty(selfUid) ? selfUid : !string.IsNullOrEmpty(selfUin) ? selfUin : null;
-
         var manifestDir = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
 
         return new ExportFile(
@@ -267,9 +259,6 @@ public sealed class QqChunkedExportFormat : IChatExportFormat
                 ex);
         }
     }
-
-    private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
-
 }
 
 /// <summary>WeFlow 格式适配器。</summary>
@@ -277,9 +266,7 @@ public sealed class WeFlowExportFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
-    public bool Matches(string filePath, CancellationToken cancellationToken)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
@@ -289,19 +276,18 @@ public sealed class WeFlowExportFormat : IChatExportFormat
 
         return ChunkedJsonReader.ContainsRootProperties(
             filePath,
-            new[] { "weflow", "session" },
+            ["weflow", "session"],
             cancellationToken);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
-        var metadata = ChunkedJsonReader.ReadObjectProperty(filePath, "weflow", cancellationToken);
-
+        _ = ChunkedJsonReader.ReadObjectProperty(filePath, "weflow", cancellationToken);
         var session = ChunkedJsonReader.ReadObjectProperty(filePath, "session", cancellationToken);
         var conversation = WeFlowParser.ReadConversation(session, filePath);
 
         Dictionary<int, JsonObject>? senders = null;
-        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "senders" }, cancellationToken))
+        if (ChunkedJsonReader.ContainsRootProperties(filePath, ["senders"], cancellationToken))
         {
             senders = new Dictionary<int, JsonObject>();
             foreach (var senderObj in ChunkedJsonReader.EnumerateObjectArray(filePath, "senders", cancellationToken))
@@ -336,9 +322,7 @@ public sealed class CipherTalkDetailedJsonFormat : IChatExportFormat
 {
     public string Platform => "wechat";
 
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
-    public bool Matches(string filePath, CancellationToken cancellationToken)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
@@ -348,7 +332,7 @@ public sealed class CipherTalkDetailedJsonFormat : IChatExportFormat
 
         if (!ChunkedJsonReader.ContainsRootProperties(
                 filePath,
-                new[] { "exportInfo", "session", "messages" },
+                ["exportInfo", "session", "messages"],
                 cancellationToken))
         {
             return false;
@@ -403,13 +387,9 @@ public sealed class CipherTalkDetailedJsonFormat : IChatExportFormat
 /// <summary>ChatLab 0.0.2 Standard JSON 格式适配器。</summary>
 public sealed class ChatLabJsonExportFormat : IChatExportFormat
 {
-    private const string SupportedVersion = "0.0.2";
-
     public string Platform => "wechat";
 
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
-    public bool Matches(string filePath, CancellationToken cancellationToken)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(Path.GetExtension(filePath), ".json", StringComparison.OrdinalIgnoreCase))
@@ -417,53 +397,30 @@ public sealed class ChatLabJsonExportFormat : IChatExportFormat
             return false;
         }
 
-        if (!ChunkedJsonReader.ContainsRootProperties(
-                filePath,
-                new[] { "chatlab", "meta" },
-                cancellationToken))
+        if (!ChunkedJsonReader.ContainsRootProperties(filePath, ["chatlab", "meta"], cancellationToken))
         {
             return false;
         }
 
         var chatlab = ChunkedJsonReader.ReadObjectProperty(filePath, "chatlab", cancellationToken);
-        var version = ImportText.Clean(chatlab["version"]);
-        return string.Equals(version, SupportedVersion, StringComparison.Ordinal);
+        return ChatLabHeader.VersionMatches(chatlab);
     }
 
     public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
     {
         var chatlab = ChunkedJsonReader.ReadObjectProperty(filePath, "chatlab", cancellationToken);
-        var version = ImportText.Clean(chatlab["version"]);
-        if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
-        {
-            throw new ImportFormatException(
-                filePath,
-                $"不支持的 ChatLab 导出版本 {Display(version)}；支持版本 {SupportedVersion}");
-        }
+        ChatLabHeader.EnsureVersion(chatlab, filePath);
 
         var meta = ChunkedJsonReader.ReadObjectProperty(filePath, "meta", cancellationToken);
-
         List<JsonObject>? members = null;
-        if (ChunkedJsonReader.ContainsRootProperties(filePath, new[] { "members" }, cancellationToken))
+        if (ChunkedJsonReader.ContainsRootProperties(filePath, ["members"], cancellationToken))
         {
             members = ChunkedJsonReader.EnumerateObjectArray(filePath, "members", cancellationToken).ToList();
         }
 
         var conversation = ChatLabParser.ReadConversation(meta, filePath, members);
-        var mediaResolutionPolicy = string.Equals(
-            ImportText.Clean(chatlab["generator"]),
-            "WeFlow",
-            StringComparison.Ordinal)
-                ? MediaResolutionPolicy.WeFlowLayoutA
-                : MediaResolutionPolicy.Strict;
-
-        var ownerId = ImportText.Clean(FirstNonEmpty(
-            ImportText.Clean(meta["ownerId"]),
-            ImportText.Clean(meta["ownerID"]),
-            ImportText.Clean(meta["selfWxid"]),
-            ImportText.Clean(meta["selfId"]),
-            ImportText.Clean(meta["accountId"])));
-
+        var mediaResolutionPolicy = ChatLabHeader.MediaPolicy(chatlab);
+        var ownerId = ChatLabHeader.OwnerId(meta);
         var selfSender = !string.IsNullOrEmpty(ownerId)
             ? ownerId
             : ChatLabParser.InferSelfSender(
@@ -481,33 +438,14 @@ public sealed class ChatLabJsonExportFormat : IChatExportFormat
                 members,
                 mediaResolutionPolicy));
     }
-
-    private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
-
-    private static string FirstNonEmpty(params string[] values)
-    {
-        foreach (var value in values)
-        {
-            if (value.Length > 0)
-            {
-                return value;
-            }
-        }
-
-        return string.Empty;
-    }
 }
 
 /// <summary>ChatLab 0.0.2 JSONL 格式适配器。</summary>
 public sealed class ChatLabJsonlExportFormat : IChatExportFormat
 {
-    private const string SupportedVersion = "0.0.2";
-
     public string Platform => "wechat";
 
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
-    public bool Matches(string filePath, CancellationToken cancellationToken)
+    public bool Matches(string filePath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         try
@@ -543,9 +481,9 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
                     return false;
                 }
 
-                var parsed = System.Text.Json.Nodes.JsonNode.Parse(trimmed);
+                var parsed = JsonNode.Parse(trimmed);
                 cancellationToken.ThrowIfCancellationRequested();
-                if (parsed is System.Text.Json.Nodes.JsonObject obj)
+                if (parsed is JsonObject obj)
                 {
                     var typeTag = ImportText.Clean(obj["_type"]);
                     if (!string.Equals(typeTag, "header", StringComparison.OrdinalIgnoreCase))
@@ -554,11 +492,10 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
                         return false;
                     }
 
-                    if (obj["chatlab"] is System.Text.Json.Nodes.JsonObject chatlab)
+                    if (obj["chatlab"] is JsonObject chatlab)
                     {
-                        var version = ImportText.Clean(chatlab["version"]);
                         cancellationToken.ThrowIfCancellationRequested();
-                        return string.Equals(version, SupportedVersion, StringComparison.Ordinal);
+                        return ChatLabHeader.VersionMatches(chatlab);
                     }
                 }
 
@@ -594,7 +531,7 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
                         continue;
                     }
 
-                    if (System.Text.Json.Nodes.JsonNode.Parse(trimmed) is not System.Text.Json.Nodes.JsonObject obj)
+                    if (JsonNode.Parse(trimmed) is not JsonObject obj)
                     {
                         continue;
                     }
@@ -639,30 +576,12 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
             throw new ImportFormatException(filePath, "ChatLab JSONL header 缺少 chatlab 对象");
         }
 
-        var version = ImportText.Clean(chatlab["version"]);
-        if (!string.Equals(version, SupportedVersion, StringComparison.Ordinal))
-        {
-            throw new ImportFormatException(
-                filePath,
-                $"不支持的 ChatLab 导出版本 {Display(version)}；支持版本 {SupportedVersion}");
-        }
+        ChatLabHeader.EnsureVersion(chatlab, filePath);
 
         var meta = header["meta"] as JsonObject ?? header;
         var conversation = ChatLabParser.ReadConversation(meta, filePath, members);
-        var mediaResolutionPolicy = string.Equals(
-            ImportText.Clean(chatlab["generator"]),
-            "WeFlow",
-            StringComparison.Ordinal)
-                ? MediaResolutionPolicy.WeFlowLayoutA
-                : MediaResolutionPolicy.Strict;
-
-        var ownerId = ImportText.Clean(FirstNonEmpty(
-            ImportText.Clean(meta["ownerId"]),
-            ImportText.Clean(meta["ownerID"]),
-            ImportText.Clean(meta["selfWxid"]),
-            ImportText.Clean(meta["selfId"]),
-            ImportText.Clean(meta["accountId"])));
-
+        var mediaResolutionPolicy = ChatLabHeader.MediaPolicy(chatlab);
+        var ownerId = ChatLabHeader.OwnerId(meta);
         var selfSender = !string.IsNullOrEmpty(ownerId)
             ? ownerId
             : ChatLabParser.InferSelfSender(
@@ -680,106 +599,49 @@ public sealed class ChatLabJsonlExportFormat : IChatExportFormat
                 memberDict,
                 mediaResolutionPolicy));
     }
-
-    private static string Display(string version) => version.Length == 0 ? "（缺失）" : $"“{version}”";
-
-    private static string FirstNonEmpty(params string[] values)
-    {
-        foreach (var value in values)
-        {
-            if (value.Length > 0)
-            {
-                return value;
-            }
-        }
-
-        return string.Empty;
-    }
 }
 
-/// <summary>Current WeFlow CSV export adapter.</summary>
-public sealed class WeFlowCsvExportFormat : IChatExportFormat
-{
-    public string Platform => "wechat";
+public sealed class WeFlowCsvExportFormat() : ParserExportFormat(
+    "wechat",
+    WeFlowCsvParser.Matches,
+    WeFlowCsvParser.ReadConversation,
+    WeFlowCsvParser.IterateMessages);
 
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+public sealed class WeFlowMarkdownExportFormat() : ParserExportFormat(
+    "wechat",
+    WeFlowMarkdownParser.Matches,
+    WeFlowMarkdownParser.ReadConversation,
+    WeFlowMarkdownParser.IterateMessages);
 
-    public bool Matches(string filePath, CancellationToken cancellationToken)
-    {
-        return WeFlowCsvParser.Matches(filePath, cancellationToken);
-    }
+public sealed class QqTextExportFormat() : ParserExportFormat(
+    "qq",
+    QqTextParser.Matches,
+    QqTextParser.ReadConversation,
+    QqTextParser.IterateMessages);
 
-    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
-    {
-        var conversation = WeFlowCsvParser.ReadConversation(filePath, cancellationToken);
-        return new ExportFile(
-            conversation,
-            token => WeFlowCsvParser.IterateMessages(filePath, conversation, token));
-    }
-}
+public sealed class WeFlowTextExportFormat() : ParserExportFormat(
+    "wechat",
+    WeFlowTextParser.Matches,
+    WeFlowTextParser.ReadConversation,
+    WeFlowTextParser.IterateMessages);
 
-/// <summary>Current WeFlow Markdown export adapter.</summary>
-public sealed class WeFlowMarkdownExportFormat : IChatExportFormat
-{
-    public string Platform => "wechat";
+public sealed class WeFlowExcelExportFormat() : ParserExportFormat(
+    "wechat",
+    WeFlowExcelParser.Matches,
+    WeFlowExcelParser.ReadConversation,
+    WeFlowExcelParser.IterateMessages);
 
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
+public sealed class CipherTalkExcelExportFormat() : ParserExportFormat(
+    "wechat",
+    CipherTalkExcelParser.Matches,
+    CipherTalkExcelParser.ReadConversation,
+    CipherTalkExcelParser.IterateMessages);
 
-    public bool Matches(string filePath, CancellationToken cancellationToken)
-    {
-        return WeFlowMarkdownParser.Matches(filePath, cancellationToken);
-    }
-
-    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
-    {
-        var conversation = WeFlowMarkdownParser.ReadConversation(filePath, cancellationToken);
-        return new ExportFile(
-            conversation,
-            token => WeFlowMarkdownParser.IterateMessages(filePath, conversation, token));
-    }
-}
-
-/// <summary>Current QQ Chat Exporter TXT adapter.</summary>
-public sealed class QqTextExportFormat : IChatExportFormat
-{
-    public string Platform => "qq";
-
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
-    public bool Matches(string filePath, CancellationToken cancellationToken)
-    {
-        return QqTextParser.Matches(filePath, cancellationToken);
-    }
-
-    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
-    {
-        var conversation = QqTextParser.ReadConversation(filePath, cancellationToken);
-        return new ExportFile(
-            conversation,
-            token => QqTextParser.IterateMessages(filePath, conversation, token));
-    }
-}
-
-/// <summary>Current WeFlow TXT export adapter.</summary>
-public sealed class WeFlowTextExportFormat : IChatExportFormat
-{
-    public string Platform => "wechat";
-
-    public bool Matches(string filePath) => Matches(filePath, CancellationToken.None);
-
-    public bool Matches(string filePath, CancellationToken cancellationToken)
-    {
-        return WeFlowTextParser.Matches(filePath, cancellationToken);
-    }
-
-    public ExportFile Open(string filePath, CancellationToken cancellationToken = default)
-    {
-        var conversation = WeFlowTextParser.ReadConversation(filePath, cancellationToken);
-        return new ExportFile(
-            conversation,
-            token => WeFlowTextParser.IterateMessages(filePath, conversation, token));
-    }
-}
+public sealed class QqExcelExportFormat() : ParserExportFormat(
+    "qq",
+    QqExcelParser.Matches,
+    QqExcelParser.ReadConversation,
+    QqExcelParser.IterateMessages);
 
 /// <summary>注册表：新增导出格式时在此追加实例。</summary>
 public static class ExportFormats
@@ -787,8 +649,8 @@ public static class ExportFormats
     private static readonly object Gate = new();
     private static volatile IReadOnlyList<IChatExportFormat> _formats = CreateDefaultFormats();
 
-    private static IChatExportFormat[] CreateDefaultFormats() => new IChatExportFormat[]
-    {
+    private static IChatExportFormat[] CreateDefaultFormats() =>
+    [
         new QqExportFormat(),
         new QqChunkedExportFormat(),
         new WeFlowExportFormat(),
@@ -804,17 +666,14 @@ public static class ExportFormats
         new WeFlowExcelExportFormat(),
         new CipherTalkExcelExportFormat(),
         new QqExcelExportFormat(),
-    };
+    ];
 
     public static IReadOnlyList<IChatExportFormat> Default => _formats;
 
     /// <summary>运行时注册新格式（供测试或未来插件使用）。</summary>
     public static void Register(IChatExportFormat format)
     {
-        if (format is null)
-        {
-            throw new ArgumentNullException(nameof(format));
-        }
+        ArgumentNullException.ThrowIfNull(format);
 
         lock (Gate)
         {

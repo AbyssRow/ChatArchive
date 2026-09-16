@@ -35,7 +35,7 @@ public sealed class CipherTalkExcelFormatTests : IDisposable
         var format = new CipherTalkExcelExportFormat();
 
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         Assert.Equal("wechat", export.Conversation.Platform);
         Assert.Equal(ImportText.StableFileNativeId(path), export.Conversation.NativeId);
         Assert.Equal("工作表标题", export.Conversation.Title);
@@ -67,7 +67,7 @@ public sealed class CipherTalkExcelFormatTests : IDisposable
         var format = new CipherTalkExcelExportFormat();
 
         Assert.True(format.Matches(path));
-        using var export = format.Open(path);
+        var export = format.Open(path);
         var message = Assert.Single(export.EnumerateMessages());
         Assert.Equal(optionalHeaders.Contains("聊天记录详情") ? "正文\n一条转发记录" : "正文", message.Content);
     }
@@ -84,7 +84,7 @@ public sealed class CipherTalkExcelFormatTests : IDisposable
             messageType: "图片消息",
             rawType: "999");
 
-        using var export = new CipherTalkExcelExportFormat().Open(path);
+        var export = new CipherTalkExcelExportFormat().Open(path);
         var message = Assert.Single(export.EnumerateMessages());
 
         Assert.Equal(Fixtures.LocalUnixMs("2023-11-15 06:15:23"), message.TimestampMs);
@@ -135,7 +135,7 @@ public sealed class CipherTalkExcelFormatTests : IDisposable
     public void CipherTalkExcel_EarlyIteratorDisposalReleasesWorkbookFile()
     {
         var path = WriteWorkbook("dispose.xlsx", CoreHeaders);
-        using (var export = new CipherTalkExcelExportFormat().Open(path))
+        var export = new CipherTalkExcelExportFormat().Open(path);
         using (var messages = export.EnumerateMessages().GetEnumerator())
         {
             Assert.True(messages.MoveNext());

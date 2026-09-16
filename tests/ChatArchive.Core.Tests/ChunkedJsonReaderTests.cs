@@ -39,6 +39,7 @@ public sealed class ChunkedJsonReaderTests : IDisposable
 
         Assert.Throws<ImportFormatException>(
             () => ChunkedJsonReader.ReadObjectProperty(path, "session", bufferSize: 5));
+        Assert.Null(ChunkedJsonReader.TryReadObjectProperty(path, "session", bufferSize: 5));
     }
 
     [Fact]
