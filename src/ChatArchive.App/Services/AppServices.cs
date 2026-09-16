@@ -5,7 +5,6 @@ using ChatArchive.Core.Repositories;
 
 namespace ChatArchive.App.Services;
 
-/// <summary>应用级服务容器：数据库、仓储与媒体定位器。</summary>
 public sealed class AppServices
 {
     private static readonly object Gate = new();
@@ -18,9 +17,7 @@ public sealed class AppServices
     public SenderRepository Senders { get; }
     public StatsRepository Stats { get; }
     public ContactRepository Contacts { get; }
-    public ContactRepository ContactRepository => Contacts;
     public AvatarStorageService AvatarStorage { get; }
-    public AvatarStorageService AvatarStorageService => AvatarStorage;
     public AppSettings Settings { get; }
 
     private AppServices(AppSettings settings)

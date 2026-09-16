@@ -8,7 +8,6 @@ using Microsoft.UI.Dispatching;
 
 namespace ChatArchive.App.ViewModels;
 
-/// <summary>时间线条目：消息或日期分隔符。</summary>
 public abstract class TimelineEntry;
 
 public sealed class DateSeparatorEntry : TimelineEntry
@@ -151,7 +150,6 @@ public partial class TimelineViewModel : ObservableObject
 
     public void Activate(MessageEntry entry) => MessageActivated?.Invoke(entry);
 
-    /// <summary>搜索跳转：定位到某条消息并展示其上下文。</summary>
     public void JumpToMessage(long messageId)
     {
         _requestState.Clear();

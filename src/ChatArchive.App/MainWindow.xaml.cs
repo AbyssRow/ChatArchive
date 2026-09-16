@@ -95,46 +95,11 @@ public sealed partial class MainWindow : Window, IAppShell
             _stats = new StatsViewModel(services.Stats, dispatcher);
             _import = new ImportViewModel(services.Database, dispatcher);
 
-            _conversations.PropertyChanged += (_, e) =>
-            {
-                if (e.PropertyName == nameof(ConversationListViewModel.ErrorMessage)
-                    && _conversations.ErrorMessage.Length > 0)
-                {
-                    ShowError(_conversations.ErrorMessage);
-                }
-            };
-            _contacts.PropertyChanged += (_, e) =>
-            {
-                if (e.PropertyName == nameof(ContactsViewModel.ErrorMessage)
-                    && _contacts.ErrorMessage.Length > 0)
-                {
-                    ShowError(_contacts.ErrorMessage);
-                }
-            };
-            _timeline.PropertyChanged += (_, e) =>
-            {
-                if (e.PropertyName == nameof(TimelineViewModel.ErrorMessage)
-                    && _timeline.ErrorMessage.Length > 0)
-                {
-                    ShowError(_timeline.ErrorMessage);
-                }
-            };
-            _search.PropertyChanged += (_, e) =>
-            {
-                if (e.PropertyName == nameof(SearchViewModel.ErrorMessage)
-                    && _search.ErrorMessage.Length > 0)
-                {
-                    ShowError(_search.ErrorMessage);
-                }
-            };
-            _stats.PropertyChanged += (_, e) =>
-            {
-                if (e.PropertyName == nameof(StatsViewModel.ErrorMessage)
-                    && _stats.ErrorMessage.Length > 0)
-                {
-                    ShowError(_stats.ErrorMessage);
-                }
-            };
+            BindError(_conversations, () => _conversations.ErrorMessage);
+            BindError(_contacts, () => _contacts.ErrorMessage);
+            BindError(_timeline, () => _timeline.ErrorMessage);
+            BindError(_search, () => _search.ErrorMessage);
+            BindError(_stats, () => _stats.ErrorMessage);
 
             _import.ImportFinished += () =>
             {
@@ -195,7 +160,20 @@ public sealed partial class MainWindow : Window, IAppShell
         AppInfoBar.IsOpen = true;
     }
 
-    void IAppNavigator.GoTo(AppSection section) => GoTo(section);
+    private void BindError(
+        System.ComponentModel.INotifyPropertyChanged source,
+        Func<string> error)
+    {
+        source.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == "ErrorMessage" && error().Length > 0)
+            {
+                ShowError(error());
+            }
+        };
+    }
+
+    void IAppShell.GoTo(AppSection section) => GoTo(section);
 
     internal void GoTo(AppSection section)
     {

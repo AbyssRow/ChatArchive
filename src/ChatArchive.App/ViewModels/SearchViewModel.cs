@@ -136,15 +136,7 @@ public partial class SearchViewModel : ObservableObject
             var conversations = new List<SearchConversationOption> { new(null, "全部会话") };
             foreach (var conversation in completed.Result.Conversations)
             {
-                var platform = conversation.Platform?.ToLowerInvariant() switch
-                {
-                    "qq" => "QQ",
-                    "wechat" => "微信",
-                    "text" => "文本",
-                    "html" => "网页",
-                    "sql" => "SQL",
-                    _ => conversation.Platform ?? string.Empty,
-                };
+                var platform = UiInputParser.PlatformLabel(conversation.Platform);
                 conversations.Add(new(conversation.Id, $"{platform} · {conversation.Title}"));
             }
 

@@ -40,7 +40,6 @@ public partial class ContactViewModel : ObservableObject
 
     public event Action<long>? ConversationActivated;
 
-    /// <summary>资料弹窗里点击某个会话时调用。</summary>
     public void ActivateConversation(long conversationId)
     {
         ConversationActivated?.Invoke(conversationId);
@@ -72,55 +71,24 @@ public partial class ContactViewModel : ObservableObject
 
         OriginalName = profile.CurrentName;
 
+        ContactInfo? contact = null;
+        string? accountLabel = null;
         if (_contactRepository is not null)
         {
-            var contact = await Task.Run(() => _contactRepository.FindContactBySenderId(senderId));
-            BoundContact = contact;
-            IsBound = contact is not null;
-
+            contact = await Task.Run(() => _contactRepository.FindContactBySenderId(senderId));
             if (contact is not null)
             {
-                DisplayName = contact.DisplayName;
-                CustomAvatarPath = contact.CustomAvatarPath;
-
                 var detail = await Task.Run(() => _contactRepository.GetContactDetail(contact.Id));
-                var boundSender = detail?.Senders.FirstOrDefault(s => s.SenderId == senderId);
-                AccountLabel = boundSender?.AccountLabel;
-
-                var platformName = GetPlatformDisplayName(profile.Platform);
-                var idStr = profile.Platform == "qq"
-                    ? (profile.QQNumber ?? profile.NativeId)
-                    : profile.NativeId;
-
-                IdentityLine = string.IsNullOrWhiteSpace(AccountLabel)
-                    ? $"{platformName} {idStr}"
-                    : $"{platformName} {AccountLabel} ({idStr})";
-            }
-            else
-            {
-                DisplayName = profile.CurrentName;
-                CustomAvatarPath = null;
-                AccountLabel = null;
-                var platformName = GetPlatformDisplayName(profile.Platform);
-                var idStr = profile.Platform == "qq"
-                    ? (profile.QQNumber ?? profile.NativeId)
-                    : profile.NativeId;
-                IdentityLine = $"{platformName} {idStr}";
+                accountLabel = detail?.Senders.FirstOrDefault(s => s.SenderId == senderId)?.AccountLabel;
             }
         }
-        else
-        {
-            BoundContact = null;
-            IsBound = false;
-            DisplayName = profile.CurrentName;
-            CustomAvatarPath = null;
-            AccountLabel = null;
-            var platformName = GetPlatformDisplayName(profile.Platform);
-            var idStr = profile.Platform == "qq"
-                ? (profile.QQNumber ?? profile.NativeId)
-                : profile.NativeId;
-            IdentityLine = $"{platformName} {idStr}";
-        }
+
+        BoundContact = contact;
+        IsBound = contact is not null;
+        DisplayName = contact?.DisplayName ?? profile.CurrentName;
+        CustomAvatarPath = contact?.CustomAvatarPath;
+        AccountLabel = accountLabel;
+        IdentityLine = FormatIdentity(profile.Platform, profile.QQNumber, profile.NativeId, accountLabel);
 
         Aliases.Clear();
         foreach (var alias in profile.Aliases)
@@ -224,13 +192,16 @@ public partial class ContactViewModel : ObservableObject
         await LoadAsync(SenderId);
     }
 
-    private static string GetPlatformDisplayName(string? platform) => platform?.ToLowerInvariant() switch
+    private static string FormatIdentity(
+        string? platform,
+        string? qqNumber,
+        string nativeId,
+        string? accountLabel)
     {
-        "qq" => "QQ",
-        "wechat" => "微信",
-        "text" => "文本",
-        "html" => "网页",
-        "sql" => "SQL",
-        _ => platform ?? string.Empty,
-    };
+        var platformName = UiInputParser.PlatformLabel(platform);
+        var id = platform == "qq" ? qqNumber ?? nativeId : nativeId;
+        return string.IsNullOrWhiteSpace(accountLabel)
+            ? $"{platformName} {id}"
+            : $"{platformName} {accountLabel} ({id})";
+    }
 }

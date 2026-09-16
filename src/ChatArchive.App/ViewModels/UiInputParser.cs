@@ -2,6 +2,16 @@ namespace ChatArchive.App.ViewModels;
 
 public static class UiInputParser
 {
+    public static string PlatformLabel(string? platform) => platform?.ToLowerInvariant() switch
+    {
+        "qq" => "QQ",
+        "wechat" => "微信",
+        "text" => "文本",
+        "html" => "网页",
+        "sql" => "SQL",
+        _ => platform ?? string.Empty,
+    };
+
     public static (string? Platform, string? Kind) ParseConversationFilter(string? tag)
     {
         if (string.IsNullOrWhiteSpace(tag))

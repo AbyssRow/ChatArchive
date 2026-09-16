@@ -203,16 +203,6 @@ public sealed partial class SearchPage : Page, IShellPage
         RunSearch();
     }
 
-    private void SearchFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_searchOptionsReloadGate.IsLocked)
-        {
-            return;
-        }
-
-        SearchFilter_Changed(sender, e);
-    }
-
     private void SearchDate_Changed(CalendarDatePicker sender, CalendarDatePickerDateChangedEventArgs args)
     {
         if (_searchOptionsReloadGate.IsLocked)

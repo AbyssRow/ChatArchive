@@ -5,7 +5,6 @@ using Microsoft.Data.Sqlite;
 
 namespace ChatArchive.App.Services;
 
-/// <summary>exe 旁 settings.json：数据目录等配置。</summary>
 public sealed class AppSettings
 {
     public static string DefaultDataDirectory =>

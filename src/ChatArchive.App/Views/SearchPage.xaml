@@ -50,10 +50,10 @@
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <ComboBox x:Name="SearchConversationCombo" MinWidth="220" MaxWidth="320"
                           DisplayMemberPath="Label" SelectedValuePath="Id" SelectedIndex="0"
-                          SelectionChanged="SearchFilter_SelectionChanged" />
+                          SelectionChanged="SearchFilter_Changed" />
                 <ComboBox x:Name="SearchMessageTypeCombo" MinWidth="150"
                           DisplayMemberPath="Label" SelectedValuePath="Value" SelectedIndex="0"
-                          SelectionChanged="SearchFilter_SelectionChanged" />
+                          SelectionChanged="SearchFilter_Changed" />
                 <CalendarDatePicker x:Name="SearchDateFromPicker" PlaceholderText="开始日期"
                                     DateChanged="SearchDate_Changed" />
                 <CalendarDatePicker x:Name="SearchDateToPicker" PlaceholderText="结束日期"

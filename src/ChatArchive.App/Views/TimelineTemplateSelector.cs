@@ -4,7 +4,6 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace ChatArchive.App.Views;
 
-/// <summary>按条目类型选择气泡模板。</summary>
 public sealed class TimelineTemplateSelector : DataTemplateSelector
 {
     public DataTemplate Separator { get; set; } = null!;
