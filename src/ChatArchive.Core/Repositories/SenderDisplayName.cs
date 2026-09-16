@@ -9,14 +9,9 @@ internal static class SenderDisplayName
 
     public static IReadOnlyDictionary<(long SenderId, long? ConversationId), string> Resolve(
         SqliteConnection connection,
-        IEnumerable<(long SenderId, long? ConversationId)>? keys)
+        IEnumerable<(long SenderId, long? ConversationId)> keys)
     {
         var result = new Dictionary<(long SenderId, long? ConversationId), string>();
-        if (keys == null)
-        {
-            return result;
-        }
-
         var keyList = keys as IReadOnlyCollection<(long SenderId, long? ConversationId)> ?? keys.ToList();
         if (keyList.Count == 0)
         {

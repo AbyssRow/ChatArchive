@@ -182,9 +182,8 @@ public sealed class ContactRepositoryTests : IDisposable
         Assert.Single(detail.Senders);
         Assert.Equal(sender2, detail.Senders[0].SenderId);
 
-        var unbound = _repository.ListUnboundSenders();
-        Assert.Contains(unbound, s => s.SenderId == sender1);
-        Assert.DoesNotContain(unbound, s => s.SenderId == sender2);
+        Assert.Null(_repository.FindContactBySenderId(sender1));
+        Assert.Equal(contactId, _repository.FindContactBySenderId(sender2)!.Id);
     }
 
     [Fact]
@@ -488,11 +487,15 @@ public sealed class ContactRepositoryTests : IDisposable
             "Confirmed source",
             initialBindings: [(sender, "旧标签", true)]);
         var targetContact = _repository.CreateContact("Transfer target");
+        var sourceSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(sourceContact));
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
 
         _repository.TransferSenderFromExpectedContact(
             targetContact,
+            targetSnapshot.IdentityToken,
             sender,
             sourceContact,
+            sourceSnapshot.IdentityToken,
             accountLabel: "新标签",
             isPrimary: true);
 
@@ -687,11 +690,14 @@ public sealed class ContactRepositoryTests : IDisposable
             isPrimary: false,
             forceRebind: true);
 
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(requestedTarget));
         var exception = Assert.Throws<InvalidOperationException>(() =>
             _repository.TransferSenderFromExpectedContact(
                 requestedTarget,
+                targetSnapshot.IdentityToken,
                 sender,
                 snapshot.BoundContactId!.Value,
+                snapshot.BoundContactIdentityToken!,
                 accountLabel: "错误新标签",
                 isPrimary: true));
 
@@ -729,11 +735,14 @@ public sealed class ContactRepositoryTests : IDisposable
 
         _repository.UnbindSender(confirmedSource, sender);
 
+        var targetSnapshot = Assert.IsType<ContactDetail>(_repository.GetContactDetail(targetContact));
         var exception = Assert.Throws<InvalidOperationException>(() =>
             _repository.TransferSenderFromExpectedContact(
                 targetContact,
+                targetSnapshot.IdentityToken,
                 sender,
                 snapshot.BoundContactId!.Value,
+                snapshot.BoundContactIdentityToken!,
                 accountLabel: "不应写入",
                 isPrimary: true));
 
@@ -828,10 +837,6 @@ public sealed class ContactRepositoryTests : IDisposable
         Assert.True(reader.NextResult());
         Assert.True(reader.Read());
         Assert.Equal(1, reader.GetInt64(0));
-
-        // Sender is now in unbound senders list
-        var unbound = _repository.ListUnboundSenders();
-        Assert.Contains(unbound, s => s.SenderId == senderId);
     }
 
     [Fact]
@@ -959,38 +964,6 @@ public sealed class ContactRepositoryTests : IDisposable
     }
 
     [Fact]
-    public void ListUnboundSenders_WithKeywordSearch()
-    {
-        var s1 = _archive.AddSender("wx_1", "Zack 1", platform: "wechat");
-        var s2 = _archive.AddSender("qq_2", "Zack 2", platform: "qq");
-        var s3 = _archive.AddSender("wx_3", "Wendy", platform: "wechat");
-
-        var conv = _archive.AddConversation("c_unbound", "Chat");
-        _archive.AddMessage(conv, s2, 1000, "M1");
-        _archive.AddMessage(conv, s2, 2000, "M2");
-
-        // Bind s1 to a contact
-        _repository.CreateContact("Zack Contact", initialBindings: new[] { (s1, (string?)null, true) });
-
-        // Unbound should only contain s2 and s3
-        var unbound = _repository.ListUnboundSenders();
-        Assert.Equal(2, unbound.Count);
-        Assert.Equal(s2, unbound[0].SenderId); // Order by message count DESC
-        Assert.Equal(2, unbound[0].MessageCount);
-        Assert.Equal(s3, unbound[1].SenderId);
-        Assert.Equal(0, unbound[1].MessageCount);
-
-        // Keyword filter
-        var filtered = _repository.ListUnboundSenders("Wendy");
-        Assert.Single(filtered);
-        Assert.Equal(s3, filtered[0].SenderId);
-
-        var filteredNative = _repository.ListUnboundSenders("qq_2");
-        Assert.Single(filteredNative);
-        Assert.Equal(s2, filteredNative[0].SenderId);
-    }
-
-    [Fact]
     public void AutoPopulateContactsFromSenders_OnlyIncludesPrivateChatSenders_ExcludesGroupSenders()
     {
         // 1. Private chat sender (should be auto-populated)
@@ -1114,44 +1087,11 @@ public sealed class ContactRepositoryTests : IDisposable
     }
 
     [Fact]
-    public void SenderDisplayName_Resolve_Handles_Null_And_Empty_Keys_Safely()
+    public void SenderDisplayName_Resolve_Handles_Empty_Keys_Safely()
     {
         using var connection = _archive.Open();
         var emptyResult = SenderDisplayName.Resolve(connection, Array.Empty<(long, long?)>());
         Assert.Empty(emptyResult);
-
-        var nullResult = SenderDisplayName.Resolve(connection, null);
-        Assert.Empty(nullResult);
-    }
-
-    [Fact]
-    public void ListUnboundSenders_HandlesMoreThan1000Senders_WithoutSqliteOverflow()
-    {
-        using (var connection = _archive.Open())
-        {
-            using var tx = connection.BeginTransaction();
-            for (var i = 1; i <= 1050; i++)
-            {
-                using var cmd = connection.CreateCommand();
-                cmd.Transaction = tx;
-                cmd.CommandText = "INSERT INTO senders(id, platform, account_id, native_id, current_name) VALUES (@id, 'wechat', 'acc', @native, @name)";
-                cmd.Parameters.AddWithValue("@id", i + 10000);
-                cmd.Parameters.AddWithValue("@native", $"wxid_{i}");
-                cmd.Parameters.AddWithValue("@name", $"User_{i}");
-                cmd.ExecuteNonQuery();
-
-                using var aliasCmd = connection.CreateCommand();
-                aliasCmd.Transaction = tx;
-                aliasCmd.CommandText = "INSERT INTO sender_aliases(sender_id, alias) VALUES (@id, @alias)";
-                aliasCmd.Parameters.AddWithValue("@id", i + 10000);
-                aliasCmd.Parameters.AddWithValue("@alias", $"Alias_{i}");
-                aliasCmd.ExecuteNonQuery();
-            }
-            tx.Commit();
-        }
-
-        var unbound = _repository.ListUnboundSenders();
-        Assert.True(unbound.Count >= 1050);
     }
 }
 

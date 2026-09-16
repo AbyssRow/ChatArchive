@@ -35,7 +35,6 @@ public sealed class SearchRepository
         var mode = useFts ? SearchMode.Fts : SearchMode.Substring;
         var pageSize = Math.Clamp(limit, 1, 200);
 
-        var where = new List<string>();
         using var connection = _db.OpenConnection();
         using var command = connection.CreateCommand();
 
