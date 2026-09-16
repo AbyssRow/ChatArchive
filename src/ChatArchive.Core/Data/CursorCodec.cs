@@ -30,14 +30,4 @@ public static class CursorCodec
         return long.TryParse(cursor.AsSpan(0, separator), NumberStyles.Integer, CultureInfo.InvariantCulture, out timestampMs)
             && long.TryParse(cursor.AsSpan(separator + 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out id);
     }
-
-    public static (long TimestampMs, long Id) Decode(string cursor)
-    {
-        if (TryDecode(cursor, out var timestampMs, out var id))
-        {
-            return (timestampMs, id);
-        }
-
-        throw new FormatException("游标格式无效");
-    }
 }

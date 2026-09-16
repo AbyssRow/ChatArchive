@@ -12,9 +12,9 @@ public class CursorCodecTests
     public void RoundTrip_preserves_values(long timestampMs, long id)
     {
         var cursor = Data.CursorCodec.Encode(timestampMs, id);
-        var decoded = Data.CursorCodec.Decode(cursor);
-        Assert.Equal(timestampMs, decoded.TimestampMs);
-        Assert.Equal(id, decoded.Id);
+        Assert.True(Data.CursorCodec.TryDecode(cursor, out var ts, out var decodedId));
+        Assert.Equal(timestampMs, ts);
+        Assert.Equal(id, decodedId);
     }
 
     [Theory]
@@ -24,9 +24,8 @@ public class CursorCodecTests
     [InlineData("12_")]
     [InlineData("_34")]
     [InlineData("1_2_3")]
-    public void Decode_rejects_invalid(string? cursor)
+    public void TryDecode_rejects_invalid(string? cursor)
     {
-        Assert.Throws<FormatException>(() => Data.CursorCodec.Decode(cursor!));
         Assert.False(Data.CursorCodec.TryDecode(cursor, out _, out _));
     }
 

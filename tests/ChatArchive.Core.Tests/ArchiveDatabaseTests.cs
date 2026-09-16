@@ -585,63 +585,6 @@ public class ArchiveDatabaseTests : IDisposable
     }
 
     [Fact]
-    public void Split_handles_triggers_and_batches()
-    {
-        var sql = ArchiveDatabase.LoadSchemaSql();
-        var statements = SqlScriptSplitter.Split(sql);
-
-        Assert.Contains(statements, s => s.StartsWith("CREATE TABLE IF NOT EXISTS app_metadata", StringComparison.Ordinal));
-        Assert.Contains(statements, s => s.StartsWith("CREATE TABLE IF NOT EXISTS contacts", StringComparison.Ordinal));
-        Assert.Contains(statements, s => s.StartsWith("CREATE TABLE IF NOT EXISTS contact_senders", StringComparison.Ordinal));
-        var triggers = statements.Where(s => s.StartsWith("CREATE TRIGGER", StringComparison.Ordinal)).ToList();
-        Assert.Equal(3, triggers.Count);
-        Assert.All(triggers, s => Assert.EndsWith("END;", s));
-        Assert.All(statements.Except(triggers), s => Assert.False(s.EndsWith(";", StringComparison.Ordinal)));
-        Assert.Equal(35, statements.Count);
-    }
-
-    [Fact]
-    public void Split_handles_line_and_block_comments()
-    {
-        var sql = """
-            -- This is a comment with a semicolon;
-            SELECT 1;
-            /* Block comment with semicolon; and multiple
-               lines */
-            SELECT 2;
-            SELECT '-- not a comment; inside string' AS val;
-            """;
-        var statements = SqlScriptSplitter.Split(sql);
-        Assert.Equal(3, statements.Count);
-        Assert.StartsWith("-- This is a comment with a semicolon;\nSELECT 1", statements[0].Replace("\r\n", "\n"));
-        Assert.StartsWith("/* Block comment with semicolon;", statements[1]);
-        Assert.Equal("SELECT '-- not a comment; inside string' AS val", statements[2]);
-    }
-
-    [Fact]
-    public void Split_handles_comments_before_create_trigger()
-    {
-        var sql = """
-            -- sync fts trigger
-            CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
-                INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
-            END;
-
-            /* block comment before trigger */
-            CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
-                INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
-            END;
-
-            SELECT 1;
-            """;
-        var statements = SqlScriptSplitter.Split(sql);
-        Assert.Equal(3, statements.Count);
-        Assert.EndsWith("END;", statements[0]);
-        Assert.EndsWith("END;", statements[1]);
-        Assert.Equal("SELECT 1", statements[2]);
-    }
-
-    [Fact]
     public void RepairDuplicateConversationsAndSenders_MergesDuplicatesCleanly()
     {
         var db = new ArchiveDatabase(_databasePath);

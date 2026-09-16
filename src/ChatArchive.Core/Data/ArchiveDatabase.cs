@@ -266,103 +266,32 @@ public sealed class ArchiveDatabase
     public void EnsureSchema()
     {
         using var connection = OpenConnection();
-        var hasMetadata = ExecuteScalar(connection, "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_metadata'") is not null;
-
-        if (!hasMetadata)
+        if (ExecuteScalar(connection, "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_metadata'") is null)
         {
-            using var transaction = connection.BeginTransaction();
-            foreach (var statement in SqlScriptSplitter.Split(LoadSchemaSql()))
-            {
-                using var command = connection.CreateCommand();
-                command.Transaction = transaction;
-                command.CommandText = statement;
-                command.ExecuteNonQuery();
-            }
-            transaction.Commit();
+            Exec(connection, LoadSchemaSql(), disableForeignKeys: false);
         }
         else
         {
-            var currentVersion = ExecuteScalar(connection, "SELECT value FROM app_metadata WHERE key='schema_version'") as string;
-            if (currentVersion == "1")
+            if (SchemaVersion(connection) == "1")
             {
-                MigrateV1ToV2(connection);
+                Exec(connection, MigrationV1ToV2Sql, disableForeignKeys: false);
             }
 
-            currentVersion = ExecuteScalar(connection, "SELECT value FROM app_metadata WHERE key='schema_version'") as string;
-            if (currentVersion == "2")
+            if (SchemaVersion(connection) == "2")
             {
-                MigrateV2ToV3(connection);
+                Exec(connection, MigrationV2ToV3Sql, disableForeignKeys: true);
             }
 
-            currentVersion = ExecuteScalar(connection, "SELECT value FROM app_metadata WHERE key='schema_version'") as string;
-            if (currentVersion == "3")
+            if (SchemaVersion(connection) == "3")
             {
-                MigrateV3ToV4(connection);
+                Exec(connection, MigrationV3ToV4Sql, disableForeignKeys: true);
             }
         }
 
-        var version = ExecuteScalar(connection, "SELECT value FROM app_metadata WHERE key='schema_version'") as string;
+        var version = SchemaVersion(connection);
         if (version != "4")
         {
             throw new InvalidOperationException($"不支持的数据库 schema 版本: {version ?? "(缺失)"}");
-        }
-    }
-
-    private static void MigrateV1ToV2(SqliteConnection connection)
-    {
-        using var transaction = connection.BeginTransaction();
-        foreach (var statement in SqlScriptSplitter.Split(MigrationV1ToV2Sql))
-        {
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = statement;
-            command.ExecuteNonQuery();
-        }
-
-        transaction.Commit();
-    }
-
-    private static void MigrateV2ToV3(SqliteConnection connection)
-    {
-        ExecuteScalar(connection, "PRAGMA foreign_keys = OFF;");
-        try
-        {
-            using var transaction = connection.BeginTransaction();
-            foreach (var statement in SqlScriptSplitter.Split(MigrationV2ToV3Sql))
-            {
-                using var command = connection.CreateCommand();
-                command.Transaction = transaction;
-                command.CommandText = statement;
-                command.ExecuteNonQuery();
-            }
-
-            transaction.Commit();
-        }
-        finally
-        {
-            ExecuteScalar(connection, "PRAGMA foreign_keys = ON;");
-        }
-    }
-
-    private static void MigrateV3ToV4(SqliteConnection connection)
-    {
-        ExecuteScalar(connection, "PRAGMA foreign_keys = OFF;");
-        try
-        {
-            using var transaction = connection.BeginTransaction();
-            foreach (var statement in SqlScriptSplitter.Split(MigrationV3ToV4Sql))
-            {
-                using var command = connection.CreateCommand();
-                command.Transaction = transaction;
-                command.CommandText = statement;
-                command.ExecuteNonQuery();
-            }
-
-            transaction.Commit();
-        }
-        finally
-        {
-            ExecuteScalar(connection, "PRAGMA foreign_keys = ON;");
         }
     }
 
@@ -377,20 +306,11 @@ public sealed class ArchiveDatabase
         return command.ExecuteNonQuery();
     }
 
-    public int RepairDuplicateConversationsAndSenders(SqliteConnection? externalConnection = null)
+    public int RepairDuplicateConversationsAndSenders()
     {
-        var closeConnection = false;
-        var connection = externalConnection;
-        if (connection == null)
-        {
-            connection = OpenConnection();
-            closeConnection = true;
-        }
-
-        try
-        {
-            using var transaction = connection.BeginTransaction();
-            var mergedCount = 0;
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var mergedCount = 0;
 
             // 1. Merge duplicate senders by (platform, native_id)
             var duplicateSenderGroups = new List<(string Platform, string NativeId)>();
@@ -752,16 +672,8 @@ public sealed class ArchiveDatabase
                 }
             }
 
-            transaction.Commit();
-            return mergedCount;
-        }
-        finally
-        {
-            if (closeConnection)
-            {
-                connection.Dispose();
-            }
-        }
+        transaction.Commit();
+        return mergedCount;
     }
 
     private static bool IsDefaultAccount(string accountId) =>
@@ -895,7 +807,7 @@ public sealed class ArchiveDatabase
         leftover.ExecuteNonQuery();
     }
 
-    internal static string LoadSchemaSql()
+    private static string LoadSchemaSql()
     {
         var assembly = typeof(ArchiveDatabase).Assembly;
         var resourceName = "ChatArchive.Core.Data.schema.sql";
@@ -903,6 +815,34 @@ public sealed class ArchiveDatabase
             ?? throw new InvalidOperationException($"缺少嵌入资源 {resourceName}");
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
+    }
+
+    private static string? SchemaVersion(SqliteConnection connection) =>
+        ExecuteScalar(connection, "SELECT value FROM app_metadata WHERE key='schema_version'") as string;
+
+    private static void Exec(SqliteConnection connection, string sql, bool disableForeignKeys)
+    {
+        if (disableForeignKeys)
+        {
+            ExecuteScalar(connection, "PRAGMA foreign_keys = OFF;");
+        }
+
+        try
+        {
+            using var transaction = connection.BeginTransaction();
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            command.ExecuteNonQuery();
+            transaction.Commit();
+        }
+        finally
+        {
+            if (disableForeignKeys)
+            {
+                ExecuteScalar(connection, "PRAGMA foreign_keys = ON;");
+            }
+        }
     }
 
     private static object? ExecuteScalar(SqliteConnection connection, string text)
