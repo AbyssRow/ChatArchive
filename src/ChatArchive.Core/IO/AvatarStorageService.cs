@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Security.Cryptography;
 
 namespace ChatArchive.Core.IO;
@@ -7,36 +6,23 @@ public sealed class AvatarStorageService
 {
     private const int BufferSize = 64 * 1024;
 
-    public string AvatarDirectory { get; }
+    private readonly string _avatarDirectory;
 
     public AvatarStorageService(string avatarDirectory)
     {
-        AvatarDirectory = Path.GetFullPath(avatarDirectory ?? throw new ArgumentNullException(nameof(avatarDirectory)));
-        Directory.CreateDirectory(AvatarDirectory);
+        ArgumentNullException.ThrowIfNull(avatarDirectory);
+        _avatarDirectory = Path.GetFullPath(avatarDirectory);
+        Directory.CreateDirectory(_avatarDirectory);
         CleanupOrphanedTempFiles();
     }
 
-    public void CleanupOrphanedTempFiles()
+    private void CleanupOrphanedTempFiles()
     {
-        if (!Directory.Exists(AvatarDirectory))
-        {
-            return;
-        }
-
         try
         {
-            foreach (var file in Directory.EnumerateFiles(AvatarDirectory, ".tmp_*", SearchOption.TopDirectoryOnly))
+            foreach (var file in Directory.EnumerateFiles(_avatarDirectory, ".tmp_*", SearchOption.TopDirectoryOnly))
             {
-                try
-                {
-                    File.Delete(file);
-                }
-                catch (IOException)
-                {
-                }
-                catch (UnauthorizedAccessException)
-                {
-                }
+                TryDelete(file);
             }
         }
         catch (IOException)
@@ -49,82 +35,36 @@ public sealed class AvatarStorageService
 
     public string SaveAvatarFromStream(Stream stream, string extension)
     {
-        if (stream is null)
-        {
-            throw new ArgumentNullException(nameof(stream));
-        }
-
+        ArgumentNullException.ThrowIfNull(stream);
         var normalizedExt = NormalizeExtension(extension);
-        var tempFile = Path.Combine(AvatarDirectory, $".tmp_{Guid.NewGuid():N}");
-        var moved = false;
-
+        var tempFile = Path.Combine(_avatarDirectory, $".tmp_{Guid.NewGuid():N}");
         try
         {
             string digest;
             using (var tempFs = new FileStream(
                        tempFile,
                        FileMode.CreateNew,
-                       FileAccess.Write,
+                       FileAccess.ReadWrite,
                        FileShare.None,
                        BufferSize,
                        FileOptions.SequentialScan))
-            using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
             {
-                var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
-                try
-                {
-                    int bytesRead;
-                    while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) > 0)
-                    {
-                        tempFs.Write(buffer, 0, bytesRead);
-                        hash.AppendData(buffer, 0, bytesRead);
-                    }
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(buffer);
-                }
-
+                stream.CopyTo(tempFs);
                 tempFs.Flush(flushToDisk: true);
-                digest = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+                tempFs.Position = 0;
+                digest = Convert.ToHexString(SHA256.HashData(tempFs)).ToLowerInvariant();
             }
 
             var fileName = $"{digest}{normalizedExt}";
-            var targetPath = Path.Combine(AvatarDirectory, fileName);
-
-            if (File.Exists(targetPath))
-            {
-                try
-                {
-                    File.Delete(tempFile);
-                }
-                catch (IOException)
-                {
-                }
-                catch (UnauthorizedAccessException)
-                {
-                }
-            }
-            else
+            var targetPath = Path.Combine(_avatarDirectory, fileName);
+            if (!File.Exists(targetPath))
             {
                 try
                 {
                     File.Move(tempFile, targetPath);
-                    moved = true;
                 }
                 catch (IOException) when (File.Exists(targetPath))
                 {
-                    // Handled race condition if another thread or process moved the exact file concurrently
-                    try
-                    {
-                        File.Delete(tempFile);
-                    }
-                    catch (IOException)
-                    {
-                    }
-                    catch (UnauthorizedAccessException)
-                    {
-                    }
                 }
             }
 
@@ -132,29 +72,13 @@ public sealed class AvatarStorageService
         }
         finally
         {
-            if (!moved && File.Exists(tempFile))
-            {
-                try
-                {
-                    File.Delete(tempFile);
-                }
-                catch (IOException)
-                {
-                }
-                catch (UnauthorizedAccessException)
-                {
-                }
-            }
+            TryDelete(tempFile);
         }
     }
 
     public string SaveAvatarFromFile(string sourceFilePath)
     {
-        if (sourceFilePath is null)
-        {
-            throw new ArgumentNullException(nameof(sourceFilePath));
-        }
-
+        ArgumentNullException.ThrowIfNull(sourceFilePath);
         if (!File.Exists(sourceFilePath))
         {
             throw new FileNotFoundException("Source avatar file not found.", sourceFilePath);
@@ -186,18 +110,33 @@ public sealed class AvatarStorageService
         }
         else
         {
-            var combined = Path.Combine(AvatarDirectory, relativeOrHashPath);
-            fullPath = Path.GetFullPath(combined);
+            fullPath = Path.GetFullPath(Path.Combine(_avatarDirectory, relativeOrHashPath));
         }
 
-        var fullAvatarDir = Path.GetFullPath(AvatarDirectory);
-        var normalizedDir = fullAvatarDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!fullPath.StartsWith(normalizedDir, StringComparison.OrdinalIgnoreCase) && !string.Equals(fullPath, fullAvatarDir, StringComparison.OrdinalIgnoreCase))
+        var normalizedDir = Path.GetFullPath(_avatarDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(normalizedDir, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(fullPath, Path.GetFullPath(_avatarDirectory), StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
 
         return File.Exists(fullPath) ? fullPath : null;
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private static string NormalizeExtension(string extension)

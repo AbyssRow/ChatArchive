@@ -7,6 +7,8 @@ namespace ChatArchive.Core.IO;
 
 public static class FileHashing
 {
+    private const int BufferSize = 128 * 1024;
+
     public static string Sha256File(string path, CancellationToken cancellationToken = default)
         => HashFile(path, cancellationToken).Digest;
 
@@ -34,26 +36,9 @@ public static class FileHashing
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.Read,
-                bufferSize: 128 * 1024,
+                BufferSize,
                 FileOptions.SequentialScan);
-            var buffer = ArrayPool<byte>.Shared.Rent(128 * 1024);
-            try
-            {
-                while (true)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var read = manifestStream.Read(buffer);
-                    if (read == 0)
-                    {
-                        break;
-                    }
-                    hash.AppendData(buffer, 0, read);
-                }
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
+            AppendStream(hash, manifestStream, destination: null, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -74,9 +59,8 @@ public static class FileHashing
             try
             {
                 var (chunkDigest, chunkSize) = HashFile(chunkPath, cancellationToken);
-                var header = Encoding.UTF8.GetBytes(
-                    $"\nchunk:{relPath}:{chunkSize}:{chunkDigest}\n");
-                hash.AppendData(header);
+                hash.AppendData(Encoding.UTF8.GetBytes(
+                    $"\nchunk:{relPath}:{chunkSize}:{chunkDigest}\n"));
             }
             catch (OperationCanceledException)
             {
@@ -104,35 +88,9 @@ public static class FileHashing
             FileMode.Open,
             FileAccess.Read,
             FileShare.Read,
-            bufferSize: 128 * 1024,
+            BufferSize,
             FileOptions.SequentialScan);
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var buffer = ArrayPool<byte>.Shared.Rent(128 * 1024);
-        long size = 0;
-        try
-        {
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var read = stream.Read(buffer);
-                cancellationToken.ThrowIfCancellationRequested();
-                if (read == 0)
-                {
-                    break;
-                }
-
-                hash.AppendData(buffer, 0, read);
-                size += read;
-            }
-
-            return (
-                Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(),
-                size);
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
-        }
+        return HashCopy(stream, destination: null, cancellationToken);
     }
 
     internal static (string Digest, long Size) CopyFileAndHash(
@@ -140,7 +98,6 @@ public static class FileHashing
         string destinationPath,
         CancellationToken cancellationToken = default)
     {
-        const int BufferSize = 128 * 1024;
         cancellationToken.ThrowIfCancellationRequested();
         var completed = false;
         var destinationCreated = false;
@@ -161,37 +118,9 @@ public static class FileHashing
                        FileShare.None,
                        BufferSize,
                        FileOptions.SequentialScan))
-            using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
             {
                 destinationCreated = true;
-                var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
-                long size = 0;
-                try
-                {
-                    while (true)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        var read = source.Read(buffer);
-                        cancellationToken.ThrowIfCancellationRequested();
-                        if (read == 0)
-                        {
-                            break;
-                        }
-
-                        destination.Write(buffer, 0, read);
-                        hash.AppendData(buffer, 0, read);
-                        size += read;
-                    }
-
-                    destination.Flush(flushToDisk: true);
-                    result = (
-                        Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(),
-                        size);
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(buffer);
-                }
+                result = HashCopy(source, destination, cancellationToken);
             }
 
             completed = true;
@@ -210,6 +139,50 @@ public static class FileHashing
                     // Preserve the copy/cancellation exception; callers also clean their temp path.
                 }
             }
+        }
+    }
+
+    private static (string Digest, long Size) HashCopy(
+        Stream source,
+        FileStream? destination,
+        CancellationToken cancellationToken)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var size = AppendStream(hash, source, destination, cancellationToken);
+        return (Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(), size);
+    }
+
+    private static long AppendStream(
+        IncrementalHash hash,
+        Stream source,
+        FileStream? destination,
+        CancellationToken cancellationToken)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
+        long size = 0;
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var read = source.Read(buffer);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (read == 0)
+                {
+                    break;
+                }
+
+                destination?.Write(buffer, 0, read);
+                hash.AppendData(buffer, 0, read);
+                size += read;
+            }
+
+            destination?.Flush(flushToDisk: true);
+            return size;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 }

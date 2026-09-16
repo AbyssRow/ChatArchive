@@ -24,27 +24,26 @@ public sealed class AvatarStorageServiceTests : IDisposable
         var newDir = Path.Combine(_testDir, "sub_avatars");
         Assert.False(Directory.Exists(newDir));
 
-        var service = new AvatarStorageService(newDir);
+        _ = new AvatarStorageService(newDir);
 
         Assert.True(Directory.Exists(newDir));
-        Assert.Equal(Path.GetFullPath(newDir), service.AvatarDirectory);
     }
 
     [Fact]
     public void Constructor_NormalizesRelativePathToAbsolutePath()
     {
         var relativeDir = Path.Combine("temp_test_avatars_" + Guid.NewGuid().ToString("N")[..8]);
-        var service = new AvatarStorageService(relativeDir);
+        var fullDir = Path.GetFullPath(relativeDir);
+        _ = new AvatarStorageService(relativeDir);
         try
         {
-            Assert.True(Path.IsPathRooted(service.AvatarDirectory));
-            Assert.Equal(Path.GetFullPath(relativeDir), service.AvatarDirectory);
+            Assert.True(Directory.Exists(fullDir));
         }
         finally
         {
-            if (Directory.Exists(service.AvatarDirectory))
+            if (Directory.Exists(fullDir))
             {
-                Directory.Delete(service.AvatarDirectory, recursive: true);
+                Directory.Delete(fullDir, recursive: true);
             }
         }
     }
@@ -238,7 +237,7 @@ public sealed class AvatarStorageServiceTests : IDisposable
     }
 
     [Fact]
-    public void CleanupOrphanedTempFiles_CleansTempFiles_OnConstructorAndCall()
+    public void CleanupOrphanedTempFiles_CleansTempFiles_OnConstructor()
     {
         var orphan1 = Path.Combine(_avatarDir, ".tmp_12345");
         var orphan2 = Path.Combine(_avatarDir, ".tmp_abcdef");
@@ -247,15 +246,11 @@ public sealed class AvatarStorageServiceTests : IDisposable
         File.WriteAllText(orphan2, "temp2");
         File.WriteAllText(normalFile, "real");
 
-        var newService = new AvatarStorageService(_avatarDir);
+        _ = new AvatarStorageService(_avatarDir);
 
         Assert.False(File.Exists(orphan1));
         Assert.False(File.Exists(orphan2));
         Assert.True(File.Exists(normalFile));
-
-        File.WriteAllText(orphan1, "temp3");
-        newService.CleanupOrphanedTempFiles();
-        Assert.False(File.Exists(orphan1));
     }
 
     public void Dispose()
