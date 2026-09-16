@@ -1085,6 +1085,32 @@ public sealed class ContactRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void ListAvailableSendersToBind_FiltersByKeywordAndOrdersByMessageCount()
+    {
+        var s1 = _archive.AddSender("wx_1", "Zack 1", platform: "wechat");
+        var s2 = _archive.AddSender("qq_2", "Zack 2", platform: "qq");
+        var s3 = _archive.AddSender("wx_3", "Wendy", platform: "wechat");
+        var s4 = _archive.AddSender("wx_4", "Other", platform: "wechat");
+
+        var conv = _archive.AddConversation("c_bind", "Chat");
+        _archive.AddMessage(conv, s2, 1000, "M1");
+        _archive.AddMessage(conv, s2, 2000, "M2");
+
+        var current = _repository.CreateContact("Current");
+        _repository.CreateContact("Zack Contact", initialBindings: [(s1, (string?)null, true)]);
+        _repository.CreateContact("Bound Label", initialBindings: [(s4, "QQ大号", true)]);
+
+        var ranked = _repository.ListAvailableSendersToBind(current);
+        Assert.Equal(s2, ranked[0].SenderId);
+        Assert.Equal(2, ranked[0].MessageCount);
+
+        Assert.Equal(s3, Assert.Single(_repository.ListAvailableSendersToBind(current, "Wendy")).SenderId);
+        Assert.Equal(s2, Assert.Single(_repository.ListAvailableSendersToBind(current, "qq_2")).SenderId);
+        Assert.Equal(s1, Assert.Single(_repository.ListAvailableSendersToBind(current, "Zack Contact")).SenderId);
+        Assert.Equal(s4, Assert.Single(_repository.ListAvailableSendersToBind(current, "QQ大号")).SenderId);
+    }
+
+    [Fact]
     public void SenderDisplayName_Resolve_Handles_Empty_Keys_Safely()
     {
         using var connection = _archive.Open();
