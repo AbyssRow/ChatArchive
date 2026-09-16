@@ -1,8 +1,5 @@
 namespace ChatArchive.Core.Media;
 
-/// <summary>
-/// 附件文件定位：优先按 sha256 内容寻址规则推导，失败时回退库内记录的路径。
-/// </summary>
 public sealed class MediaLocator
 {
     private readonly string _mediaDir;
@@ -14,7 +11,7 @@ public sealed class MediaLocator
 
     public string? Resolve(string? sha256, string? managedPath = null, string? sourcePath = null)
     {
-        if (!string.IsNullOrEmpty(sha256) && sha256.Length >= 2 && IsValidHex(sha256))
+        if (!string.IsNullOrEmpty(sha256) && sha256.Length >= 2 && sha256.All(char.IsAsciiHexDigit))
         {
             var hexLower = sha256.ToLowerInvariant();
             var prefixDir = Path.Combine(_mediaDir, hexLower[..2]);
@@ -69,10 +66,5 @@ public sealed class MediaLocator
         }
 
         return true;
-    }
-
-    private static bool IsValidHex(string value)
-    {
-        return value.All(char.IsAsciiHexDigit);
     }
 }
